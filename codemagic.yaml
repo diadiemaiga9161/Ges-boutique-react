@@ -16,11 +16,14 @@ workflows:
       - name: Expo prebuild Android
         script: npx expo prebuild --platform android --clean
 
+      - name: Configure Android SDK path
+        script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
       - name: Build Android APK
         script: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
     artifacts:
       - android/app/build/outputs/apk/debug/app-debug.apk
