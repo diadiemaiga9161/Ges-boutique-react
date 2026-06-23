@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Ges Boutique",
+    "slug": "ges-boutique",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.maigaconsulting.gesboutique",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "33ae3edf-feb7-4edf-9ab9-d1248270366b"
+      }
+    }
+  }
+}
