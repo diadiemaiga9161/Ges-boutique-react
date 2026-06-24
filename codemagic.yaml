@@ -24,17 +24,25 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build Android APK Debug (bundle JS inclus)
+      - name: Activer bundle JS dans APK debug
+        script: |
+          python3 -c "
+          content = open('android/app/build.gradle').read()
+          patched = content.replace('react {', 'react {\n    bundleInDebug = true', 1)
+          open('android/app/build.gradle', 'w').write(patched)
+          print('Patched OK' if 'bundleInDebug' in patched else 'ERREUR non patche')
+          "
+
+      - name: Build Android APK Debug
         script: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon \
-            -PbundleInDebug=true
+          ./gradlew assembleDebug --no-daemon
 
       - name: Copier APK a la racine
         script: |
-          APK=$(find android -name "*.apk" | head -1)
-          echo "APK trouvé: $APK"
+          APK=$(find android -name "app-debug.apk" | head -1)
+          echo "APK: $APK"
           cp "$APK" ges-boutique.apk
           ls -lh ges-boutique.apk
 
