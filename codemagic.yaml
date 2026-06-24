@@ -29,7 +29,6 @@ workflows:
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon \
-            -Pandroid.injected.build.abi=arm64-v8a \
             -PbundleInDebug=true
 
       - name: Copier APK a la racine
