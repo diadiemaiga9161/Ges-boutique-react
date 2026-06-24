@@ -31,10 +31,16 @@ workflows:
           ./gradlew assembleDebug --no-daemon \
             -Pandroid.injected.build.abi=arm64-v8a \
             -PbundleInDebug=true
-          find . -name "*.apk" 2>/dev/null
+
+      - name: Copier APK a la racine
+        script: |
+          APK=$(find android -name "*.apk" | head -1)
+          echo "APK trouvé: $APK"
+          cp "$APK" ges-boutique.apk
+          ls -lh ges-boutique.apk
 
     artifacts:
-      - android/app/build/outputs/apk/**/*.apk
+      - ges-boutique.apk
 
     publishing:
       email:
