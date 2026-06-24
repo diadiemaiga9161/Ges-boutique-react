@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, FlatList, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Text } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BOUTIQUES_CONFIG } from '../services/api.service';
@@ -19,11 +19,10 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.logoBox}>
-          <Text style={styles.logoText}>GES</Text>
-          <Text style={styles.logoSub}>BOUTIQUE</Text>
+          <Image source={require('../../assets/icon.png')} style={styles.logoImg} />
         </View>
-        <Text style={styles.title}>Sélectionnez votre boutique</Text>
-        <Text style={styles.sub}>Choisissez la boutique à gérer</Text>
+        <Text style={styles.title}>Ges Lafia</Text>
+        <Text style={styles.sub}>Sélectionnez votre boutique</Text>
       </View>
 
       <FlatList
@@ -54,7 +53,7 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
   header: {
-    backgroundColor: '#1976D2',
+    backgroundColor: '#081648',
     paddingTop: 60,
     paddingBottom: 40,
     alignItems: 'center',
@@ -62,17 +61,15 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 28,
   },
   logoBox: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    marginBottom: 20,
-    alignItems: 'center',
+    width: 90, height: 90, borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)',
+    justifyContent: 'center', alignItems: 'center',
+    marginBottom: 18,
   },
-  logoText: { color: '#fff', fontSize: 28, fontWeight: 'bold', letterSpacing: 4 },
-  logoSub: { color: 'rgba(255,255,255,0.8)', fontSize: 11, letterSpacing: 3 },
-  title: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 6 },
-  sub: { color: 'rgba(255,255,255,0.75)', fontSize: 14 },
+  logoImg: { width: 68, height: 68, borderRadius: 14 },
+  title: { color: '#fff', fontSize: 22, fontWeight: '900', marginBottom: 6, letterSpacing: 0.5 },
+  sub: { color: 'rgba(255,255,255,0.65)', fontSize: 14 },
   list: { padding: 20, paddingTop: 24 },
   card: {
     backgroundColor: '#fff',
