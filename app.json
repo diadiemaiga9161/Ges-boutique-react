@@ -16,7 +16,8 @@
         "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "newArchEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
