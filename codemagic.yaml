@@ -24,23 +24,21 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Generer keystore de signature
+      - name: Build Android APK Release
         script: |
+          KEYSTORE_PATH="$(pwd)/android/app/release.keystore"
           keytool -genkey -v \
-            -keystore android/app/release.keystore \
+            -keystore "$KEYSTORE_PATH" \
             -storepass gesboutique \
             -alias gesboutique \
             -keypass gesboutique \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Ges Boutique,O=MaigaConsulting,C=ML"
-
-      - name: Build Android APK Release
-        script: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon \
             -Pandroid.injected.build.abi=arm64-v8a \
-            -Pandroid.injected.signing.store.file=app/release.keystore \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password=gesboutique \
             -Pandroid.injected.signing.key.alias=gesboutique \
             -Pandroid.injected.signing.key.password=gesboutique
