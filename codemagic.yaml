@@ -24,11 +24,11 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build Android APK
+      - name: Build Android APK (arm64 uniquement)
         script: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon -Pandroid.injected.build.abi=arm64-v8a
 
     artifacts:
       - android/app/build/outputs/apk/debug/app-debug.apk
