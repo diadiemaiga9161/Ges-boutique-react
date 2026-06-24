@@ -42,9 +42,12 @@ workflows:
             -Pandroid.injected.signing.store.password=gesboutique \
             -Pandroid.injected.signing.key.alias=gesboutique \
             -Pandroid.injected.signing.key.password=gesboutique
+          echo "APK généré:"
+          find . -name "*.apk" 2>/dev/null
 
     artifacts:
-      - android/app/build/outputs/apk/release/app-release.apk
+      - android/app/build/outputs/apk/**/*.apk
+      - android/**/*.apk
 
     publishing:
       email:
