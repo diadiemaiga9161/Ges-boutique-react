@@ -15,7 +15,7 @@
       "supportsTablet": true
     },
     "android": {
-      "package": "com.maigaconsulting.gesboutique",
+      "package": "com.gesboutique.lafia",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
