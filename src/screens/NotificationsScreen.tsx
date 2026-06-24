@@ -36,7 +36,7 @@ export default function NotificationsScreen() {
   const couleur = (type: string) => {
     if (type === 'RUPTURE_STOCK') return '#f44336';
     if (type === 'STOCK_FAIBLE') return '#ff9800';
-    return '#1976D2';
+    return '#1a56db';
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
@@ -72,11 +72,11 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   card: { marginBottom: 10, borderRadius: 12 },
-  nonLue: { borderLeftWidth: 4, borderLeftColor: '#1976D2' },
+  nonLue: { borderLeftWidth: 4, borderLeftColor: '#1a56db' },
   content: { flexDirection: 'row', alignItems: 'center' },
   date: { color: '#aaa', fontSize: 11, marginTop: 4 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#1976D2' },
+  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#1a56db' },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
 });

@@ -71,7 +71,7 @@ export default function BonusFournisseursScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   banner: { backgroundColor: '#7b1fa2', padding: 16, alignItems: 'center' },
   bannerLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   bannerVal: { color: '#fff', fontWeight: 'bold', fontSize: 22 },

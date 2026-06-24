@@ -61,11 +61,11 @@ export default function HistoriqueVentesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   search: { margin: 12 },
   card: { marginBottom: 10, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  montant: { fontWeight: 'bold', color: '#1976D2', fontSize: 16 },
+  montant: { fontWeight: 'bold', color: '#1a56db', fontSize: 16 },
   date: { color: '#888', fontSize: 12 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
 });

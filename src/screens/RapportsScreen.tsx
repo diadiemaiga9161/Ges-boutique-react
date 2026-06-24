@@ -132,11 +132,11 @@ export default function RapportsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   segments: { margin: 12 },
   card: { marginBottom: 12, borderRadius: 12 },
-  cardTitle: { fontWeight: 'bold', marginBottom: 8, color: '#1976D2' },
-  bigNum: { fontWeight: 'bold', color: '#1976D2', textAlign: 'center', marginVertical: 4 },
+  cardTitle: { fontWeight: 'bold', marginBottom: 8, color: '#1a56db' },
+  bigNum: { fontWeight: 'bold', color: '#1a56db', textAlign: 'center', marginVertical: 4 },
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   bold: { fontWeight: 'bold' },
   green: { color: '#4caf50', fontWeight: 'bold' },

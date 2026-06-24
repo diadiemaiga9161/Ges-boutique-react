@@ -93,10 +93,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  cardIconText: { color: '#1976D2', fontSize: 20, fontWeight: 'bold' },
+  cardIconText: { color: '#1a56db', fontSize: 20, fontWeight: 'bold' },
   cardBody: { flex: 1 },
   cardName: { fontSize: 16, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 3 },
   cardPort: { fontSize: 13, color: '#888' },
   cardArrow: { paddingLeft: 8 },
-  arrow: { fontSize: 26, color: '#1976D2', fontWeight: 'bold' },
+  arrow: { fontSize: 26, color: '#1a56db', fontWeight: 'bold' },
 });

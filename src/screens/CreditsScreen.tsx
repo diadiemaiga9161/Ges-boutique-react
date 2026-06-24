@@ -617,7 +617,7 @@ export default function CreditsScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
 
   // Hero
   hero: { backgroundColor: '#9c27b0', flexDirection: 'row', padding: 16, alignItems: 'center' },
@@ -628,7 +628,7 @@ const s = StyleSheet.create({
 
   // Filtres
   filters: { flexDirection: 'row', padding: 10, gap: 8, alignItems: 'center', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  searchWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 8, paddingHorizontal: 10, height: 38 },
+  searchWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f4f8', borderRadius: 8, paddingHorizontal: 10, height: 38 },
   searchInput: { flex: 1, marginLeft: 6, fontSize: 14, color: '#333' },
   retardBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: '#f44336' },
   retardBtnActive: { backgroundColor: '#f44336' },

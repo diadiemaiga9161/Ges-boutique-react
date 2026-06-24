@@ -68,14 +68,14 @@ export default function MobileMoneyScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  totalBanner: { backgroundColor: '#1976D2', padding: 20, alignItems: 'center' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  totalBanner: { backgroundColor: '#1a56db', padding: 20, alignItems: 'center' },
   totalLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   totalVal: { color: '#fff', fontSize: 28, fontWeight: 'bold', marginVertical: 4 },
   totalSub: { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
   card: { marginBottom: 10, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  montant: { fontWeight: 'bold', color: '#1976D2' },
+  montant: { fontWeight: 'bold', color: '#1a56db' },
   date: { color: '#aaa', fontSize: 12 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
 });

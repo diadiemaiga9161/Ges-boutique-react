@@ -59,12 +59,12 @@ export default function ResultatNetScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   hero: { borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 16 },
   heroLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 13 },
   heroVal: { color: '#fff', fontSize: 32, fontWeight: 'bold', marginTop: 4 },
   card: { borderRadius: 12 },
-  title: { fontWeight: 'bold', color: '#1976D2', marginBottom: 12 },
+  title: { fontWeight: 'bold', color: '#1a56db', marginBottom: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
   green: { color: '#388e3c', fontWeight: '600' },
   red: { color: '#f44336', fontWeight: '600' },

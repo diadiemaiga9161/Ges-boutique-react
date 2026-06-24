@@ -37,7 +37,7 @@ export default function ResourcesScreen() {
               <React.Fragment key={ii}>
                 <List.Item
                   title={item.label}
-                  left={props => <List.Icon {...props} icon={item.icon} color="#1976D2" />}
+                  left={props => <List.Icon {...props} icon={item.icon} color="#1a56db" />}
                   right={props => <List.Icon {...props} icon="chevron-right" />}
                   onPress={() => item.url ? Linking.openURL(item.url) : null}
                 />
@@ -61,10 +61,10 @@ export default function ResourcesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { backgroundColor: '#1976D2', borderRadius: 16, padding: 20, alignItems: 'center', marginBottom: 16 },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  header: { backgroundColor: '#1a56db', borderRadius: 16, padding: 20, alignItems: 'center', marginBottom: 16 },
   headerTitle: { color: '#fff', fontWeight: 'bold' },
   headerSub: { color: 'rgba(255,255,255,0.8)', marginTop: 4, fontSize: 13 },
   card: { borderRadius: 12, marginBottom: 16 },
-  sectionTitle: { fontWeight: 'bold', color: '#1976D2', marginBottom: 8 },
+  sectionTitle: { fontWeight: 'bold', color: '#1a56db', marginBottom: 8 },
 });

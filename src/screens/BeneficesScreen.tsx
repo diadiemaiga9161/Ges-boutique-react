@@ -51,7 +51,7 @@ export default function BeneficesScreen() {
           </View>
           <Card style={styles.card}>
             <Card.Content>
-              <Text variant="titleMedium" style={{ color: '#1976D2', marginBottom: 8 }}>Résumé</Text>
+              <Text variant="titleMedium" style={{ color: '#1a56db', marginBottom: 8 }}>Résumé</Text>
               <View style={styles.row}><Text>CA total</Text><Text style={styles.bold}>{ca.toLocaleString('fr-FR')} FCFA</Text></View>
               <View style={styles.row}><Text>Bénéfice net</Text><Text style={[styles.bold, { color: benefice >= 0 ? '#388e3c' : '#f44336' }]}>{benefice.toLocaleString('fr-FR')} FCFA</Text></View>
               <View style={styles.row}><Text>Nombre de ventes</Text><Text style={styles.bold}>{data?.nombreVentes || 0}</Text></View>
@@ -65,7 +65,7 @@ export default function BeneficesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   segments: { margin: 12 },
   hero: { borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 16 },
   heroLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 13 },

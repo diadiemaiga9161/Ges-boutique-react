@@ -74,10 +74,10 @@ export default function FacturesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   card: { marginBottom: 10, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  montant: { fontWeight: 'bold', color: '#1976D2', fontSize: 16 },
+  montant: { fontWeight: 'bold', color: '#1a56db', fontSize: 16 },
   sub: { color: '#666', marginTop: 4 },
   date: { color: '#aaa', fontSize: 12, marginTop: 2 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },

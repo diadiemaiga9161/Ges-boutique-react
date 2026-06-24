@@ -43,7 +43,7 @@ export default function LangueScreen({ navigation }: any) {
             title={`${item.flag}  ${item.label}`}
             titleStyle={[styles.langLabel, item.code === langueActive && styles.langActive]}
             right={() => item.code === langueActive
-              ? <List.Icon icon="check-circle" color="#1976D2" />
+              ? <List.Icon icon="check-circle" color="#1a56db" />
               : null
             }
             style={[styles.item, item.code === langueActive && styles.itemActive]}
@@ -56,12 +56,12 @@ export default function LangueScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { backgroundColor: '#1976D2', padding: 24, alignItems: 'center' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  header: { backgroundColor: '#1a56db', padding: 24, alignItems: 'center' },
   headerTitle: { color: '#fff', fontWeight: 'bold' },
   headerSub: { color: 'rgba(255,255,255,0.8)', marginTop: 4, fontSize: 13 },
   item: { backgroundColor: '#fff', paddingVertical: 4 },
   itemActive: { backgroundColor: '#e3f2fd' },
   langLabel: { fontSize: 16 },
-  langActive: { color: '#1976D2', fontWeight: 'bold' },
+  langActive: { color: '#1a56db', fontWeight: 'bold' },
 });

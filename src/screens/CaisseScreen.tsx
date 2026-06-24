@@ -72,19 +72,19 @@ export default function CaisseScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  hero: { backgroundColor: '#1976D2', borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 16 },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  hero: { backgroundColor: '#1a56db', borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 16 },
   heroLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 13 },
   heroVal: { color: '#fff', fontSize: 32, fontWeight: 'bold', marginVertical: 4 },
   heroSub: { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
   kpiRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
   kpi: { flex: 1, backgroundColor: '#e3f2fd', borderRadius: 12, padding: 12, alignItems: 'center' },
-  kpiVal: { fontSize: 16, fontWeight: 'bold', color: '#1976D2' },
+  kpiVal: { fontSize: 16, fontWeight: 'bold', color: '#1a56db' },
   kpiLabel: { fontSize: 10, color: '#666', marginTop: 2 },
   sectionTitle: { fontWeight: 'bold', marginBottom: 8, color: '#333' },
   card: { marginBottom: 8, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  montant: { fontWeight: 'bold', color: '#1976D2' },
+  montant: { fontWeight: 'bold', color: '#1a56db' },
   heure: { color: '#aaa', fontSize: 12 },
   empty: { textAlign: 'center', color: '#999', marginTop: 20 },
 });

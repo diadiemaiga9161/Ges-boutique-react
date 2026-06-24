@@ -97,12 +97,12 @@ export default function FactureDesignScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  sectionTitle: { fontWeight: 'bold', color: '#1976D2', marginBottom: 12 },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  sectionTitle: { fontWeight: 'bold', color: '#1a56db', marginBottom: 12 },
   card: { marginBottom: 12, borderRadius: 12 },
-  cardActive: { borderWidth: 2, borderColor: '#1976D2' },
+  cardActive: { borderWidth: 2, borderColor: '#1a56db' },
   row: { flexDirection: 'row', alignItems: 'center' },
-  activeLabel: { color: '#1976D2', fontWeight: 'bold' },
+  activeLabel: { color: '#1a56db', fontWeight: 'bold' },
   desc: { color: '#666', fontSize: 12, marginTop: 2 },
   apercu: { backgroundColor: '#f8f8f8', padding: 12, borderRadius: 8, marginTop: 12 },
   apercuText: { fontFamily: 'monospace', fontSize: 12, color: '#333' },

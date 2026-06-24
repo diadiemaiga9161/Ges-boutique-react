@@ -294,7 +294,7 @@ export default function PromotionsScreen() {
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   hero: { backgroundColor: '#e91e63', flexDirection: 'row', padding: 16 },
   heroStat: { flex: 1, alignItems: 'center' },
   heroLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginBottom: 2 },

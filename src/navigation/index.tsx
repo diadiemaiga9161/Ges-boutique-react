@@ -43,16 +43,16 @@ const Stack = createStackNavigator();
 const AuthStack = createStackNavigator();
 
 const HEADER = {
-  headerStyle: { backgroundColor: '#1976D2' },
+  headerStyle: { backgroundColor: '#081648' },
   headerTintColor: '#fff' as const,
-  headerTitleStyle: { fontWeight: 'bold' as const },
+  headerTitleStyle: { fontWeight: 'bold' as const, fontSize: 17 },
 };
 
 function MainTabs({ onLogout }: { onLogout: () => void }) {
   return (
     <Tab.Navigator
       screenOptions={{
-        tabBarActiveTintColor: '#1976D2',
+        tabBarActiveTintColor: '#1a56db',
         tabBarInactiveTintColor: '#aaa',
         tabBarStyle: { height: 62, paddingBottom: 10, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },

@@ -22,7 +22,7 @@ export default function ProfilScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
       <View style={styles.header}>
-        <Avatar.Text size={72} label={initiales} style={{ backgroundColor: '#fff' }} color="#1976D2" />
+        <Avatar.Text size={72} label={initiales} style={{ backgroundColor: '#fff' }} color="#1a56db" />
         <Text variant="headlineSmall" style={styles.name}>{user.nom}</Text>
         <Text style={styles.role}>{user.role === 'ADMIN' ? 'Administrateur' : 'Vendeur'}</Text>
       </View>
@@ -54,12 +54,12 @@ export default function ProfilScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { backgroundColor: '#1976D2', padding: 32, alignItems: 'center', borderRadius: 16, marginBottom: 16 },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  header: { backgroundColor: '#081648', padding: 32, alignItems: 'center', borderRadius: 16, marginBottom: 16 },
   name: { color: '#fff', fontWeight: 'bold', marginTop: 12 },
   role: { color: 'rgba(255,255,255,0.8)', fontSize: 13, marginTop: 4 },
   card: { borderRadius: 12, marginBottom: 16 },
-  sectionTitle: { fontWeight: 'bold', color: '#1976D2', marginBottom: 12 },
+  sectionTitle: { fontWeight: 'bold', color: '#1a56db', marginBottom: 12 },
   input: { marginBottom: 12 },
   btn: { borderRadius: 8 },
 });

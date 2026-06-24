@@ -63,7 +63,7 @@ export default function ConfigTransfertsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   card: { marginBottom: 10, borderRadius: 12 },
   sub: { color: '#666', marginTop: 4 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },

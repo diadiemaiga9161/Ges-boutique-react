@@ -69,8 +69,8 @@ export default function BoutiqueSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  section: { fontWeight: 'bold', color: '#1976D2', marginTop: 16, marginBottom: 8 },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  section: { fontWeight: 'bold', color: '#1a56db', marginTop: 16, marginBottom: 8 },
   input: { marginBottom: 12 },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12 },
   btn: { marginTop: 8, borderRadius: 8 },

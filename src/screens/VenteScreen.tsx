@@ -268,7 +268,7 @@ export default function VenteScreen() {
                       Stock: {n.stock || 0} (cascade auto si épuisé)
                     </Text>
                   </View>
-                  <Text style={{ fontWeight: 'bold', color: '#1976D2', fontSize: 15 }}>{n.prixVente} FCFA</Text>
+                  <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{n.prixVente} FCFA</Text>
                 </TouchableOpacity>
               ))}
               <Button onPress={() => { ajouterSansNiveau(produitEnAttente!); setShowNiveauModal(false); setProduitEnAttente(null); }} style={{ marginTop: 8 }}>
@@ -284,7 +284,7 @@ export default function VenteScreen() {
         <Modal visible={showCheckout} onDismiss={() => setShowCheckout(false)} contentContainerStyle={styles.modal}>
           <ScrollView>
             <Text variant="titleLarge" style={{ marginBottom: 16 }}>Encaissement</Text>
-            <Text variant="titleMedium" style={{ color: '#1976D2', marginBottom: 12 }}>
+            <Text variant="titleMedium" style={{ color: '#1a56db', marginBottom: 12 }}>
               Total : {total.toFixed(0)} FCFA
             </Text>
             <Text variant="labelLarge">Mode de paiement</Text>
@@ -320,20 +320,20 @@ export default function VenteScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   body: { flex: 1, flexDirection: 'row' },
   left: { flex: 1.2, padding: 8 },
   right: { flex: 1, padding: 8, backgroundColor: '#fff', borderLeftWidth: 1, borderColor: '#eee' },
   search: { marginBottom: 8, height: 42 },
   prodCard: { marginBottom: 6, borderRadius: 10 },
-  prix: { color: '#1976D2', fontWeight: '600', fontSize: 13 },
+  prix: { color: '#1a56db', fontWeight: '600', fontSize: 13 },
   stock: { fontSize: 11, marginTop: 2 },
   panierTitle: { fontWeight: 'bold', marginBottom: 8 },
   panierItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   qteRow: { flexDirection: 'row', alignItems: 'center' },
   qte: { minWidth: 24, textAlign: 'center', fontWeight: 'bold' },
-  sousTotal: { fontSize: 12, color: '#1976D2', marginLeft: 4 },
-  total: { textAlign: 'center', fontWeight: 'bold', color: '#1976D2' },
+  sousTotal: { fontSize: 12, color: '#1a56db', marginLeft: 4 },
+  total: { textAlign: 'center', fontWeight: 'bold', color: '#1a56db' },
   btnValider: { marginTop: 12, borderRadius: 8 },
   modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },
   radioRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
   offlineText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   pendingBanner: { backgroundColor: '#2196F3', padding: 6, alignItems: 'center' },
   pendingText: { color: '#fff', fontSize: 12 },
-  niveauBadge: { fontSize: 11, color: '#1976D2', fontWeight: '600', marginTop: 1 },
+  niveauBadge: { fontSize: 11, color: '#1a56db', fontWeight: '600', marginTop: 1 },
   niveauCard: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     padding: 12, marginBottom: 8, backgroundColor: '#f0f7ff',

@@ -200,12 +200,12 @@ export default function InventaireScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   kpiRow: { flexDirection: 'row', padding: 12, gap: 8 },
   kpi: { flex: 1, backgroundColor: '#e3f2fd', borderRadius: 12, padding: 12, alignItems: 'center' },
-  kpiVal: { fontSize: 22, fontWeight: 'bold', color: '#1976D2' },
+  kpiVal: { fontSize: 22, fontWeight: 'bold', color: '#1a56db' },
   kpiLabel: { fontSize: 11, color: '#666', marginTop: 2 },
-  valeur: { textAlign: 'center', color: '#1976D2', fontWeight: '600', marginBottom: 8 },
+  valeur: { textAlign: 'center', color: '#1a56db', fontWeight: '600', marginBottom: 8 },
   filtreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4, flexWrap: 'wrap' },
   filtreChip: { borderRadius: 20 },
   search: { marginHorizontal: 12, marginBottom: 4 },

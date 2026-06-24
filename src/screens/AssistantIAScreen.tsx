@@ -66,9 +66,9 @@ export default function AssistantIAScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   bubble: { maxWidth: '80%', padding: 12, borderRadius: 16, marginBottom: 8 },
-  bubbleUser: { backgroundColor: '#1976D2', alignSelf: 'flex-end', borderBottomRightRadius: 4 },
+  bubbleUser: { backgroundColor: '#1a56db', alignSelf: 'flex-end', borderBottomRightRadius: 4 },
   bubbleBot: { backgroundColor: '#fff', alignSelf: 'flex-start', borderBottomLeftRadius: 4, elevation: 1 },
   bubbleText: { fontSize: 15, lineHeight: 22 },
   inputRow: { flexDirection: 'row', alignItems: 'center', padding: 8, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e0e0e0' },

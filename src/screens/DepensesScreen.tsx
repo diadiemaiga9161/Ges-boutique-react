@@ -75,7 +75,7 @@ export default function DepensesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   totalBanner: { backgroundColor: '#f44336', padding: 16, alignItems: 'center' },
   totalLabel: { color: '#fff', fontSize: 12 },
   totalVal: { color: '#fff', fontWeight: 'bold', fontSize: 22 },

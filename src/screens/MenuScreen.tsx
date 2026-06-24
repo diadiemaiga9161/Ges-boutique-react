@@ -89,8 +89,8 @@ export default function MenuScreen({ navigation, onLogout }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { backgroundColor: '#1976D2', padding: 24, flexDirection: 'row', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  header: { backgroundColor: '#081648', padding: 24, flexDirection: 'row', alignItems: 'center' },
   list: { backgroundColor: '#fff', margin: 12, borderRadius: 12, elevation: 2 },
   item: { paddingVertical: 4 },
 });

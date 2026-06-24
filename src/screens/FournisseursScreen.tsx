@@ -73,7 +73,7 @@ export default function FournisseursScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#f0f4f8' },
   search: { margin: 12 },
   card: { marginBottom: 10, borderRadius: 12 },
   sub: { color: '#666', fontSize: 12, marginTop: 2 },
