@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, FlatList, StyleSheet, Alert, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, Card, Button, Searchbar, ActivityIndicator, Chip, Divider, Modal, Portal, TextInput, RadioButton } from 'react-native-paper';
 import { getProduits, getClients } from '../services/api.service';
-import { getProduitsCache, getClientsCache } from '../db/database';
+import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database';
 import { enregistrerVente, getNombreVentesPending } from '../services/offline.service';
 import NetInfo from '@react-native-community/netinfo';
 import { Produit, Client, LigneVenteRequest } from '../types';
@@ -51,6 +51,7 @@ export default function VenteScreen() {
         const p = rP.data?.data || rP.data || [];
         const c = rC.data?.data || rC.data || [];
         setProduits(p); setClients(c); setFiltered(p);
+        await cacheProduits(p); // sauvegarder pour usage offline
       } catch {
         const [p, c] = await Promise.all([getProduitsCache(), getClientsCache()]);
         setProduits(p); setClients(c); setFiltered(p);
@@ -93,9 +94,17 @@ export default function VenteScreen() {
   };
 
   const ajouterSansNiveau = (p: Produit) => {
+    if (p.quantite <= 0) {
+      Alert.alert('Rupture de stock', `${p.nom} est en rupture de stock.`);
+      return;
+    }
     setPanier(prev => {
       const idx = prev.findIndex(i => i.produit.id === p.id && !i.niveauId);
       if (idx >= 0) {
+        if (prev[idx].quantite >= p.quantite) {
+          Alert.alert('Stock insuffisant', `Stock maximum atteint : ${p.quantite} unité(s).`);
+          return prev;
+        }
         const updated = [...prev];
         updated[idx] = { ...updated[idx], quantite: updated[idx].quantite + 1 };
         return updated;
@@ -131,17 +140,50 @@ export default function VenteScreen() {
   };
 
   const modifierQte = (id: number, delta: number) => {
-    setPanier(prev => prev
-      .map(i => i.produit.id === id ? { ...i, quantite: i.quantite + delta } : i)
-      .filter(i => i.quantite > 0)
-    );
+    setPanier(prev => {
+      const item = prev.find(i => i.produit.id === id);
+      if (item && delta > 0 && item.quantite >= item.produit.quantite) {
+        Alert.alert('Stock insuffisant', `Stock maximum : ${item.produit.quantite} unité(s).`);
+        return prev;
+      }
+      return prev
+        .map(i => i.produit.id === id ? { ...i, quantite: i.quantite + delta } : i)
+        .filter(i => i.quantite > 0);
+    });
   };
 
   const total = panier.reduce((s, i) => s + i.prixUnitaire * i.quantite * (1 - i.remisePourcentage / 100), 0);
   const monnaie = montantRecu ? parseFloat(montantRecu) - total : 0;
 
+  const mettreAJourStockLocal = (panierVendu: CartItem[]) => {
+    setProduits(prev => {
+      const updated = prev.map(p => {
+        const ligne = panierVendu.find(i => i.produit.id === p.id);
+        if (!ligne) return p;
+        return { ...p, quantite: Math.max(0, p.quantite - ligne.quantite) };
+      });
+      cacheProduits(updated); // mettre à jour le cache offline
+      return updated;
+    });
+    setFiltered(prev => {
+      const updated = prev.map(p => {
+        const ligne = panierVendu.find(i => i.produit.id === p.id);
+        if (!ligne) return p;
+        return { ...p, quantite: Math.max(0, p.quantite - ligne.quantite) };
+      }).filter(p => p.quantite > 0);
+      return updated;
+    });
+  };
+
   const valider = async () => {
     if (panier.length === 0) return;
+    // Vérification stock avant envoi
+    for (const item of panier) {
+      if (!item.niveauId && item.quantite > item.produit.quantite) {
+        Alert.alert('Stock insuffisant', `${item.produit.nom} : demandé ${item.quantite}, disponible ${item.produit.quantite}`);
+        return;
+      }
+    }
     const lignes: LigneVenteRequest[] = panier.map(i => ({
       produitId: i.produit.id,
       quantite: i.quantite,
@@ -159,8 +201,10 @@ export default function VenteScreen() {
       montantRecu: montantRecu ? parseFloat(montantRecu) : total,
       estCredit,
     };
+    const panierSnapshot = [...panier];
     const result = await enregistrerVente(vente);
     if (result.success) {
+      mettreAJourStockLocal(panierSnapshot); // stock mis à jour immédiatement
       const msg = result.offline
         ? 'Vente enregistrée hors ligne — sera synchronisée quand internet revient'
         : 'Vente enregistrée avec succès !';
@@ -168,7 +212,8 @@ export default function VenteScreen() {
       setPanier([]);
       setShowCheckout(false);
       setMontantRecu('');
-      charger();
+      const n = await getNombreVentesPending();
+      setVentesPending(n);
     }
   };
 
