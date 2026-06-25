@@ -1,14 +1,14 @@
 import 'react-native-gesture-handler';
 import React, { useState, useEffect } from 'react';
-import { PaperProvider, MD3LightTheme, ActivityIndicator, Portal } from 'react-native-paper';
+import { PaperProvider, MD3LightTheme, Portal } from 'react-native-paper';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { View, StyleSheet } from 'react-native';
 import { enableScreens } from 'react-native-screens';
+import SplashLoadingScreen from './src/screens/SplashLoadingScreen';
 
 import LoginScreen from './src/screens/LoginScreen';
 import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
@@ -80,11 +80,10 @@ export default function App() {
 
   if (loading) {
     return (
-      <PaperProvider theme={theme}>
-        <View style={styles.loader}>
-          <ActivityIndicator size="large" color="#1976D2" />
-        </View>
-      </PaperProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <StatusBar style="light" />
+        <SplashLoadingScreen />
+      </GestureHandlerRootView>
     );
   }
 
@@ -113,6 +112,3 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
-  loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-});
