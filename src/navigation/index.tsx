@@ -37,6 +37,7 @@ import AssistantIAScreen from '../screens/AssistantIAScreen';
 import FactureDesignScreen from '../screens/FactureDesignScreen';
 import ResourcesScreen from '../screens/ResourcesScreen';
 import PromotionsScreen from '../screens/PromotionsScreen';
+import CommandesScreen from '../screens/CommandesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -105,6 +106,7 @@ function MainStack({ onLogout }: { onLogout: () => void }) {
         {() => <BoutiqueSelectScreen onSelect={() => {}} />}
       </Stack.Screen>
       <Stack.Screen name="Promotions"       component={PromotionsScreen}         options={{ title: 'Promotions' }} />
+      <Stack.Screen name="Commandes"        component={CommandesScreen}           options={{ title: 'Commandes' }} />
     </Stack.Navigator>
   );
 }

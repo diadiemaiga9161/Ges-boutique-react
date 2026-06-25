@@ -302,20 +302,28 @@ export default function VenteScreen() {
             <ActivityIndicator />
           ) : (
             <>
-              {niveauxDisponibles.map(n => (
-                <TouchableOpacity key={n.id} onPress={() => choisirNiveau(n)} style={styles.niveauCard}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: 'bold', fontSize: 15 }}>{n.nom}</Text>
-                    <Text style={{ fontSize: 12, color: '#555', marginTop: 2 }}>
-                      1 parent = {n.facteur} {n.nom} · Achat: {n.prixAchat} FCFA
-                    </Text>
-                    <Text style={{ fontSize: 12, marginTop: 2, color: (n.stock || 0) > 0 ? '#4caf50' : '#ff9800' }}>
-                      Stock: {n.stock || 0} (cascade auto si épuisé)
-                    </Text>
-                  </View>
-                  <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{n.prixVente} FCFA</Text>
-                </TouchableOpacity>
-              ))}
+              {niveauxDisponibles.map((n, i) => {
+                const parentNom = i === 0 ? (produitEnAttente?.nom || 'produit') : niveauxDisponibles[i - 1].nom;
+                return (
+                  <TouchableOpacity key={n.id} onPress={() => choisirNiveau(n)} style={styles.niveauCard}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: 'bold', fontSize: 15 }}>{n.nom}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: '#eff6ff', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e40af' }}>
+                          1 {parentNom} = {n.facteur} {n.nom}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#555', marginTop: 3 }}>
+                        Achat : {n.prixAchat} FCFA
+                      </Text>
+                      <Text style={{ fontSize: 12, marginTop: 2, color: (n.stock || 0) > 0 ? '#4caf50' : '#ff9800' }}>
+                        Stock : {n.stock || 0} {(n.stock || 0) === 0 ? '→ cascade auto depuis parent' : ''}
+                      </Text>
+                    </View>
+                    <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{n.prixVente} FCFA</Text>
+                  </TouchableOpacity>
+                );
+              })}
               <Button onPress={() => { ajouterSansNiveau(produitEnAttente!); setShowNiveauModal(false); setProduitEnAttente(null); }} style={{ marginTop: 8 }}>
                 Vendre sans niveau (produit de base)
               </Button>

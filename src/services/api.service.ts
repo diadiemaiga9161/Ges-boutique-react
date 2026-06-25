@@ -120,3 +120,10 @@ export const getPromotions = (params?: any) => api.get('/promotions', { params }
 export const createPromotion = (data: any) => api.post('/promotions', data);
 export const updatePromotion = (id: number, data: any) => api.put(`/promotions/${id}`, data);
 export const deletePromotion = (id: number) => api.delete(`/promotions/${id}`);
+
+// ─── Commandes ─────────────────────────────────────────────────────────────
+export const getCommandes = () => api.get('/commandes');
+export const createCommande = (data: any) => api.post('/commandes', data);
+export const updateCommande = (id: number, data: any) => api.put(`/commandes/${id}`, data);
+export const validerCommande = (id: number) => api.post(`/commandes/${id}/valider`, {});
+export const deleteCommande = (id: number) => api.delete(`/commandes/${id}`);

@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MENU_ITEMS = [
   { icon: 'history', label: 'Historique des ventes', screen: 'Historique' },
+  { icon: 'file-document-edit-outline', label: 'Commandes', screen: 'Commandes' },
   { icon: 'account-group', label: 'Clients', screen: 'Clients' },
   { icon: 'warehouse', label: 'Inventaire / Stock', screen: 'Inventaire' },
   { icon: 'cash-minus', label: 'Dépenses', screen: 'Depenses' },

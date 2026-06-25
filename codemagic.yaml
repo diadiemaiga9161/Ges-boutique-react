@@ -1,8 +1,8 @@
 workflows:
 
   android-workflow:
-    name: Ges Boutique RN - Android APK
-    max_build_duration: 60
+    name: Ges Boutique RN - Android APK Release
+    max_build_duration: 90
     instance_type: mac_mini_m2
 
     environment:
@@ -24,30 +24,93 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Activer bundle JS dans APK debug
+      - name: Generer keystore de signature
+        script: |
+          keytool -genkey -v \
+            -keystore ges-boutique.keystore \
+            -alias ges-boutique \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass GesBoutique2025 \
+            -keypass GesBoutique2025 \
+            -dname "CN=Ges Boutique, OU=Mobile, O=Boutique, L=Bamako, ST=Mali, C=ML"
+          ls -lh ges-boutique.keystore
+
+      - name: Configurer signature release + splits ABI
         script: |
           python3 -c "
-          content = open('android/app/build.gradle').read()
-          patched = content.replace('react {', 'react {\n    bundleInDebug = true', 1)
-          open('android/app/build.gradle', 'w').write(patched)
-          print('Patched OK' if 'bundleInDebug' in patched else 'ERREUR non patche')
+          import os, re
+
+          # --- app/build.gradle ---
+          gradle_path = 'android/app/build.gradle'
+          content = open(gradle_path).read()
+
+          # 1. Ajouter splits ABI (arm64 seulement = APK legers)
+          splits_block = '''
+              splits {
+                  abi {
+                      enable true
+                      reset()
+                      include 'arm64-v8a', 'armeabi-v7a'
+                      universalApk false
+                  }
+              }'''
+          if 'splits' not in content:
+              content = content.replace('buildTypes {', splits_block + '\n    buildTypes {')
+              print('Splits ABI ajoutes')
+          else:
+              print('Splits ABI deja presents')
+
+          # 2. Configurer signing pour release
+          keystore_abs = os.path.abspath('ges-boutique.keystore')
+          signing_block = '''
+              signingConfigs {
+                  release {
+                      storeFile file('${keystore_abs}')
+                      storePassword 'GesBoutique2025'
+                      keyAlias 'ges-boutique'
+                      keyPassword 'GesBoutique2025'
+                  }
+              }'''.replace('\${keystore_abs}', keystore_abs)
+          if 'signingConfigs' not in content:
+              content = content.replace('buildTypes {', signing_block + '\n    buildTypes {')
+              print('SigningConfigs ajoute')
+
+          # 3. Appliquer signing au buildType release
+          content = re.sub(
+              r'(release \{[^}]*?)(\})',
+              r'\1        signingConfig signingConfigs.release\n        minifyEnabled true\n        shrinkResources false\n        \2',
+              content,
+              count=1
+          )
+
+          open(gradle_path, 'w').write(content)
+          print('build.gradle patche OK')
+          print('Taille:', len(content), 'chars')
           "
 
-      - name: Build Android APK Debug
+      - name: Build Android APK Release
         script: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon 2>&1 | tail -80
 
-      - name: Copier APK a la racine
+      - name: Copier APK arm64 a la racine
         script: |
-          APK=$(find android -name "app-debug.apk" | head -1)
-          echo "APK: $APK"
+          # Chercher APK arm64 release
+          APK=$(find android -name "*arm64*release*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find android -name "*release*.apk" | head -1)
+          fi
+          if [ -z "$APK" ]; then
+            APK=$(find android -name "*.apk" | head -1)
+          fi
+          echo "APK trouve: $APK"
           cp "$APK" ges-boutique.apk
           ls -lh ges-boutique.apk
 
     artifacts:
       - ges-boutique.apk
+      - android/app/build/outputs/apk/release/*.apk
 
     publishing:
       email:
