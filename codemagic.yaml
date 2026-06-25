@@ -24,15 +24,9 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Generer keystore de signature
+      - name: Restaurer keystore permanent depuis secret Codemagic
         script: |
-          keytool -genkey -v \
-            -keystore ges-boutique.keystore \
-            -alias ges-boutique \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass GesBoutique2025 \
-            -keypass GesBoutique2025 \
-            -dname "CN=Ges Boutique, OU=Mobile, O=Boutique, L=Bamako, ST=Mali, C=ML"
+          echo "$KEYSTORE_BASE64" | base64 --decode > ges-boutique.keystore
           ls -lh ges-boutique.keystore
 
       - name: Configurer signature release + splits ABI
