@@ -8,6 +8,8 @@ workflows:
     environment:
       node: 22.16.0
       java: 17
+      groups:
+        - android-signing
 
     scripts:
       - name: Install dependencies
