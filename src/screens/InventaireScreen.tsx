@@ -5,6 +5,8 @@ import { getProduits } from '../services/api.service';
 import { getNiveaux, decomposer } from '../services/produit-niveau.service';
 import { Produit } from '../types';
 import { ProduitNiveau } from '../services/produit-niveau.service';
+import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import { IconButton } from 'react-native-paper';
 
 export default function InventaireScreen() {
   const [produits, setProduits] = useState<Produit[]>([]);
@@ -19,6 +21,7 @@ export default function InventaireScreen() {
   const [niveauxLoading, setNiveauxLoading] = useState<{ [id: number]: boolean }>({});
   const [expanded, setExpanded] = useState<number | null>(null);
   const [searchNiveaux, setSearchNiveaux] = useState('');
+  const [showScanner, setShowScanner] = useState(false);
 
   const charger = async () => {
     try {
@@ -173,7 +176,10 @@ export default function InventaireScreen() {
       ) : (
         /* ─── Vue stock normale ─── */
         <>
-          <Searchbar placeholder="Rechercher..." value={search} onChangeText={setSearch} style={styles.search} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 4 }}>
+            <Searchbar placeholder="Rechercher..." value={search} onChangeText={setSearch} style={[styles.search, { flex: 1, marginHorizontal: 0, marginBottom: 0 }]} />
+            <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
+          </View>
           <FlatList
             data={filtered}
             keyExtractor={p => String(p.id)}
@@ -195,6 +201,15 @@ export default function InventaireScreen() {
           />
         </>
       )}
+      <BarcodeScannerModal
+        visible={showScanner}
+        title="Scanner un produit"
+        onScan={code => {
+          setShowScanner(false);
+          setSearch(code);
+        }}
+        onClose={() => setShowScanner(false)}
+      />
     </View>
   );
 }

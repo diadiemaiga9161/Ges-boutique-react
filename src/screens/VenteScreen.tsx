@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, FlatList, StyleSheet, Alert, ScrollView, TouchableOpacity } from 'react-native';
-import { Text, Card, Button, Searchbar, ActivityIndicator, Chip, Divider, Modal, Portal, TextInput, RadioButton } from 'react-native-paper';
+import { Text, Card, Button, Searchbar, ActivityIndicator, Chip, Divider, Modal, Portal, TextInput, RadioButton, IconButton } from 'react-native-paper';
 import { getProduits, getClients } from '../services/api.service';
 import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database';
 import { enregistrerVente, getNombreVentesPending } from '../services/offline.service';
 import NetInfo from '@react-native-community/netinfo';
 import { Produit, Client, LigneVenteRequest } from '../types';
 import { ProduitNiveau, getNiveaux, calculerFacteurTotal } from '../services/produit-niveau.service';
+import BarcodeScannerModal from '../components/BarcodeScannerModal';
 
 interface CartItem {
   produit: Produit;
@@ -34,6 +35,7 @@ export default function VenteScreen() {
   const [montantRecu, setMontantRecu] = useState('');
   const [estCredit, setEstCredit] = useState(false);
   const [ventesPending, setVentesPending] = useState(0);
+  const [showScanner, setShowScanner] = useState(false);
   const [offline, setOffline] = useState(false);
 
   // Conditionnement
@@ -73,12 +75,23 @@ export default function VenteScreen() {
     setFiltered(produits.filter(p => p.nom.toLowerCase().includes(q)));
   }, [search, produits]);
 
+  const onCodeScanne = (code: string) => {
+    const found = produits.find(p =>
+      p.codeBarres === code || p.nom.toLowerCase() === code.toLowerCase()
+    );
+    if (found) {
+      ajouterAuPanier(found);
+    } else {
+      setSearch(code);
+      Alert.alert('Code scanné', `Code "${code}" non trouvé — affiché dans la recherche.`);
+    }
+  };
+
   const ajouterAuPanier = async (p: Produit) => {
     // Vérifier si le produit a des niveaux de conditionnement
     setLoadingNiveaux(true);
     try {
-      const res = await getNiveaux(p.id);
-      const niveaux: ProduitNiveau[] = res.data?.niveaux || [];
+      const niveaux: ProduitNiveau[] = await getNiveaux(p.id) || [];
       if (niveaux.length > 0) {
         setNiveauxDisponibles(niveaux);
         setProduitEnAttente(p);
@@ -235,7 +248,10 @@ export default function VenteScreen() {
       <View style={styles.body}>
         {/* Liste produits */}
         <View style={styles.left}>
-          <Searchbar placeholder="Produit..." value={search} onChangeText={setSearch} style={styles.search} />
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Searchbar placeholder="Produit..." value={search} onChangeText={setSearch} style={[styles.search, { flex: 1 }]} />
+            <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
+          </View>
           <FlatList
             data={filtered}
             keyExtractor={p => String(p.id)}
@@ -368,6 +384,12 @@ export default function VenteScreen() {
           </ScrollView>
         </Modal>
       </Portal>
+      <BarcodeScannerModal
+        visible={showScanner}
+        title="Scanner un produit"
+        onScan={onCodeScanne}
+        onClose={() => setShowScanner(false)}
+      />
     </View>
   );
 }

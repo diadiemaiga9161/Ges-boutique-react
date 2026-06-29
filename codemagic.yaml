@@ -88,7 +88,14 @@ workflows:
         script: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon 2>&1 | tail -80
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
+          BUILD_EXIT=${PIPESTATUS[0]}
+          tail -100 /tmp/gradle.log
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "=== GRADLE FAILED (exit $BUILD_EXIT) ==="
+            grep -E "error:|Error|FAILED|Exception|Could not" /tmp/gradle.log | head -80
+            exit $BUILD_EXIT
+          fi
 
       - name: Copier APK arm64 a la racine
         script: |

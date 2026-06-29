@@ -27,6 +27,15 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Autoriser Ges Boutique à accéder à votre caméra pour scanner les codes-barres.",
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "33ae3edf-feb7-4edf-9ab9-d1248270366b"

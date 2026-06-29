@@ -11,3 +11,7 @@ coverage
 *.apk
 *.aab
 *.ipa
+*.keystore
+*.jks
+ges-boutique-keystore-base64.txt
+codemagic.yaml
