@@ -26,13 +26,24 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build APK debug (test - pas de signature requise)
+      - name: Diagnostic structure Android
+        script: |
+          echo "=== Java version ==="
+          java -version
+          echo "=== Contenu android/ ==="
+          ls -la android/ || echo "Pas de dossier android/"
+          echo "=== Taches Gradle disponibles ==="
+          cd android && chmod +x gradlew && ./gradlew tasks --no-daemon 2>&1 | grep -i "assemble\|build\|apk" | head -20
+
+      - name: Build APK debug
         script: |
           cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          echo "=== Tous les APK generes ==="
-          find . -name "*.apk" | sort
+          ./gradlew assembleDebug --no-daemon --info 2>&1 | tail -50
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "=== Exit code Gradle: $EXIT_CODE ==="
+          echo "=== Recherche APK ==="
+          find . -name "*.apk" -type f | sort
+          exit $EXIT_CODE
 
       - name: Copier APK a la racine
         script: |
