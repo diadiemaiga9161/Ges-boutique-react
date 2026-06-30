@@ -26,86 +26,35 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Restaurer keystore permanent depuis secret Codemagic
+      - name: Restaurer keystore depuis secret Codemagic
         script: |
           echo "$KEYSTORE_BASE64" | base64 --decode > ges-boutique.keystore
           ls -lh ges-boutique.keystore
 
-      - name: Configurer signature release + splits ABI
-        script: |
-          python3 -c "
-          import os, re
-
-          # --- app/build.gradle ---
-          gradle_path = 'android/app/build.gradle'
-          content = open(gradle_path).read()
-
-          # 1. Ajouter splits ABI (arm64 seulement = APK legers)
-          splits_block = '''
-              splits {
-                  abi {
-                      enable true
-                      reset()
-                      include 'arm64-v8a', 'armeabi-v7a'
-                      universalApk false
-                  }
-              }'''
-          if 'splits' not in content:
-              content = content.replace('buildTypes {', splits_block + '\n    buildTypes {')
-              print('Splits ABI ajoutes')
-          else:
-              print('Splits ABI deja presents')
-
-          # 2. Configurer signing pour release
-          keystore_abs = os.path.abspath('ges-boutique.keystore')
-          signing_block = '''
-              signingConfigs {
-                  release {
-                      storeFile file('${keystore_abs}')
-                      storePassword 'GesBoutique2025'
-                      keyAlias 'ges-boutique'
-                      keyPassword 'GesBoutique2025'
-                  }
-              }'''.replace('\${keystore_abs}', keystore_abs)
-          if 'signingConfigs' not in content:
-              content = content.replace('buildTypes {', signing_block + '\n    buildTypes {')
-              print('SigningConfigs ajoute')
-
-          # 3. Appliquer signing au buildType release
-          content = re.sub(
-              r'(release \{[^}]*?)(\})',
-              r'\1        signingConfig signingConfigs.release\n        minifyEnabled true\n        shrinkResources false\n        \2',
-              content,
-              count=1
-          )
-
-          open(gradle_path, 'w').write(content)
-          print('build.gradle patche OK')
-          print('Taille:', len(content), 'chars')
-          "
-
-      - name: Build Android APK Release
+      - name: Build APK release (signature via proprietes Gradle)
         script: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          tail -100 /tmp/gradle.log
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "=== GRADLE FAILED (exit $BUILD_EXIT) ==="
-            grep -E "error:|Error|FAILED|Exception|Could not" /tmp/gradle.log | head -80
-            exit $BUILD_EXIT
-          fi
+          KEYSTORE_PATH=$(cd .. && pwd)/ges-boutique.keystore
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="GesBoutique2025" \
+            -Pandroid.injected.signing.key.alias="ges-boutique" \
+            -Pandroid.injected.signing.key.password="GesBoutique2025" \
+            --no-daemon 2>&1
+          echo "=== APK produits ==="
+          find . -name "*.apk" | sort
 
-      - name: Copier APK arm64 a la racine
+      - name: Copier APK a la racine
         script: |
-          # Chercher APK arm64 release
-          APK=$(find android -name "*arm64*release*.apk" | head -1)
-          if [ -z "$APK" ]; then
-            APK=$(find android -name "*release*.apk" | head -1)
-          fi
+          APK=$(find android -name "*.apk" -path "*/release/*" | head -1)
           if [ -z "$APK" ]; then
             APK=$(find android -name "*.apk" | head -1)
+          fi
+          if [ -z "$APK" ]; then
+            echo "ERREUR: Aucun APK trouve"
+            find android -name "*.apk" || true
+            exit 1
           fi
           echo "APK trouve: $APK"
           cp "$APK" ges-boutique.apk
@@ -113,7 +62,7 @@ workflows:
 
     artifacts:
       - ges-boutique.apk
-      - android/app/build/outputs/apk/release/*.apk
+      - android/app/build/outputs/apk/**/*.apk
 
     publishing:
       email:
