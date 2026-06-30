@@ -26,42 +26,31 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Restaurer keystore depuis secret Codemagic
-        script: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > ges-boutique.keystore
-          ls -lh ges-boutique.keystore
-
-      - name: Build APK release (signature via proprietes Gradle)
+      - name: Build APK debug (test - pas de signature requise)
         script: |
           cd android
           chmod +x gradlew
-          KEYSTORE_PATH=$(cd .. && pwd)/ges-boutique.keystore
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
-            -Pandroid.injected.signing.store.password="GesBoutique2025" \
-            -Pandroid.injected.signing.key.alias="ges-boutique" \
-            -Pandroid.injected.signing.key.password="GesBoutique2025" \
-            --no-daemon 2>&1
-          echo "=== APK produits ==="
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          echo "=== Tous les APK generes ==="
           find . -name "*.apk" | sort
 
       - name: Copier APK a la racine
         script: |
-          APK=$(find android -name "*.apk" -path "*/release/*" | head -1)
+          APK=$(find android -name "*debug*.apk" | head -1)
           if [ -z "$APK" ]; then
             APK=$(find android -name "*.apk" | head -1)
           fi
           if [ -z "$APK" ]; then
             echo "ERREUR: Aucun APK trouve"
-            find android -name "*.apk" || true
+            find android -type f -name "*.apk" || true
             exit 1
           fi
           echo "APK trouve: $APK"
-          cp "$APK" ges-boutique.apk
-          ls -lh ges-boutique.apk
+          cp "$APK" ges-boutique-debug.apk
+          ls -lh ges-boutique-debug.apk
 
     artifacts:
-      - ges-boutique.apk
+      - ges-boutique-debug.apk
       - android/app/build/outputs/apk/**/*.apk
 
     publishing:
