@@ -129,7 +129,10 @@ export default function VenteScreen() {
   const choisirNiveau = (niveau: ProduitNiveau) => {
     const p = produitEnAttente;
     if (!p) return;
-    const facteurTotal = calculerFacteurTotal(niveauxDisponibles, niveau.ordre);
+    // Utilise parentId si disponible (nouvelle API), sinon fallback ordre
+    const facteurTotal = niveau.id !== undefined
+      ? calculerFacteurTotal(niveauxDisponibles, niveau.id, true)
+      : calculerFacteurTotal(niveauxDisponibles, niveau.ordre ?? 1, false);
     setShowNiveauModal(false);
     setProduitEnAttente(null);
     setPanier(prev => {
@@ -320,8 +323,20 @@ export default function VenteScreen() {
             <>
               {niveauxDisponibles.map((n, i) => {
                 const parentNom = i === 0 ? (produitEnAttente?.nom || 'produit') : niveauxDisponibles[i - 1].nom;
+                const stockPropre = n.stock || 0;
+                const parent = i > 0 ? niveauxDisponibles[i - 1] : null;
+                const parentADuStock = parent ? (parent.stock || 0) > 0 : false;
+                const enRuptureTotale = stockPropre === 0 && !parentADuStock;
+                const stockColor = stockPropre > 0 ? '#16a34a' : (parentADuStock ? '#d97706' : '#dc2626');
+                const stockLabel = stockPropre > 0
+                  ? `Stock : ${stockPropre}`
+                  : (parentADuStock ? '(cascade)' : '(rupture)');
                 return (
-                  <TouchableOpacity key={n.id} onPress={() => choisirNiveau(n)} style={styles.niveauCard}>
+                  <TouchableOpacity
+                    key={n.id}
+                    onPress={() => { if (!enRuptureTotale) choisirNiveau(n); }}
+                    style={[styles.niveauCard, enRuptureTotale && { opacity: 0.45 }]}
+                    disabled={enRuptureTotale}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontWeight: 'bold', fontSize: 15 }}>{n.nom}</Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: '#eff6ff', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
@@ -332,8 +347,8 @@ export default function VenteScreen() {
                       <Text style={{ fontSize: 12, color: '#555', marginTop: 3 }}>
                         Achat : {n.prixAchat} FCFA
                       </Text>
-                      <Text style={{ fontSize: 12, marginTop: 2, color: (n.stock || 0) > 0 ? '#4caf50' : '#ff9800' }}>
-                        Stock : {n.stock || 0} {(n.stock || 0) === 0 ? '→ cascade auto depuis parent' : ''}
+                      <Text style={{ fontSize: 12, marginTop: 2, fontWeight: '600', color: stockColor }}>
+                        {stockLabel}
                       </Text>
                     </View>
                     <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{n.prixVente} FCFA</Text>

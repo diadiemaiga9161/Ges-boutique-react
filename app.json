@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#081648"
-    },
     "ios": {
       "supportsTablet": true
     },
@@ -21,9 +16,9 @@
         "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "newArchEnabled": false
+      "predictiveBackGestureEnabled": false
     },
+    "newArchEnabled": true,
     "web": {
       "favicon": "./assets/favicon.png"
     },

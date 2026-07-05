@@ -1,18 +1,19 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert, Modal,
-  ScrollView, KeyboardAvoidingView, Platform,
+  ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity,
 } from 'react-native';
 import {
   Text, Card, FAB, Searchbar, Chip, ActivityIndicator,
   TextInput, Button, IconButton, Divider,
 } from 'react-native-paper';
+import * as Print from 'expo-print';
 import { getProduits, deleteProduit } from '../services/api.service';
 import { cacheProduits, getProduitsCache } from '../db/database';
 import { creerProduitOffline, modifierProduitOffline, getNombreProduitsPending } from '../services/offline.service';
 import NetInfo from '@react-native-community/netinfo';
 import { Produit } from '../types';
-import { getNiveaux, creerNiveau, modifierNiveau, supprimerNiveau, ProduitNiveau } from '../services/produit-niveau.service';
+import { getNiveaux, creerNiveau, modifierNiveau, supprimerNiveau, decomposer, ProduitNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 
 interface FormProduit {
@@ -53,9 +54,9 @@ export default function ProduitsScreen() {
   const [niveaux, setNiveaux] = useState<ProduitNiveau[]>([]);
   const [loadingNiveaux, setLoadingNiveaux] = useState(false);
   const [savingNiveau, setSavingNiveau] = useState(false);
-  const [formNiveau, setFormNiveau] = useState({ nom: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+  const [formNiveau, setFormNiveau] = useState({ nom: '', parentId: '' as string, facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
   const [editingNiveauId, setEditingNiveauId] = useState<number | null>(null);
-  const [formEditNiveau, setFormEditNiveau] = useState({ nom: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+  const [formEditNiveau, setFormEditNiveau] = useState({ nom: '', parentId: '' as string, facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
 
   const charger = useCallback(async () => {
     const state = await NetInfo.fetch();
@@ -178,6 +179,34 @@ export default function ProduitsScreen() {
   };
 
   // ==================== NIVEAUX ====================
+
+  // Construit la chaîne ordonnée depuis la racine vers les feuilles en suivant parentId
+  const buildNiveauxChaine = (niveaux: ProduitNiveau[]): ProduitNiveau[] => {
+    const roots = niveaux.filter(n => !n.parentId);
+    const result: ProduitNiveau[] = [];
+    const addWithChildren = (n: ProduitNiveau) => {
+      result.push(n);
+      niveaux.filter(c => c.parentId === n.id).forEach(addWithChildren);
+    };
+    roots.forEach(addWithChildren);
+    // Si aucune racine trouvée (ancienne API sans parentId), retourner tel quel trié par ordre
+    if (result.length === 0 && niveaux.length > 0) {
+      return [...niveaux].sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
+    }
+    return result;
+  };
+
+  const nomParentNiveau = (niveau: ProduitNiveau, liste: ProduitNiveau[]): string => {
+    if (!niveau.parentId) return '';
+    return liste.find(n => n.id === niveau.parentId)?.nom || '';
+  };
+
+  const labelFacteur = (niveau: ProduitNiveau, liste: ProduitNiveau[]): string => {
+    const parent = nomParentNiveau(niveau, liste);
+    if (!parent) return 'Quantite par unite superieure';
+    return `Combien de ${niveau.nom || '...'} dans 1 ${parent} ?`;
+  };
+
   const rechargerNiveaux = async (produitId: number) => {
     const data = await getNiveaux(produitId);
     setNiveaux(data);
@@ -187,7 +216,7 @@ export default function ProduitsScreen() {
     setProduitCourant(p);
     setShowNiveauxModal(true);
     setEditingNiveauId(null);
-    setFormNiveau({ nom: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+    setFormNiveau({ nom: '', parentId: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
     setLoadingNiveaux(true);
     try {
       const data = await getNiveaux(p.id);
@@ -201,20 +230,23 @@ export default function ProduitsScreen() {
 
   const ajouterNiveauFn = async () => {
     if (!produitCourant || !formNiveau.nom.trim()) { Alert.alert('Erreur', 'Nom du niveau obligatoire'); return; }
-    if (Number(formNiveau.facteur) < 1) { Alert.alert('Erreur', 'Contient doit être >= 1'); return; }
+    // Le facteur n'est requis que si un parent est choisi
+    const hasParent = !!formNiveau.parentId;
+    if (hasParent && Number(formNiveau.facteur) < 1) { Alert.alert('Erreur', 'La quantite doit etre >= 1'); return; }
     if (Number(formNiveau.prixVente) <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
     setSavingNiveau(true);
     try {
-      const ordre = niveaux.length > 0 ? Math.max(...niveaux.map(n => n.ordre)) + 1 : 1;
+      const parentIdVal = formNiveau.parentId ? Number(formNiveau.parentId) : undefined;
       await creerNiveau(produitCourant.id, {
-        nom: formNiveau.nom.trim(), ordre,
-        facteur: Number(formNiveau.facteur),
+        nom: formNiveau.nom.trim(),
+        parentId: parentIdVal,
+        facteur: hasParent ? Number(formNiveau.facteur) : 1,
         prixAchat: Number(formNiveau.prixAchat),
         prixVente: Number(formNiveau.prixVente),
         stock: Number(formNiveau.stock),
       });
       await rechargerNiveaux(produitCourant.id);
-      setFormNiveau({ nom: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+      setFormNiveau({ nom: '', parentId: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
     } catch (e: any) {
       Alert.alert('Erreur', e.response?.data?.message || 'Ajout impossible');
     } finally {
@@ -224,15 +256,24 @@ export default function ProduitsScreen() {
 
   const ouvrirEditNiveau = (n: ProduitNiveau) => {
     setEditingNiveauId(n.id!);
-    setFormEditNiveau({ nom: n.nom, facteur: String(n.facteur), prixAchat: String(n.prixAchat), prixVente: String(n.prixVente), stock: String(n.stock ?? 0) });
+    setFormEditNiveau({
+      nom: n.nom,
+      parentId: n.parentId !== undefined && n.parentId !== null ? String(n.parentId) : '',
+      facteur: String(n.facteur),
+      prixAchat: String(n.prixAchat),
+      prixVente: String(n.prixVente),
+      stock: String(n.stock ?? 0),
+    });
   };
 
   const sauvegarderEditNiveauFn = async () => {
     if (!editingNiveauId || !produitCourant) return;
     setSavingNiveau(true);
     try {
+      const parentIdVal = formEditNiveau.parentId ? Number(formEditNiveau.parentId) : undefined;
       await modifierNiveau(editingNiveauId, {
         nom: formEditNiveau.nom.trim(),
+        parentId: parentIdVal,
         facteur: Number(formEditNiveau.facteur),
         prixAchat: Number(formEditNiveau.prixAchat),
         prixVente: Number(formEditNiveau.prixVente),
@@ -267,6 +308,55 @@ export default function ProduitsScreen() {
     return '#4caf50';
   };
 
+  const genererPdfStock = async () => {
+    const liste = filtered.length > 0 ? filtered : produits;
+    const totalArticles = liste.reduce((s, p) => s + (p.quantite || 0), 0);
+    const valeurTotale = liste.reduce((s, p) => s + (p.quantite || 0) * (p.prixVente || 0), 0);
+    const date = new Date().toLocaleDateString('fr-FR');
+    const lignes = liste.map((p, i) => {
+      const qColor = p.quantite === 0 ? '#ef4444' : (p.quantite <= (p.seuilAlerte || 5) ? '#d97706' : '#16a34a');
+      const qLabel = p.quantite === 0 ? 'Rupture' : (p.quantite <= (p.seuilAlerte || 5) ? 'Faible' : 'OK');
+      return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;font-weight:600">${p.nom}</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;color:#64748b">${p.categorie || '—'}</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:center"><span style="background:${qColor}22;color:${qColor};border-radius:4px;padding:2px 8px;font-weight:700;font-size:11px">${p.quantite || 0} · ${qLabel}</span></td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right">${(p.prixAchat || 0).toLocaleString('fr-FR')} FCFA</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${(p.prixVente || 0).toLocaleString('fr-FR')} FCFA</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;color:#1d4ed8">${((p.quantite || 0) * (p.prixVente || 0)).toLocaleString('fr-FR')} FCFA</td>
+      </tr>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Stock Produits</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:20px;font-size:12px;background:#f0f4f8}
+.sheet{background:#fff;max-width:960px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+.hdr{background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;padding:24px;display:flex;justify-content:space-between;align-items:center}
+.hdr h1{font-size:20px;font-weight:900}.hdr p{font-size:12px;opacity:.7;margin-top:4px}
+.kpis{display:flex;padding:16px 24px;gap:12px;border-bottom:1px solid #e5e7eb}
+.kpi{flex:1;border-radius:8px;padding:12px;text-align:center}
+.kpi-val{font-size:18px;font-weight:900}.kpi-lbl{font-size:10px;color:#64748b;margin-top:2px;text-transform:uppercase}
+.kpi--b{background:#dbeafe;color:#1d4ed8}.kpi--s{background:#f1f5f9;color:#475569}.kpi--g{background:#dcfce7;color:#15803d}
+.body{padding:20px 24px}
+table{width:100%;border-collapse:collapse}
+thead th{background:#1d4ed8;color:#fff;padding:9px 8px;font-size:11px;font-weight:700;text-align:left}
+td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
+.ftr{background:#eff6ff;text-align:center;padding:14px;font-size:10px;color:#1e40af}
+</style></head><body>
+<div class="sheet">
+<div class="hdr"><div><h1>Stock Produits</h1><p>Ges Boutique · ${date}</p></div>
+<img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('Stock ' + date + ' ' + liste.length + ' produits')}" width="80" height="80" style="border-radius:6px;background:#fff;padding:3px"></div>
+<div class="kpis">
+<div class="kpi kpi--b"><div class="kpi-val">${liste.length}</div><div class="kpi-lbl">Produits</div></div>
+<div class="kpi kpi--s"><div class="kpi-val">${totalArticles}</div><div class="kpi-lbl">Total articles</div></div>
+<div class="kpi kpi--g"><div class="kpi-val">${valeurTotale.toLocaleString('fr-FR')} FCFA</div><div class="kpi-lbl">Valeur stock</div></div>
+</div>
+<div class="body">
+<table><thead><tr><th>Produit</th><th>Catégorie</th><th>Stock</th><th>P. Achat</th><th>P. Vente</th><th>Valeur</th></tr></thead>
+<tbody>${lignes || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">Aucun produit</td></tr>'}</tbody></table>
+</div>
+<div class="ftr">Ges Boutique · Stock · ${date} · ${liste.length} produit(s)</div>
+</div></body></html>`;
+    try { await Print.printAsync({ html }); } catch { Alert.alert('Erreur', 'Impossible de générer le PDF'); }
+  };
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
@@ -286,12 +376,20 @@ export default function ProduitsScreen() {
         </View>
       )}
 
-      <Searchbar
-        placeholder="Rechercher un produit..."
-        value={search}
-        onChangeText={setSearch}
-        style={styles.search}
-      />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
+        <Searchbar
+          placeholder="Rechercher un produit..."
+          value={search}
+          onChangeText={setSearch}
+          style={[styles.search, { flex: 1, margin: 0 }]}
+        />
+        <TouchableOpacity
+          onPress={genererPdfStock}
+          style={{ backgroundColor: '#1d4ed8', borderRadius: 8, padding: 10 }}
+        >
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>PDF</Text>
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         data={filtered}
@@ -415,106 +513,244 @@ export default function ProduitsScreen() {
           ) : (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 
+              {/* Chaine visuelle des niveaux */}
+              {niveaux.length > 0 && (
+                <View style={nStyles.chaineContainer}>
+                  {buildNiveauxChaine(niveaux).map((n, i, arr) => (
+                    <View key={n.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={nStyles.chaineBadge}>
+                        <Text style={nStyles.chaineNom}>{n.nom}</Text>
+                      </View>
+                      {i < arr.length - 1 && (
+                        <Text style={nStyles.chaineArrow}> → </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
               {/* Liste des niveaux existants */}
               {niveaux.length === 0 && (
                 <Text style={{ textAlign: 'center', color: '#94a3b8', marginBottom: 20, marginTop: 10 }}>
-                  Aucun niveau défini pour ce produit
+                  Aucun niveau defini pour ce produit
                 </Text>
               )}
 
-              {niveaux.map((n, i) => (
-                <View key={n.id} style={nStyles.niveauCard}>
-                  {editingNiveauId === n.id ? (
-                    /* Mode édition */
-                    <View>
-                      <Text style={nStyles.niveauEditTitle}>Modifier {n.nom}</Text>
-                      <TextInput label="Nom du niveau (ex: Paquet, Pièce)" value={formEditNiveau.nom}
-                        onChangeText={v => setFormEditNiveau(f => ({ ...f, nom: v }))}
-                        style={nStyles.inp} mode="outlined" />
-                      <TextInput
-                        label={`1 ${i === 0 ? (produitCourant?.nom || 'unité parente') : niveaux[i - 1].nom} contient`}
-                        value={formEditNiveau.facteur}
-                        onChangeText={v => setFormEditNiveau(f => ({ ...f, facteur: v }))}
-                        keyboardType="numeric" style={nStyles.inp} mode="outlined" />
-                      <View style={nStyles.row2}>
-                        <TextInput label="Prix achat" value={formEditNiveau.prixAchat}
-                          onChangeText={v => setFormEditNiveau(f => ({ ...f, prixAchat: v }))}
-                          keyboardType="numeric" style={[nStyles.inp, { flex: 1, marginRight: 6 }]} mode="outlined" />
-                        <TextInput label="Prix vente" value={formEditNiveau.prixVente}
-                          onChangeText={v => setFormEditNiveau(f => ({ ...f, prixVente: v }))}
-                          keyboardType="numeric" style={[nStyles.inp, { flex: 1 }]} mode="outlined" />
-                      </View>
-                      <TextInput label="Stock actuel" value={formEditNiveau.stock}
-                        onChangeText={v => setFormEditNiveau(f => ({ ...f, stock: v }))}
-                        keyboardType="numeric" style={nStyles.inp} mode="outlined" />
-                      <View style={nStyles.row2}>
-                        <Button mode="contained" onPress={sauvegarderEditNiveauFn} loading={savingNiveau}
-                          style={{ flex: 1, marginRight: 6 }} buttonColor="#7c3aed">Enregistrer</Button>
-                        <Button mode="outlined" onPress={() => setEditingNiveauId(null)}
-                          style={{ flex: 1 }}>Annuler</Button>
-                      </View>
-                    </View>
-                  ) : (
-                    /* Mode affichage */
-                    <View>
-                      <View style={nStyles.niveauHeader}>
-                        <Text style={nStyles.niveauNom}>{n.nom}</Text>
-                        <View style={nStyles.niveauActions}>
-                          <IconButton icon="pencil" size={18} iconColor="#1a56db" onPress={() => ouvrirEditNiveau(n)} />
-                          <IconButton icon="delete" size={18} iconColor="#f44336" onPress={() => supprimerNiveauFn(n)} />
+              {buildNiveauxChaine(niveaux).map(n => {
+                const parentNom = nomParentNiveau(n, niveaux);
+                return (
+                  <View key={n.id} style={nStyles.niveauCard}>
+                    {editingNiveauId === n.id ? (
+                      /* Mode edition */
+                      <View>
+                        <Text style={nStyles.niveauEditTitle}>Modifier {n.nom}</Text>
+                        <TextInput label="Nom de l'emballage (ex: Carton, Sachet, Piece)"
+                          value={formEditNiveau.nom}
+                          onChangeText={v => setFormEditNiveau(f => ({ ...f, nom: v }))}
+                          style={nStyles.inp} mode="outlined" />
+
+                        {/* Selecteur parent */}
+                        <Text style={nStyles.selectLabel}>Il est contenu dans :</Text>
+                        <View style={nStyles.parentSelect}>
+                          <TouchableOpacity
+                            style={[nStyles.parentOption, !formEditNiveau.parentId && nStyles.parentOptionActive]}
+                            onPress={() => setFormEditNiveau(f => ({ ...f, parentId: '', facteur: '1' }))}
+                          >
+                            <Text style={[nStyles.parentOptionText, !formEditNiveau.parentId && nStyles.parentOptionTextActive]}>
+                              C'est le plus grand
+                            </Text>
+                          </TouchableOpacity>
+                          {niveaux.filter(pn => pn.id !== n.id).map(pn => (
+                            <TouchableOpacity
+                              key={pn.id}
+                              style={[nStyles.parentOption, formEditNiveau.parentId === String(pn.id) && nStyles.parentOptionActive]}
+                              onPress={() => setFormEditNiveau(f => ({ ...f, parentId: String(pn.id) }))}
+                            >
+                              <Text style={[nStyles.parentOptionText, formEditNiveau.parentId === String(pn.id) && nStyles.parentOptionTextActive]}>
+                                {pn.nom}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+
+                        {formEditNiveau.parentId !== '' && (
+                          <TextInput
+                            label={labelFacteur(
+                              { ...n, nom: formEditNiveau.nom || n.nom, parentId: Number(formEditNiveau.parentId) },
+                              niveaux
+                            )}
+                            value={formEditNiveau.facteur}
+                            onChangeText={v => setFormEditNiveau(f => ({ ...f, facteur: v }))}
+                            keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+                        )}
+
+                        <View style={nStyles.row2}>
+                          <TextInput label="Prix achat (FCFA)" value={formEditNiveau.prixAchat}
+                            onChangeText={v => setFormEditNiveau(f => ({ ...f, prixAchat: v }))}
+                            keyboardType="numeric" style={[nStyles.inp, { flex: 1, marginRight: 6 }]} mode="outlined" />
+                          <TextInput label="Prix vente (FCFA)" value={formEditNiveau.prixVente}
+                            onChangeText={v => setFormEditNiveau(f => ({ ...f, prixVente: v }))}
+                            keyboardType="numeric" style={[nStyles.inp, { flex: 1 }]} mode="outlined" />
+                        </View>
+                        <TextInput label="Stock actuel" value={formEditNiveau.stock}
+                          onChangeText={v => setFormEditNiveau(f => ({ ...f, stock: v }))}
+                          keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+                        <View style={nStyles.row2}>
+                          <Button mode="contained" onPress={sauvegarderEditNiveauFn} loading={savingNiveau}
+                            style={{ flex: 1, marginRight: 6 }} buttonColor="#7c3aed">Enregistrer</Button>
+                          <Button mode="outlined" onPress={() => setEditingNiveauId(null)}
+                            style={{ flex: 1 }}>Annuler</Button>
                         </View>
                       </View>
-                      <View style={nStyles.contientBadge}>
-                        <Text style={nStyles.contientText}>
-                          1 {i === 0 ? (produitCourant?.nom || '—') : niveaux[i - 1].nom} contient {n.facteur} {n.nom}
-                        </Text>
-                      </View>
-                      <Text style={nStyles.prix}>
-                        Achat : {n.prixAchat} FCFA  ·  Vente : {n.prixVente} FCFA
-                      </Text>
-                      <View style={nStyles.stockRow}>
-                        <Text style={nStyles.stockLabel}>Stock :</Text>
-                        <View style={nStyles.stockBadge}>
-                          <Text style={nStyles.stockVal}>{n.stock ?? 0}</Text>
+                    ) : (
+                      /* Mode affichage */
+                      <View>
+                        <View style={nStyles.niveauHeader}>
+                          <Text style={nStyles.niveauNom}>{n.nom}</Text>
+                          <View style={nStyles.niveauActions}>
+                            <IconButton icon="pencil" size={18} iconColor="#1a56db" onPress={() => ouvrirEditNiveau(n)} />
+                            <IconButton icon="delete" size={18} iconColor="#f44336" onPress={() => supprimerNiveauFn(n)} />
+                          </View>
                         </View>
-                        <Text style={{ color: '#94a3b8', fontSize: 11 }}>(modifiable via crayon)</Text>
+
+                        {/* Relation parent → enfant */}
+                        {parentNom ? (
+                          <View style={nStyles.contientBadge}>
+                            <Text style={nStyles.contientText}>
+                              1 {parentNom} = {n.facteur} {n.nom}
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={[nStyles.contientBadge, { backgroundColor: '#fdf4ff' }]}>
+                            <Text style={[nStyles.contientText, { color: '#7c3aed' }]}>
+                              Plus grand emballage
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* Prix achat et vente — exigence client */}
+                        <View style={nStyles.prixRow}>
+                          <View style={nStyles.prixBox}>
+                            <Text style={nStyles.prixLabel}>Achat</Text>
+                            <Text style={nStyles.prixAchatVal}>{n.prixAchat.toLocaleString('fr-FR')} F</Text>
+                          </View>
+                          <View style={[nStyles.prixBox, { backgroundColor: '#f0fdf4' }]}>
+                            <Text style={[nStyles.prixLabel, { color: '#15803d' }]}>Vente</Text>
+                            <Text style={nStyles.prixVenteVal}>{n.prixVente.toLocaleString('fr-FR')} F</Text>
+                          </View>
+                        </View>
+
+                        <View style={nStyles.stockRow}>
+                          <Text style={nStyles.stockLabel}>Stock :</Text>
+                          <View style={nStyles.stockBadge}>
+                            <Text style={nStyles.stockVal}>{n.stock ?? 0}</Text>
+                          </View>
+                          <Text style={{ color: '#94a3b8', fontSize: 11 }}>(modifiable via crayon)</Text>
+                        </View>
+
+                        {/* Bouton decomposer si ce niveau a un enfant */}
+                        {niveaux.some(c => c.parentId === n.id) && (
+                          <TouchableOpacity
+                            style={nStyles.decomposerBtn}
+                            onPress={async () => {
+                              const enfants = niveaux.filter(c => c.parentId === n.id);
+                              const enfant = enfants[0];
+                              Alert.alert(
+                                'Ouvrir 1 ' + n.nom,
+                                `Decomposer 1 ${n.nom} en ${n.facteur} ${enfant?.nom || 'unites'} ?`,
+                                [
+                                  { text: 'Annuler', style: 'cancel' },
+                                  {
+                                    text: 'Ouvrir', onPress: async () => {
+                                      try {
+                                        const res = await decomposer(n.id!);
+                                        Alert.alert('OK', res.message || 'Decompose avec succes');
+                                        if (produitCourant) await rechargerNiveaux(produitCourant.id);
+                                      } catch (e: any) {
+                                        Alert.alert('Erreur', e.response?.data?.message || 'Impossible de decomposer');
+                                      }
+                                    }
+                                  },
+                                ]
+                              );
+                            }}
+                          >
+                            <Text style={nStyles.decomposerText}>
+                              Ouvrir 1 {n.nom} → {n.facteur} {niveaux.find(c => c.parentId === n.id)?.nom || 'unites'}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                    </View>
-                  )}
-                </View>
-              ))}
+                    )}
+                  </View>
+                );
+              })}
 
               <Divider style={{ marginVertical: 16 }} />
 
               {/* Formulaire ajouter un niveau */}
               <View style={nStyles.addSection}>
-                <Text style={nStyles.addTitle}>+ Ajouter un niveau</Text>
+                <Text style={nStyles.addTitle}>+ Ajouter un emballage</Text>
                 <Text style={nStyles.addHint}>
-                  Ex : 1 {produitCourant?.nom || 'Carton'} contient 6 Paquets → nom = "Paquet", contient = 6
+                  Ex : Carton contient 20 Sachets → nom = "Sachet", contenu dans = "Carton"
                 </Text>
-                <TextInput label="Nom du niveau (ex: Paquet, Pièce)" value={formNiveau.nom}
+
+                <TextInput label="Nom de l'emballage (ex: Carton, Sachet, Piece)"
+                  value={formNiveau.nom}
                   onChangeText={v => setFormNiveau(f => ({ ...f, nom: v }))}
                   style={nStyles.inp} mode="outlined" />
-                <TextInput
-                  label={`1 ${niveaux.length === 0 ? (produitCourant?.nom || 'unité parente') : niveaux[niveaux.length - 1].nom} contient`}
-                  value={formNiveau.facteur}
-                  onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
-                  keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                {/* Selecteur parent : "Il est contenu dans :" */}
+                <Text style={nStyles.selectLabel}>Il est contenu dans :</Text>
+                <View style={nStyles.parentSelect}>
+                  <TouchableOpacity
+                    style={[nStyles.parentOption, formNiveau.parentId === '' && nStyles.parentOptionActive]}
+                    onPress={() => setFormNiveau(f => ({ ...f, parentId: '', facteur: '1' }))}
+                  >
+                    <Text style={[nStyles.parentOptionText, formNiveau.parentId === '' && nStyles.parentOptionTextActive]}>
+                      C'est le plus grand
+                    </Text>
+                  </TouchableOpacity>
+                  {niveaux.map(pn => (
+                    <TouchableOpacity
+                      key={pn.id}
+                      style={[nStyles.parentOption, formNiveau.parentId === String(pn.id) && nStyles.parentOptionActive]}
+                      onPress={() => setFormNiveau(f => ({ ...f, parentId: String(pn.id) }))}
+                    >
+                      <Text style={[nStyles.parentOptionText, formNiveau.parentId === String(pn.id) && nStyles.parentOptionTextActive]}>
+                        {pn.nom}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Facteur — visible uniquement si un parent est choisi */}
+                {formNiveau.parentId !== '' && (
+                  <TextInput
+                    label={labelFacteur(
+                      { nom: formNiveau.nom, parentId: Number(formNiveau.parentId), facteur: Number(formNiveau.facteur), prixAchat: 0, prixVente: 0 },
+                      niveaux
+                    )}
+                    value={formNiveau.facteur}
+                    onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
+                    keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+                )}
+
                 <View style={nStyles.row2}>
-                  <TextInput label="Prix achat" value={formNiveau.prixAchat}
+                  <TextInput label="Prix achat (FCFA)" value={formNiveau.prixAchat}
                     onChangeText={v => setFormNiveau(f => ({ ...f, prixAchat: v }))}
                     keyboardType="numeric" style={[nStyles.inp, { flex: 1, marginRight: 6 }]} mode="outlined" />
-                  <TextInput label="Prix vente *" value={formNiveau.prixVente}
+                  <TextInput label="Prix vente (FCFA) *" value={formNiveau.prixVente}
                     onChangeText={v => setFormNiveau(f => ({ ...f, prixVente: v }))}
                     keyboardType="numeric" style={[nStyles.inp, { flex: 1 }]} mode="outlined" />
                 </View>
-                <TextInput label="Stock initial" value={formNiveau.stock}
+                <TextInput label="Stock actuel" value={formNiveau.stock}
                   onChangeText={v => setFormNiveau(f => ({ ...f, stock: v }))}
                   keyboardType="numeric" style={nStyles.inp} mode="outlined" />
                 <Button mode="contained" onPress={ajouterNiveauFn} loading={savingNiveau}
                   style={{ marginTop: 8, borderRadius: 10 }} contentStyle={{ height: 48 }}
                   buttonColor="#16a34a" icon="plus">
-                  Ajouter ce niveau
+                  Ajouter cet emballage
                 </Button>
               </View>
 
@@ -528,18 +764,42 @@ export default function ProduitsScreen() {
 }
 
 const nStyles = StyleSheet.create({
+  // Chaine visuelle
+  chaineContainer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, marginBottom: 14 },
+  chaineBadge: { backgroundColor: '#1a56db', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  chaineNom: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  chaineArrow: { color: '#64748b', fontSize: 18, fontWeight: '700' },
+  // Cartes niveaux
   niveauCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, elevation: 2 },
   niveauHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  niveauNom: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  niveauNom: { fontSize: 16, fontWeight: '700', color: '#0f172a', flex: 1 },
   niveauActions: { flexDirection: 'row' },
-  contientBadge: { backgroundColor: '#eff6ff', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, alignSelf: 'flex-start', marginVertical: 6 },
+  contientBadge: { backgroundColor: '#eff6ff', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, alignSelf: 'flex-start', marginTop: 6, marginBottom: 10 },
   contientText: { color: '#1e40af', fontSize: 13, fontWeight: '600' },
-  prix: { color: '#64748b', fontSize: 12, marginBottom: 8 },
-  stockRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // Prix achat + vente cote a cote
+  prixRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  prixBox: { flex: 1, backgroundColor: '#fef2f2', borderRadius: 8, padding: 8, alignItems: 'center' },
+  prixLabel: { fontSize: 10, color: '#ef4444', fontWeight: '700', textTransform: 'uppercase', marginBottom: 2 },
+  prixAchatVal: { fontSize: 15, fontWeight: '800', color: '#b91c1c' },
+  prixVenteVal: { fontSize: 15, fontWeight: '800', color: '#15803d' },
+  // Stock
+  stockRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   stockLabel: { color: '#64748b', fontSize: 13, marginRight: 8 },
   stockBadge: { backgroundColor: '#e0e7ff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3, marginRight: 6 },
   stockVal: { color: '#3730a3', fontWeight: '700', fontSize: 14 },
+  // Bouton decomposer
+  decomposerBtn: { backgroundColor: '#fff7ed', borderRadius: 8, borderWidth: 1, borderColor: '#fdba74', paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', marginTop: 4 },
+  decomposerText: { color: '#c2410c', fontWeight: '600', fontSize: 13 },
+  // Formulaire edition
   niveauEditTitle: { fontWeight: '700', color: '#7c3aed', marginBottom: 10 },
+  // Selecteur parent
+  selectLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6, marginTop: 4 },
+  parentSelect: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  parentOption: { borderRadius: 20, borderWidth: 1.5, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#f8fafc' },
+  parentOptionActive: { borderColor: '#7c3aed', backgroundColor: '#faf5ff' },
+  parentOptionText: { fontSize: 13, color: '#64748b', fontWeight: '500' },
+  parentOptionTextActive: { color: '#7c3aed', fontWeight: '700' },
+  // Formulaire ajout
   addSection: { backgroundColor: '#f0fdf4', borderRadius: 12, padding: 14 },
   addTitle: { fontSize: 15, fontWeight: '700', color: '#15803d', marginBottom: 4 },
   addHint: { color: '#64748b', fontSize: 12, marginBottom: 12 },

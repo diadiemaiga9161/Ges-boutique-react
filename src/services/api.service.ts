@@ -55,6 +55,9 @@ export const getVentes = (params?: any) => api.get('/ventes', { params });
 export const getVentesJour = (params?: any) => api.get('/ventes/jour', { params });
 export const createVente = (data: any) => api.post('/ventes', data);
 export const annulerVente = (id: number) => api.delete(`/ventes/${id}`);
+export const getVenteDetail = (id: number) => api.get(`/ventes/${id}`);
+export const getVentesParPeriode = (dateDebut: string, dateFin: string) =>
+  api.get('/ventes/periode', { params: { dateDebut, dateFin } });
 
 // ─── Clients ───────────────────────────────────────────────────────────────
 export const getClients = (params?: any) => api.get('/clients', { params });
@@ -67,6 +70,12 @@ export const getFournisseurs = (params?: any) => api.get('/fournisseurs', { para
 export const createFournisseur = (data: any) => api.post('/fournisseurs', data);
 export const updateFournisseur = (id: number, data: any) => api.put(`/fournisseurs/${id}`, data);
 export const deleteFournisseur = (id: number) => api.delete(`/fournisseurs/${id}`);
+export const getHistoriqueAchatsFournisseur = (id: number) => api.get(`/fournisseur-achats/achats/${id}`);
+export const getHistoriquePaiementsFournisseur = (id: number) => api.get(`/fournisseur-achats/paiements/${id}`);
+export const getSituationFournisseur = (id: number) => api.get(`/fournisseur-achats/situation/${id}`);
+export const creerAchatFournisseur = (data: any) => api.post('/fournisseur-achats/achat', data);
+export const payerFournisseur = (data: any) => api.post('/fournisseur-achats/paiement', data);
+export const annulerAchatFournisseur = (id: number) => api.post(`/fournisseur-achats/achat/${id}/annuler`, {});
 
 // ─── Dépenses ──────────────────────────────────────────────────────────────
 export const getDepenses = (params?: any) => api.get('/depenses', { params });
@@ -85,13 +94,34 @@ export const marquerLue = (id: number) => api.patch(`/notifications/${id}/lue`);
 
 // ─── Crédits ───────────────────────────────────────────────────────────────
 export const getCredits = (params?: any) => api.get('/credits', { params });
+export const getCreditsNonRegles = () => api.get('/caisse/credits/non-regles');
 export const createCredit = (data: any) => api.post('/credits', data);
 export const payerCredit = (id: number, data: any) => api.post(`/credits/${id}/payer`, data);
 
 // ─── Caisse ────────────────────────────────────────────────────────────────
 export const getCaisse = (params?: any) => api.get('/caisse', { params });
+export const getCaisseEtat = () => api.get('/caisse/etat');
 export const ouvrirCaisse = (data: any) => api.post('/caisse/ouvrir', data);
 export const fermerCaisse = (data: any) => api.post('/caisse/fermer', data);
+export const getOperationsJour = () => api.get('/caisse/operations/aujourdhui');
+export const getOperationsParPeriode = (dateDebut: string, dateFin: string) =>
+  api.get('/caisse/operations/periode', { params: { dateDebut, dateFin } });
+export const ajouterEntreeCaisse = (data: any) => api.post('/caisse/entree', data);
+export const ajouterSortieCaisse = (data: any) => api.post('/caisse/sortie', data);
+export const reglerCreditCaisse = (data: {
+  venteCreditId: number;
+  montantRegle: number;
+  modePaiement?: string;
+  referencePaiement?: string;
+  utilisateurId?: number;
+  motif?: string;
+  referenceGroupe?: string;
+}) => api.post('/caisse/credits/reglement', data);
+export const getCreditsEnRetard = () => api.get('/caisse/credits/retard');
+export const getStatsCaisseJour = () => api.get('/caisse/statistiques/aujourdhui');
+export const getHistoriqueReglementsCredit = (venteId: number) => api.get(`/caisse/credits/${venteId}/reglements`);
+export const getCreditsRegles = () => api.get('/caisse/credits/regles');
+export const getPaiementsGroupes = () => api.get('/caisse/paiements-groupes');
 
 // ─── Inventaire ────────────────────────────────────────────────────────────
 export const getInventaire = () => api.get('/inventaire');
@@ -101,9 +131,12 @@ export const ajusterStock = (id: number, data: any) => api.patch(`/produits/${id
 export const getTransferts = (params?: any) => api.get('/transferts', { params });
 export const createTransfert = (data: any) => api.post('/transferts', data);
 
-// ─── Dépôts ────────────────────────────────────────────────────────────────
-export const getDepots = (params?: any) => api.get('/depots', { params });
-export const createDepot = (data: any) => api.post('/depots', data);
+// ─── Dépôts garde ──────────────────────────────────────────────────────────
+export const getDepots = (params?: any) => api.get('/depots-garde', { params });
+export const createDepot = (data: any) => api.post('/depots-garde', data);
+export const getDepotClients = () => api.get('/depot-clients');
+export const effectuerRetraitDepot = (id: number, data: any) => api.post(`/depots-garde/${id}/retrait`, data);
+export const cloturerDepot = (id: number) => api.patch(`/depots-garde/${id}/cloturer`, {});
 
 // ─── Profil ────────────────────────────────────────────────────────────────
 export const getProfil = () => api.get('/auth/me');
@@ -127,3 +160,29 @@ export const createCommande = (data: any) => api.post('/commandes', data);
 export const updateCommande = (id: number, data: any) => api.put(`/commandes/${id}`, data);
 export const validerCommande = (id: number) => api.post(`/commandes/${id}/valider`, {});
 export const deleteCommande = (id: number) => api.delete(`/commandes/${id}`);
+export const annulerCommande = (id: number, utilisateurId?: number) => api.post(`/commandes/${id}/annuler`, { utilisateurId });
+export const payerCreditCommande = (id: number, montant: number) => api.patch(`/commandes/${id}/payer-credit`, { montant });
+export const payerCreditsGroupesCommandes = (ids: number[], montantTotal: number) => api.post('/commandes/payer-credits-groupes', { ids, montantTotal });
+
+// ─── Dépenses par type ─────────────────────────────────────────────────────
+export const getDepensesParType = (params?: { debut?: string; fin?: string }) =>
+  api.get('/depenses/par-type', { params });
+
+// ─── Paiements employés ────────────────────────────────────────────────────
+export const getPaiementsEmploye = () => api.get('/paiements-employe');
+
+// ─── Mouvements de stock ───────────────────────────────────────────────────
+export const getMouvements = (params?: { dateDebut?: string; dateFin?: string }) =>
+  api.get('/inventaire/mouvements', { params });
+export const ajouterMouvement = (data: any) => api.post('/inventaire/mouvement', data);
+
+// ─── Avances fournisseurs ──────────────────────────────────────────────────
+export const getAvancesFournisseur = (id: number) =>
+  api.get(`/fournisseur-achats/avances/${id}`).catch(() => ({ data: [] }));
+export const creerAvanceFournisseur = (data: any) => api.post('/fournisseur-achats/avance', data);
+
+// ─── Clients — historique ──────────────────────────────────────────────────
+export const getClientVentes = (clientId: number) =>
+  api.get('/ventes', { params: { clientId } });
+export const getCreditsClient = (clientNom: string) =>
+  api.get('/caisse/credits/non-regles', { params: { clientNom } });

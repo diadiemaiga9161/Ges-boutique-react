@@ -9,10 +9,18 @@ export default function RapportsScreen() {
   const [rapport, setRapport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [boutique, setBoutique] = useState<any>({});
+  const [isVendeur, setIsVendeur] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('boutique_info').then(raw => {
       if (raw) setBoutique(JSON.parse(raw));
+    });
+    AsyncStorage.getItem('user').then(raw => {
+      if (raw) {
+        const u = JSON.parse(raw);
+        const role = (u.role || '').toUpperCase().replace('ROLE_', '');
+        setIsVendeur(role === 'VENDEUR');
+      }
     });
     charger('jour');
   }, []);
@@ -46,7 +54,7 @@ export default function RapportsScreen() {
       `🏪 ${boutique.nom || ''}`,
       ``,
       `💰 CA : ${money(rapport.chiffreAffaireTotal)}`,
-      rapport.beneficeTotal != null ? `📈 Bénéfice : ${money(rapport.beneficeTotal)}` : null,
+      (!isVendeur && rapport.beneficeTotal != null) ? `📈 Bénéfice : ${money(rapport.beneficeTotal)}` : null,
       `🛒 Ventes : ${rapport.nombreVentes || 0}`,
     ].filter(Boolean).join('\n');
 
@@ -77,10 +85,14 @@ export default function RapportsScreen() {
             <>
               <Card style={styles.card}>
                 <Card.Content>
-                  <Text variant="titleMedium" style={styles.cardTitle}>Chiffre d'affaires</Text>
-                  <Text variant="headlineMedium" style={styles.bigNum}>{money(rapport.chiffreAffaireTotal)}</Text>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    {isVendeur ? 'Résumé des ventes' : "Chiffre d'affaires"}
+                  </Text>
+                  {!isVendeur && (
+                    <Text variant="headlineMedium" style={styles.bigNum}>{money(rapport.chiffreAffaireTotal)}</Text>
+                  )}
                   <Divider style={{ marginVertical: 8 }} />
-                  {rapport.beneficeTotal != null && (
+                  {!isVendeur && rapport.beneficeTotal != null && (
                     <View style={styles.row}>
                       <Text>Bénéfice</Text>
                       <Text style={styles.green}>{money(rapport.beneficeTotal)}</Text>
@@ -90,7 +102,7 @@ export default function RapportsScreen() {
                     <Text>Nombre de ventes</Text>
                     <Text style={styles.bold}>{rapport.nombreVentes || 0}</Text>
                   </View>
-                  {rapport.montantRemisesTotal > 0 && (
+                  {!isVendeur && rapport.montantRemisesTotal > 0 && (
                     <View style={styles.row}>
                       <Text>Remises</Text>
                       <Text style={styles.orange}>{money(rapport.montantRemisesTotal)}</Text>
@@ -99,6 +111,7 @@ export default function RapportsScreen() {
                 </Card.Content>
               </Card>
 
+              {/* Top produits : visible par tous */}
               {rapport.topProduits?.length > 0 && (
                 <Card style={styles.card}>
                   <Card.Content>
@@ -107,6 +120,21 @@ export default function RapportsScreen() {
                       <View key={i} style={styles.row}>
                         <Text>{i + 1}. {p.nom}</Text>
                         <Text style={styles.bold}>{p.quantite} vendus</Text>
+                      </View>
+                    ))}
+                  </Card.Content>
+                </Card>
+              )}
+
+              {/* Catégories : visible par tous */}
+              {rapport.categoriesStats?.length > 0 && (
+                <Card style={styles.card}>
+                  <Card.Content>
+                    <Text variant="titleMedium" style={styles.cardTitle}>Ventes par catégorie</Text>
+                    {rapport.categoriesStats.map((c: any, i: number) => (
+                      <View key={i} style={styles.row}>
+                        <Text>{c.nom}</Text>
+                        <Text style={styles.bold}>{c.nombreProduits || 0} produits</Text>
                       </View>
                     ))}
                   </Card.Content>

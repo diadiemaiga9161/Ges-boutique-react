@@ -1,18 +1,44 @@
-import React, { useEffect, useState } from 'react';
-import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert } from 'react-native';
-import { Text, Card, Searchbar, ActivityIndicator, Chip, Button } from 'react-native-paper';
-import { getProduits } from '../services/api.service';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert, ScrollView,
+} from 'react-native';
+import {
+  Text, Card, Searchbar, ActivityIndicator, Chip, Button, FAB, Portal, Modal,
+  TextInput, IconButton,
+} from 'react-native-paper';
+import { getProduits, getMouvements, ajouterMouvement } from '../services/api.service';
 import { getNiveaux, decomposer } from '../services/produit-niveau.service';
 import { Produit } from '../types';
 import { ProduitNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
-import { IconButton } from 'react-native-paper';
+
+type FiltrePrincipal = 'tous' | 'faible' | 'rupture' | 'niveaux' | 'mouvements';
+type TypeMouvement = 'TOUS' | 'ENTREE' | 'SORTIE' | 'AJUSTEMENT';
+type FiltrePeriode = 'tout' | 'aujourd_hui' | 'semaine' | 'mois';
+
+function getPeriodeDates(p: FiltrePeriode): { dateDebut?: string; dateFin?: string } {
+  const now = new Date();
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  if (p === 'aujourd_hui') {
+    return { dateDebut: fmt(now), dateFin: fmt(now) };
+  }
+  if (p === 'semaine') {
+    const debut = new Date(now);
+    debut.setDate(now.getDate() - 6);
+    return { dateDebut: fmt(debut), dateFin: fmt(now) };
+  }
+  if (p === 'mois') {
+    const debut = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { dateDebut: fmt(debut), dateFin: fmt(now) };
+  }
+  return {};
+}
 
 export default function InventaireScreen() {
   const [produits, setProduits] = useState<Produit[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
-  const [filtre, setFiltre] = useState<'tous' | 'faible' | 'rupture' | 'niveaux'>('tous');
+  const [filtre, setFiltre] = useState<FiltrePrincipal>('tous');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -22,6 +48,24 @@ export default function InventaireScreen() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [searchNiveaux, setSearchNiveaux] = useState('');
   const [showScanner, setShowScanner] = useState(false);
+
+  // Mouvements
+  const [mouvements, setMouvements] = useState<any[]>([]);
+  const [mouvementsFiltered, setMouvementsFiltered] = useState<any[]>([]);
+  const [loadingMouvements, setLoadingMouvements] = useState(false);
+  const [filtreType, setFiltreType] = useState<TypeMouvement>('TOUS');
+  const [filtrePeriode, setFiltrePeriode] = useState<FiltrePeriode>('tout');
+
+  // Modal ajout mouvement
+  const [showMouvModal, setShowMouvModal] = useState(false);
+  const [showProduitPicker, setShowProduitPicker] = useState(false);
+  const [mouvForm, setMouvForm] = useState({
+    produitId: 0,
+    produitNom: '',
+    typeMouvement: 'ENTREE' as 'ENTREE' | 'SORTIE' | 'AJUSTEMENT',
+    quantite: '',
+    motif: '',
+  });
 
   const charger = async () => {
     try {
@@ -34,8 +78,31 @@ export default function InventaireScreen() {
     setRefreshing(false);
   };
 
+  const chargerMouvements = useCallback(async (periode: FiltrePeriode) => {
+    setLoadingMouvements(true);
+    try {
+      const params = getPeriodeDates(periode);
+      const res = await getMouvements(params);
+      const data: any[] = res.data?.data || res.data || [];
+      setMouvements(data);
+      appliquerFiltresMouvements(data, filtreType);
+    } catch {
+      setMouvements([]);
+      setMouvementsFiltered([]);
+    }
+    setLoadingMouvements(false);
+  }, [filtreType]);
+
+  const appliquerFiltresMouvements = (data: any[], type: TypeMouvement) => {
+    if (type === 'TOUS') {
+      setMouvementsFiltered(data);
+    } else {
+      setMouvementsFiltered(data.filter(m => m.typeMouvement === type));
+    }
+  };
+
   const appliquerFiltres = (data: Produit[], f: string, s: string) => {
-    if (f === 'niveaux') { setFiltered(data); return; }
+    if (f === 'niveaux' || f === 'mouvements') { setFiltered(data); return; }
     let result = data;
     if (f === 'faible') result = result.filter(p => p.quantite > 0 && p.quantite <= (p.seuilAlerte || 5));
     if (f === 'rupture') result = result.filter(p => p.quantite === 0);
@@ -44,7 +111,17 @@ export default function InventaireScreen() {
   };
 
   useEffect(() => { charger(); }, []);
-  useEffect(() => { appliquerFiltres(produits, filtre, search); }, [filtre, search, produits]);
+
+  useEffect(() => {
+    appliquerFiltres(produits, filtre, search);
+    if (filtre === 'mouvements') {
+      chargerMouvements(filtrePeriode);
+    }
+  }, [filtre, search, produits]);
+
+  useEffect(() => {
+    appliquerFiltresMouvements(mouvements, filtreType);
+  }, [filtreType, mouvements]);
 
   const valeurTotale = produits.reduce((s, p) => s + p.prixAchat * p.quantite, 0);
   const ruptures = produits.filter(p => p.quantite === 0).length;
@@ -74,9 +151,9 @@ export default function InventaireScreen() {
       const res = await decomposer(niveau.id!);
       setNiveauxMap(prev => ({ ...prev, [produit.id]: res.niveaux }));
       setProduits(prev => prev.map(p => p.id === produit.id ? { ...p, quantite: res.produitQuantite } : p));
-      Alert.alert('✓', res.message || 'Décomposition effectuée');
+      Alert.alert('Succes', res.message || 'Decomposition effectuee');
     } catch (e: any) {
-      Alert.alert('Erreur', e.message || 'Décomposition impossible');
+      Alert.alert('Erreur', e.message || 'Decomposition impossible');
     }
   };
 
@@ -90,6 +167,37 @@ export default function InventaireScreen() {
   const produitsFiltresNiveaux = produits.filter(p =>
     !searchNiveaux || p.nom.toLowerCase().includes(searchNiveaux.toLowerCase())
   );
+
+  const couleurTypeMouvement = (type: string) => {
+    if (type === 'ENTREE') return '#16a34a';
+    if (type === 'SORTIE') return '#dc2626';
+    return '#d97706';
+  };
+
+  const enregistrerMouvement = async () => {
+    if (!mouvForm.produitId) { Alert.alert('Erreur', 'Selectionnez un produit'); return; }
+    if (!mouvForm.quantite || isNaN(Number(mouvForm.quantite)) || Number(mouvForm.quantite) <= 0) {
+      Alert.alert('Erreur', 'Quantite invalide'); return;
+    }
+    try {
+      await ajouterMouvement({
+        produitId: mouvForm.produitId,
+        typeMouvement: mouvForm.typeMouvement,
+        quantite: parseFloat(mouvForm.quantite),
+        motif: mouvForm.motif,
+      });
+      setShowMouvModal(false);
+      setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '' });
+      chargerMouvements(filtrePeriode);
+    } catch {
+      Alert.alert('Erreur', 'Impossible d\'enregistrer le mouvement');
+    }
+  };
+
+  const onChangePeriode = (p: FiltrePeriode) => {
+    setFiltrePeriode(p);
+    chargerMouvements(p);
+  };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
 
@@ -112,9 +220,9 @@ export default function InventaireScreen() {
       <Text style={styles.valeur}>Valeur stock : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
 
       <View style={styles.filtreRow}>
-        {(['tous', 'faible', 'rupture', 'niveaux'] as const).map(f => (
+        {(['tous', 'faible', 'rupture', 'niveaux', 'mouvements'] as const).map(f => (
           <Chip key={f} selected={filtre === f} onPress={() => setFiltre(f)} style={styles.filtreChip}>
-            {f === 'tous' ? 'Tous' : f === 'faible' ? 'Stock bas' : f === 'rupture' ? 'Rupture' : '📦 Niveaux'}
+            {f === 'tous' ? 'Tous' : f === 'faible' ? 'Stock bas' : f === 'rupture' ? 'Rupture' : f === 'niveaux' ? 'Niveaux' : 'Mouvements'}
           </Chip>
         ))}
       </View>
@@ -163,7 +271,7 @@ export default function InventaireScreen() {
                         <Button mode="outlined" compact
                                 onPress={() => handleDecomposer(niveau, item)}
                                 style={styles.decompBtn}>
-                          ✂ Prendre 1 {i === 0 ? item.nom : niveauxMap[item.id][i - 1].nom}
+                          Prendre 1 {i === 0 ? item.nom : niveauxMap[item.id][i - 1].nom}
                         </Button>
                       </View>
                     ))
@@ -173,6 +281,173 @@ export default function InventaireScreen() {
             </View>
           )}
         />
+      ) : filtre === 'mouvements' ? (
+        /* ─── Vue Mouvements ─── */
+        <View style={{ flex: 1 }}>
+          {/* Filtre type */}
+          <View style={styles.sousFiltreRow}>
+            {(['TOUS', 'ENTREE', 'SORTIE', 'AJUSTEMENT'] as TypeMouvement[]).map(t => (
+              <Chip
+                key={t}
+                selected={filtreType === t}
+                onPress={() => setFiltreType(t)}
+                style={[styles.filtreChip, filtreType === t && t !== 'TOUS' && { backgroundColor: couleurTypeMouvement(t) + '22' }]}
+                selectedColor={t === 'TOUS' ? '#1a56db' : couleurTypeMouvement(t)}
+              >
+                {t === 'TOUS' ? 'Tous' : t}
+              </Chip>
+            ))}
+          </View>
+          {/* Filtre période */}
+          <View style={styles.sousFiltreRow}>
+            {([
+              { val: 'tout' as FiltrePeriode, label: 'Tout' },
+              { val: 'aujourd_hui' as FiltrePeriode, label: "Aujourd'hui" },
+              { val: 'semaine' as FiltrePeriode, label: 'Semaine' },
+              { val: 'mois' as FiltrePeriode, label: 'Mois' },
+            ]).map(({ val, label }) => (
+              <Chip
+                key={val}
+                selected={filtrePeriode === val}
+                onPress={() => onChangePeriode(val)}
+                style={styles.filtreChip}
+              >
+                {label}
+              </Chip>
+            ))}
+          </View>
+
+          {loadingMouvements ? (
+            <ActivityIndicator style={{ flex: 1 }} size="large" />
+          ) : (
+            <FlatList
+              data={mouvementsFiltered}
+              keyExtractor={(m, i) => String(m.id ?? i)}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => { setRefreshing(true); chargerMouvements(filtrePeriode).finally(() => setRefreshing(false)); }}
+                />
+              }
+              contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
+              ListEmptyComponent={<Text style={styles.empty}>Aucun mouvement</Text>}
+              renderItem={({ item }) => (
+                <Card style={styles.card}>
+                  <Card.Content>
+                    <View style={styles.row}>
+                      <Text variant="titleSmall" style={{ flex: 1 }} numberOfLines={1}>
+                        {item.produit?.nom || item.produitNom || '—'}
+                      </Text>
+                      <View style={[styles.typeBadge, { backgroundColor: couleurTypeMouvement(item.typeMouvement) }]}>
+                        <Text style={styles.typeBadgeText}>{item.typeMouvement}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.row, { marginTop: 6 }]}>
+                      <Text style={styles.sub}>
+                        {item.dateMouvement ? new Date(item.dateMouvement).toLocaleDateString('fr-FR') : '—'}
+                      </Text>
+                      <Text style={{ fontWeight: 'bold', fontSize: 15, color: couleurTypeMouvement(item.typeMouvement) }}>
+                        {item.typeMouvement === 'ENTREE' ? '+' : item.typeMouvement === 'SORTIE' ? '-' : ''}{item.quantite}
+                      </Text>
+                    </View>
+                    {item.motif ? <Text style={[styles.sub, { marginTop: 2 }]}>{item.motif}</Text> : null}
+                  </Card.Content>
+                </Card>
+              )}
+            />
+          )}
+
+          {/* FAB ajout mouvement */}
+          <FAB
+            icon="plus"
+            style={styles.fab}
+            onPress={() => {
+              setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '' });
+              setShowProduitPicker(false);
+              setShowMouvModal(true);
+            }}
+          />
+
+          {/* Modal ajout mouvement */}
+          <Portal>
+            <Modal
+              visible={showMouvModal}
+              onDismiss={() => setShowMouvModal(false)}
+              contentContainerStyle={styles.modal}
+            >
+              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouveau mouvement</Text>
+
+                {/* Sélecteur produit */}
+                <TouchableOpacity
+                  style={styles.picker}
+                  onPress={() => setShowProduitPicker(v => !v)}
+                >
+                  <Text style={mouvForm.produitNom ? styles.pickerVal : styles.pickerPh}>
+                    {mouvForm.produitNom || 'Sélectionner un produit *'}
+                  </Text>
+                  <Text style={{ color: '#94a3b8' }}>{showProduitPicker ? '▲' : '▼'}</Text>
+                </TouchableOpacity>
+                {showProduitPicker && (
+                  <View style={styles.pickerList}>
+                    {produits.map(p => (
+                      <TouchableOpacity
+                        key={p.id}
+                        style={styles.pickerItem}
+                        onPress={() => {
+                          setMouvForm({ ...mouvForm, produitId: p.id, produitNom: p.nom });
+                          setShowProduitPicker(false);
+                        }}
+                      >
+                        <Text style={[styles.pickerItemText, mouvForm.produitId === p.id && { color: '#1a56db', fontWeight: 'bold' }]}>
+                          {p.nom}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* Type mouvement */}
+                <Text style={styles.inputLabel}>Type de mouvement *</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                  {(['ENTREE', 'SORTIE', 'AJUSTEMENT'] as const).map(t => (
+                    <TouchableOpacity
+                      key={t}
+                      style={[
+                        styles.typeBtn,
+                        mouvForm.typeMouvement === t && { backgroundColor: couleurTypeMouvement(t), borderColor: couleurTypeMouvement(t) },
+                      ]}
+                      onPress={() => setMouvForm({ ...mouvForm, typeMouvement: t })}
+                    >
+                      <Text style={[styles.typeBtnText, mouvForm.typeMouvement === t && { color: '#fff' }]}>
+                        {t}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <TextInput
+                  label="Quantite *"
+                  value={mouvForm.quantite}
+                  onChangeText={t => setMouvForm({ ...mouvForm, quantite: t })}
+                  mode="outlined"
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+                <TextInput
+                  label="Motif"
+                  value={mouvForm.motif}
+                  onChangeText={t => setMouvForm({ ...mouvForm, motif: t })}
+                  mode="outlined"
+                  style={styles.input}
+                />
+                <Button mode="contained" onPress={enregistrerMouvement} style={{ marginTop: 4 }}>
+                  Enregistrer
+                </Button>
+              </ScrollView>
+            </Modal>
+          </Portal>
+        </View>
       ) : (
         /* ─── Vue stock normale ─── */
         <>
@@ -222,6 +497,7 @@ const styles = StyleSheet.create({
   kpiLabel: { fontSize: 11, color: '#666', marginTop: 2 },
   valeur: { textAlign: 'center', color: '#1a56db', fontWeight: '600', marginBottom: 8 },
   filtreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4, flexWrap: 'wrap' },
+  sousFiltreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 6, flexWrap: 'wrap' },
   filtreChip: { borderRadius: 20 },
   search: { marginHorizontal: 12, marginBottom: 4 },
   card: { marginBottom: 8, borderRadius: 12 },
@@ -229,6 +505,25 @@ const styles = StyleSheet.create({
   badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 },
   badgeText: { color: '#fff', fontWeight: 'bold' },
   sub: { color: '#666', fontSize: 12, marginTop: 4 },
+  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  fab: { position: 'absolute', bottom: 20, right: 20, backgroundColor: '#1a56db' },
+
+  // Mouvements
+  typeBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  typeBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+
+  // Modal mouvement
+  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },
+  inputLabel: { color: '#475569', fontSize: 13, marginBottom: 6 },
+  input: { marginBottom: 12 },
+  picker: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#94a3b8', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 14, marginBottom: 8, backgroundColor: '#fff' },
+  pickerVal: { color: '#1e293b', fontSize: 14 },
+  pickerPh: { color: '#94a3b8', fontSize: 14 },
+  pickerList: { backgroundColor: '#f8fafc', borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0', maxHeight: 180 },
+  pickerItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  pickerItemText: { color: '#334155', fontSize: 13 },
+  typeBtn: { flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', alignItems: 'center' },
+  typeBtnText: { color: '#374151', fontSize: 11, fontWeight: '600' },
 
   // Niveaux styles
   pnCard: { backgroundColor: '#fff', marginHorizontal: 12, marginBottom: 10, borderRadius: 12, overflow: 'hidden', elevation: 2 },
