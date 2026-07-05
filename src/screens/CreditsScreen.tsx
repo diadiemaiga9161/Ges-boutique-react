@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
   TextInput, Alert, ScrollView, Modal
@@ -21,6 +21,7 @@ interface CreditInfo {
   montantVerse: number;
   montantRestant: number;
   dateEcheance?: string;
+  dateOperation?: string;
   dateReglement?: string;
   regleParNom?: string;
   vendeurNom?: string;
@@ -46,6 +47,7 @@ interface OperationCaisse {
   dateOperation: string;
   modePaiement?: string;
   referencePaiement?: string;
+  referenceGroupe?: string;
   utilisateurNom?: string;
   motif?: string;
 }
@@ -88,6 +90,8 @@ const MODE_LABELS: Record<Mode, string> = {
   VIREMENT: 'Virement',
 };
 
+const ITEMS_PAR_PAGE = 10;
+
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v ?? 0).toLocaleString('fr-FR') + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
@@ -103,6 +107,14 @@ export default function CreditsScreen() {
   const [filterRetard, setFilterRetard] = useState(false);
   const [statutFilter, setStatutFilter] = useState<StatutFilter>('EN_COURS');
 
+  // Filtres dates + client
+  const [dateDebut, setDateDebut] = useState('');
+  const [dateFin, setDateFin] = useState('');
+  const [clientSelectionne, setClientSelectionne] = useState('');
+
+  // Pagination
+  const [pageActuelle, setPageActuelle] = useState(1);
+
   // Modal détail (lecture seule)
   const [showDetail, setShowDetail] = useState(false);
   const [detailCredit, setDetailCredit] = useState<CreditInfo | null>(null);
@@ -110,6 +122,12 @@ export default function CreditsScreen() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [versements, setVersements] = useState<OperationCaisse[]>([]);
   const [loadingVersements, setLoadingVersements] = useState(false);
+
+  // States supplémentaires modal détail
+  const [versementsSimples, setVersementsSimples] = useState<OperationCaisse[]>([]);
+  const [paiementsGroupesDetail, setPaiementsGroupesDetail] = useState<Map<string, OperationCaisse[]>>(new Map());
+  const [rechercheVersement, setRechercheVersement] = useState('');
+  const [expandedGroupesDetail, setExpandedGroupesDetail] = useState<Set<string>>(new Set());
 
   // Modal règlement simple
   const [showSimple, setShowSimple] = useState(false);
@@ -136,6 +154,35 @@ export default function CreditsScreen() {
   const [paiementsGroupesLoading, setPaiementsGroupesLoading] = useState(false);
   const [expandedGroupes, setExpandedGroupes] = useState<Set<string>>(new Set());
 
+  // ─── Clients uniques (pour filtre chip) ──────────────────────────────────
+  const clientsUniques = useMemo(() => {
+    const noms = allCredits.map(c => c.clientNom).filter(Boolean);
+    return Array.from(new Set(noms)).sort();
+  }, [allCredits]);
+
+  // ─── Pagination ───────────────────────────────────────────────────────────
+  const creditsPagines = useMemo(() => {
+    const debut = (pageActuelle - 1) * ITEMS_PAR_PAGE;
+    return filtered.slice(debut, debut + ITEMS_PAR_PAGE);
+  }, [filtered, pageActuelle]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(filtered.length / ITEMS_PAR_PAGE)), [filtered]);
+
+  // Reset page quand un filtre change
+  useEffect(() => { setPageActuelle(1); }, [search, filterRetard, statutFilter, dateDebut, dateFin, clientSelectionne]);
+
+  // ─── Versements filtrés (modal détail) ───────────────────────────────────
+  const versementsFiltres = useMemo(() => {
+    if (!rechercheVersement.trim()) return versementsSimples;
+    const t = rechercheVersement.toLowerCase();
+    return versementsSimples.filter(v =>
+      (v.utilisateurNom || '').toLowerCase().includes(t) ||
+      (v.referencePaiement || '').toLowerCase().includes(t) ||
+      (v.modePaiement || '').toLowerCase().includes(t) ||
+      dateStr(v.dateOperation).includes(t)
+    );
+  }, [versementsSimples, rechercheVersement]);
+
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
@@ -160,7 +207,7 @@ export default function CreditsScreen() {
         if (c) {
           const montantRestant = c.montantRestant ?? Math.max(0, (v.montantTotal || 0) - (v.montantVerse || 0));
           const estReglee = c.estReglee || !!v.creditRegle || montantRestant <= 0.01;
-          return { ...c, montantRestant, estReglee };
+          return { ...c, montantRestant, estReglee, dateOperation: v.dateOperation || v.dateVente };
         }
         const montantTotal = v.montantTotal || 0;
         const montantVerse = v.montantVerse || 0;
@@ -175,14 +222,15 @@ export default function CreditsScreen() {
           clientNom: v.clientNom || 'Client divers',
           clientPrenom: v.clientPrenom, clientTelephone: v.clientTelephone || '',
           montantTotal, montantVerse, montantRestant,
-          dateEcheance: v.dateEcheance, dateReglement: v.dateReglement,
+          dateEcheance: v.dateEcheance, dateOperation: v.dateOperation || v.dateVente,
+          dateReglement: v.dateReglement,
           regleParNom: v.regleParNom, vendeurNom: v.vendeurNom,
           estReglee, enRetard, joursRetard,
         } as CreditInfo;
       });
 
       setAllCredits(all);
-      applyFilters(all, statutFilter, search, filterRetard);
+      applyFilters(all, statutFilter, search, filterRetard, dateDebut, dateFin, clientSelectionne);
     } catch { }
     setLoading(false);
     setRefreshing(false);
@@ -206,14 +254,45 @@ export default function CreditsScreen() {
     all: CreditInfo[],
     statut: StatutFilter,
     term: string,
-    retard: boolean
+    retard: boolean,
+    debut: string,
+    fin: string,
+    client: string
   ) => {
-    let filtered: CreditInfo[];
-    if (statut === 'EN_COURS') filtered = all.filter(c => !c.estReglee);
-    else if (statut === 'REGLES') filtered = all.filter(c => !!c.estReglee);
-    else filtered = [...all];
+    let liste: CreditInfo[];
+    if (statut === 'EN_COURS') liste = all.filter(c => !c.estReglee);
+    else if (statut === 'REGLES') liste = all.filter(c => !!c.estReglee);
+    else liste = [...all];
 
-    const grps = buildGroups(filtered);
+    // Filtre dates
+    if (debut) {
+      const d = new Date(debut);
+      if (!isNaN(d.getTime())) {
+        liste = liste.filter(c => {
+          const ref = c.dateOperation || c.dateEcheance || c.dateReglement;
+          if (!ref) return false;
+          return new Date(ref) >= d;
+        });
+      }
+    }
+    if (fin) {
+      const d = new Date(fin);
+      if (!isNaN(d.getTime())) {
+        d.setHours(23, 59, 59, 999);
+        liste = liste.filter(c => {
+          const ref = c.dateOperation || c.dateEcheance || c.dateReglement;
+          if (!ref) return false;
+          return new Date(ref) <= d;
+        });
+      }
+    }
+
+    // Filtre client sélectionné
+    if (client) {
+      liste = liste.filter(c => c.clientNom === client);
+    }
+
+    const grps = buildGroups(liste);
     setGroups(grps);
 
     const t = term.trim().toLowerCase();
@@ -250,18 +329,40 @@ export default function CreditsScreen() {
   const changeStatut = (s: StatutFilter) => {
     setStatutFilter(s);
     setFilterRetard(false);
-    applyFilters(allCredits, s, search, false);
+    applyFilters(allCredits, s, search, false, dateDebut, dateFin, clientSelectionne);
   };
 
   const onSearch = (v: string) => {
     setSearch(v);
-    applyFilters(allCredits, statutFilter, v, filterRetard);
+    applyFilters(allCredits, statutFilter, v, filterRetard, dateDebut, dateFin, clientSelectionne);
   };
 
   const toggleRetard = () => {
     const r = !filterRetard;
     setFilterRetard(r);
-    applyFilters(allCredits, statutFilter, search, r);
+    applyFilters(allCredits, statutFilter, search, r, dateDebut, dateFin, clientSelectionne);
+  };
+
+  const onChangeDateDebut = (v: string) => {
+    setDateDebut(v);
+    applyFilters(allCredits, statutFilter, search, filterRetard, v, dateFin, clientSelectionne);
+  };
+
+  const onChangeDateFin = (v: string) => {
+    setDateFin(v);
+    applyFilters(allCredits, statutFilter, search, filterRetard, dateDebut, v, clientSelectionne);
+  };
+
+  const effacerDates = () => {
+    setDateDebut('');
+    setDateFin('');
+    applyFilters(allCredits, statutFilter, search, filterRetard, '', '', clientSelectionne);
+  };
+
+  const onSelectClient = (nom: string) => {
+    const next = clientSelectionne === nom ? '' : nom;
+    setClientSelectionne(next);
+    applyFilters(allCredits, statutFilter, search, filterRetard, dateDebut, dateFin, next);
   };
 
   const toggleGroup = (key: string) => {
@@ -273,6 +374,15 @@ export default function CreditsScreen() {
 
   const toggleGroupe = (ref: string) => {
     setExpandedGroupes(prev => {
+      const next = new Set(prev);
+      if (next.has(ref)) next.delete(ref);
+      else next.add(ref);
+      return next;
+    });
+  };
+
+  const toggleGroupeDetail = (ref: string) => {
+    setExpandedGroupesDetail(prev => {
       const next = new Set(prev);
       if (next.has(ref)) next.delete(ref);
       else next.add(ref);
@@ -347,16 +457,47 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     loadSetter(false);
   };
 
+  // ─── Séparation versements simples / groupés ─────────────────────────────
+  const separerVersements = (vers: OperationCaisse[]) => {
+    const simples: OperationCaisse[] = [];
+    const groupesMap = new Map<string, OperationCaisse[]>();
+    vers.forEach(v => {
+      if (v.referenceGroupe) {
+        if (!groupesMap.has(v.referenceGroupe)) groupesMap.set(v.referenceGroupe, []);
+        groupesMap.get(v.referenceGroupe)!.push(v);
+      } else {
+        // Aussi vérifier via motif (rétrocompatibilité)
+        const motifGroupé = (v.motif || '').toLowerCase().includes('paiement groupé');
+        if (motifGroupé && !v.referenceGroupe) {
+          // Versement groupé sans referenceGroupe : traiter comme simple mais avec badge
+          simples.push(v);
+        } else {
+          simples.push(v);
+        }
+      }
+    });
+    setVersementsSimples(simples);
+    setPaiementsGroupesDetail(groupesMap);
+  };
+
   // ─── Modal détail ────────────────────────────────────────────────────────
   const openDetail = (credit: CreditInfo) => {
     setDetailCredit(credit);
     setDetailVente(null);
     setVersements([]);
+    setVersementsSimples([]);
+    setPaiementsGroupesDetail(new Map());
+    setRechercheVersement('');
+    setExpandedGroupesDetail(new Set());
     setShowDetail(true);
     loadVente(credit.venteId, setDetailVente, setLoadingDetail);
     setLoadingVersements(true);
     api.get(`/caisse/credits/${credit.venteId}/reglements`)
-      .then(r => setVersements((r.data?.reglements || []) as OperationCaisse[]))
+      .then(r => {
+        const liste = (r.data?.reglements || []) as OperationCaisse[];
+        setVersements(liste);
+        separerVersements(liste);
+      })
       .catch(() => {})
       .finally(() => setLoadingVersements(false));
   };
@@ -368,9 +509,10 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     const vers = versements;
 
     const qrData = encodeURIComponent(`CREDIT_N${credit.numeroVente}_${credit.clientNom}_VERSE_${credit.montantVerse}`);
-    const isGrouped = vers.some(v => (v.motif || '').toLowerCase().includes('group'));
+    const isGrouped = vers.some(v => (v.motif || '').toLowerCase().includes('group') || !!v.referenceGroupe);
 
-    const versRows = vers.length ? vers.map((v, i) => `
+    // Versements simples pour le tableau principal
+    const simplesRows = versementsSimples.length ? versementsSimples.map((v, i) => `
     <tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">
       <td>${dateStr(v.dateOperation)}</td>
       <td style="text-align:right;font-weight:700;color:#166534">${money(v.montant)}</td>
@@ -378,7 +520,39 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       <td>${v.referencePaiement || '—'}</td>
       <td>${v.utilisateurNom || '—'}</td>
       <td>${v.motif || '—'}</td>
-    </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:14px">Aucun versement</td></tr>`;
+    </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:14px">Aucun versement simple</td></tr>`;
+
+    // Section paiements groupés
+    let groupesSection = '';
+    if (paiementsGroupesDetail.size > 0) {
+      const groupesHtml = Array.from(paiementsGroupesDetail.entries()).map(([ref, gVers]) => {
+        const totalGroupe = gVers.reduce((s, v) => s + v.montant, 0);
+        const lignesGroupe = gVers.map((v, i) => `
+        <tr style="background:${i % 2 === 0 ? '#fffbeb' : '#fef3c7'}">
+          <td style="padding:5px 8px">${dateStr(v.dateOperation)}</td>
+          <td style="padding:5px 8px;text-align:right;font-weight:700;color:#b45309">${money(v.montant)}</td>
+          <td style="padding:5px 8px">${v.modePaiement || 'ESPECES'}</td>
+          <td style="padding:5px 8px">${v.referencePaiement || '—'}</td>
+          <td style="padding:5px 8px">${v.utilisateurNom || '—'}</td>
+        </tr>`).join('');
+        return `<div style="margin-bottom:12px;border:1px solid #fde68a;border-radius:8px;overflow:hidden">
+          <div style="background:#fef3c7;padding:10px 12px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <span style="font-weight:700;color:#92400e;font-size:12px">GROUPE : ${ref.substring(0, 8).toUpperCase()}</span>
+              ${gVers[0]?.dateOperation ? `<span style="color:#78350f;font-size:11px;margin-left:8px">${dateStr(gVers[0].dateOperation)}</span>` : ''}
+            </div>
+            <span style="font-weight:800;color:#b45309;font-size:13px">${money(totalGroupe)}</span>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="background:#fde68a"><th style="padding:5px 8px;text-align:left">Date</th><th style="padding:5px 8px;text-align:right">Montant</th><th style="padding:5px 8px">Mode</th><th style="padding:5px 8px">Référence</th><th style="padding:5px 8px">Par</th></tr></thead>
+            <tbody>${lignesGroupe}</tbody>
+          </table>
+        </div>`;
+      }).join('');
+      groupesSection = `
+      <div class="sec-title" style="margin-top:16px">Paiements groupés (${paiementsGroupesDetail.size} groupe(s))</div>
+      ${groupesHtml}`;
+    }
 
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Versements — ${credit.clientNom}</title>
 <style>
@@ -425,13 +599,14 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
       <div class="kpi green"><div class="kpi-val">${money(credit.montantVerse)}</div><div class="kpi-lbl">Versé</div></div>
       ${!credit.estReglee ? `<div class="kpi red"><div class="kpi-val">${money(credit.montantRestant)}</div><div class="kpi-lbl">Reste à payer</div></div>` : ''}
     </div>
-    <div class="sec-title">Versements effectués (${vers.length})</div>
+    <div class="sec-title">Versements simples (${versementsSimples.length})</div>
     <table>
       <thead><tr><th>Date</th><th>Montant</th><th>Mode</th><th>Référence</th><th>Par</th><th>Motif</th></tr></thead>
-      <tbody>${versRows}</tbody>
+      <tbody>${simplesRows}</tbody>
       <tfoot><tr style="background:#eff6ff;font-weight:700"><td>Total</td><td style="color:#166534">${money(credit.montantVerse)}</td><td colspan="4"></td></tr></tfoot>
     </table>
     ${!credit.estReglee ? `<div style="margin-top:10px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px;text-align:center;font-weight:700;color:#dc2626">Reste à payer : ${money(credit.montantRestant)}</div>` : ''}
+    ${groupesSection}
   </div>
   <div class="ftr">Ges Boutique · Historique versements · ${new Date().toLocaleDateString('fr-FR')}</div>
 </div></body></html>`;
@@ -577,21 +752,39 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
     ));
   };
 
-  const renderVersements = (vers: OperationCaisse[], loading: boolean, totalVerse: number) => {
-    if (loading) return <ActivityIndicator size="small" style={{ margin: 12 }} />;
-    if (!vers.length) return <Text style={s.emptyText}>Aucun versement enregistré</Text>;
+  const renderVersementsModal = () => {
+    if (loadingVersements) return <ActivityIndicator size="small" style={{ margin: 12 }} />;
+    if (!versements.length) return <Text style={s.emptyText}>Aucun versement enregistré</Text>;
 
-    // Détection paiement groupé et extraction du montant total apporté
-    const versGroupé = vers.find(v => (v.motif || '').toLowerCase().includes('paiement groupé'));
+    // Detection banner paiement groupé (rétrocompatibilité motif)
+    const versGroupéMotif = versementsSimples.find(v => (v.motif || '').toLowerCase().includes('paiement groupé'));
     let montantTotalApporteGroupe: string | null = null;
-    if (versGroupé?.motif) {
-      const match = versGroupé.motif.match(/Total apporté:\s*([\d\s]+)/);
+    if (versGroupéMotif?.motif) {
+      const match = versGroupéMotif.motif.match(/Total apporté:\s*([\d\s]+)/);
       if (match) montantTotalApporteGroupe = match[1].trim();
     }
 
     return (
       <>
-        {versGroupé && (
+        {/* Barre de recherche versements */}
+        <View style={s.versSearchWrap}>
+          <MaterialCommunityIcons name="magnify" size={15} color="#999" />
+          <TextInput
+            style={s.versSearchInput}
+            value={rechercheVersement}
+            onChangeText={setRechercheVersement}
+            placeholder="Rechercher dans les versements..."
+            placeholderTextColor="#bbb"
+          />
+          {rechercheVersement.length > 0 && (
+            <TouchableOpacity onPress={() => setRechercheVersement('')}>
+              <MaterialCommunityIcons name="close-circle" size={14} color="#bbb" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Banner paiement groupé (motif rétrocompatibilité) */}
+        {versGroupéMotif && (
           <View style={s.groupeBanner}>
             <View style={s.groupeBannerRow}>
               <MaterialCommunityIcons name="account-group" size={16} color="#92400e" />
@@ -604,26 +797,90 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             )}
           </View>
         )}
-        {vers.map((v, i) => (
-          <View key={i} style={s.versRow}>
-            <View style={s.versTop}>
-              <Text style={s.versDate}>{dateStr(v.dateOperation)}</Text>
-              <Text style={s.versMontant}>+{money(v.montant)}</Text>
-              <Text style={s.versMode}>{v.modePaiement || 'ESPECES'}</Text>
-            </View>
-            {!!v.referencePaiement && <Text style={s.versSub}>Réf : {v.referencePaiement}</Text>}
-            {!!v.utilisateurNom && <Text style={s.versSub}>Par {v.utilisateurNom}</Text>}
-            {(v.motif || '').toLowerCase().includes('paiement groupé') && (
-              <View style={s.versGroupeBadge}>
-                <Text style={s.versGroupeBadgeText}>Paiement groupé</Text>
+
+        {/* Versements simples filtrés */}
+        {versementsFiltres.length === 0 && rechercheVersement.length > 0 ? (
+          <Text style={s.emptyText}>Aucun versement correspondant</Text>
+        ) : (
+          versementsFiltres.map((v, i) => (
+            <View key={i} style={s.versRow}>
+              <View style={s.versTop}>
+                <Text style={s.versDate}>{dateStr(v.dateOperation)}</Text>
+                <Text style={s.versMontant}>+{money(v.montant)}</Text>
+                <Text style={s.versMode}>{v.modePaiement || 'ESPECES'}</Text>
               </View>
-            )}
-          </View>
-        ))}
+              {!!v.referencePaiement && <Text style={s.versSub}>Réf : {v.referencePaiement}</Text>}
+              {!!v.utilisateurNom && <Text style={s.versSub}>Par {v.utilisateurNom}</Text>}
+              {(v.motif || '').toLowerCase().includes('paiement groupé') && (
+                <View style={s.versGroupeBadge}>
+                  <Text style={s.versGroupeBadgeText}>Paiement groupé</Text>
+                </View>
+              )}
+            </View>
+          ))
+        )}
+
         <View style={s.versTotal}>
           <Text style={s.versTotalLabel}>Total versé</Text>
-          <Text style={s.versTotalVal}>{money(totalVerse)}</Text>
+          <Text style={s.versTotalVal}>{money(detailCredit?.montantVerse ?? 0)}</Text>
         </View>
+
+        {/* Section paiements groupés (referenceGroupe non-null) */}
+        {paiementsGroupesDetail.size > 0 && (
+          <>
+            <Text style={[s.sectionTitle, { marginTop: 16, color: '#b45309' }]}>
+              Paiements groupés ({paiementsGroupesDetail.size} groupe{paiementsGroupesDetail.size > 1 ? 's' : ''})
+            </Text>
+            {Array.from(paiementsGroupesDetail.entries()).map(([ref, gVers]) => {
+              const totalGroupe = gVers.reduce((sum, v) => sum + v.montant, 0);
+              const isExpanded = expandedGroupesDetail.has(ref);
+              const refCourte = ref.substring(0, 8).toUpperCase();
+              return (
+                <View key={ref} style={s.groupeDetailCard}>
+                  <TouchableOpacity
+                    style={s.groupeDetailHeader}
+                    onPress={() => toggleGroupeDetail(ref)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={s.groupeRefBadge}>
+                          <Text style={s.groupeRefBadgeText}>GROUPE</Text>
+                        </View>
+                        <Text style={s.groupeDetailRef}>{refCourte}</Text>
+                      </View>
+                      <Text style={s.groupeDetailDate}>
+                        {gVers[0]?.dateOperation ? dateStr(gVers[0].dateOperation) : '—'}
+                        {'  ·  '}{gVers.length} versement{gVers.length > 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={s.groupeDetailTotal}>{money(totalGroupe)}</Text>
+                      <MaterialCommunityIcons
+                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                        size={18} color="#92400e" style={{ marginTop: 2 }}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                  {isExpanded && (
+                    <View style={s.groupeDetailBody}>
+                      {gVers.map((v, idx) => (
+                        <View key={idx} style={[s.versRow, { backgroundColor: '#fffbeb' }]}>
+                          <View style={s.versTop}>
+                            <Text style={s.versDate}>{dateStr(v.dateOperation)}</Text>
+                            <Text style={[s.versMontant, { color: '#b45309' }]}>+{money(v.montant)}</Text>
+                            <Text style={s.versMode}>{v.modePaiement || 'ESPECES'}</Text>
+                          </View>
+                          {!!v.referencePaiement && <Text style={s.versSub}>Réf : {v.referencePaiement}</Text>}
+                          {!!v.utilisateurNom && <Text style={s.versSub}>Par {v.utilisateurNom}</Text>}
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </>
+        )}
       </>
     );
   };
@@ -644,7 +901,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
   return (
     <View style={s.container}>
 
-      {/* ── Onglets principaux ── */}
+      {/* Onglets principaux */}
       <View style={{ flexDirection: 'row', margin: 12, marginBottom: 4, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb' }}>
         <TouchableOpacity
           style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: activeTab === 'credits' ? '#1a56db' : '#f9fafb' }}
@@ -717,7 +974,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         </TouchableOpacity>
       </View>
 
-      {/* Filtres */}
+      {/* Filtres texte + retard */}
       <View style={s.filters}>
         <View style={s.searchWrap}>
           <MaterialCommunityIcons name="magnify" size={18} color="#999" />
@@ -742,12 +999,74 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         )}
       </View>
 
-      {/* Liste */}
+      {/* Filtre par plage de dates */}
+      <View style={s.dateFilterRow}>
+        <View style={s.dateInputWrap}>
+          <MaterialCommunityIcons name="calendar-start" size={14} color="#9c27b0" />
+          <TextInput
+            style={s.dateInput}
+            value={dateDebut}
+            onChangeText={onChangeDateDebut}
+            placeholder="AAAA-MM-JJ"
+            placeholderTextColor="#bbb"
+          />
+        </View>
+        <Text style={s.dateSep}>→</Text>
+        <View style={s.dateInputWrap}>
+          <MaterialCommunityIcons name="calendar-end" size={14} color="#9c27b0" />
+          <TextInput
+            style={s.dateInput}
+            value={dateFin}
+            onChangeText={onChangeDateFin}
+            placeholder="AAAA-MM-JJ"
+            placeholderTextColor="#bbb"
+          />
+        </View>
+        {(dateDebut || dateFin) && (
+          <TouchableOpacity style={s.dateClearBtn} onPress={effacerDates}>
+            <MaterialCommunityIcons name="close-circle" size={16} color="#f44336" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Chips clients */}
+      {clientsUniques.length > 0 && (
+        <View style={s.clientChipsWrap}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.clientChipsContent}>
+            <TouchableOpacity
+              style={[s.clientChip, !clientSelectionne && s.clientChipActive]}
+              onPress={() => onSelectClient('')}
+            >
+              <Text style={[s.clientChipText, !clientSelectionne && s.clientChipTextActive]}>Tous</Text>
+            </TouchableOpacity>
+            {clientsUniques.map(nom => (
+              <TouchableOpacity
+                key={nom}
+                style={[s.clientChip, clientSelectionne === nom && s.clientChipActive]}
+                onPress={() => onSelectClient(nom)}
+              >
+                <Text style={[s.clientChipText, clientSelectionne === nom && s.clientChipTextActive]} numberOfLines={1}>
+                  {nom}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Compteur résultats */}
+      <View style={s.resultCountRow}>
+        <Text style={s.resultCountText}>
+          {filtered.length} client{filtered.length !== 1 ? 's' : ''} · page {pageActuelle}/{totalPages}
+        </Text>
+      </View>
+
+      {/* Liste paginée */}
       <FlatList
-        data={filtered}
+        data={creditsPagines}
         keyExtractor={g => `${g.clientNom}__${g.clientTelephone || ''}`}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
-        contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 8 }}
         ListEmptyComponent={
           <View style={s.emptyState}>
             <MaterialCommunityIcons name="check-circle-outline" size={48} color="#4caf50" />
@@ -909,6 +1228,29 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             ))}
           </View>
         )}
+        ListFooterComponent={
+          filtered.length > 0 ? (
+            <View style={s.paginationRow}>
+              <TouchableOpacity
+                style={[s.pageBtn, pageActuelle === 1 && s.pageBtnDisabled]}
+                onPress={() => setPageActuelle(p => Math.max(1, p - 1))}
+                disabled={pageActuelle === 1}
+              >
+                <MaterialCommunityIcons name="chevron-left" size={18} color={pageActuelle === 1 ? '#ccc' : '#9c27b0'} />
+                <Text style={[s.pageBtnText, pageActuelle === 1 && { color: '#ccc' }]}>Précédent</Text>
+              </TouchableOpacity>
+              <Text style={s.pageInfo}>Page {pageActuelle}/{totalPages}</Text>
+              <TouchableOpacity
+                style={[s.pageBtn, pageActuelle === totalPages && s.pageBtnDisabled]}
+                onPress={() => setPageActuelle(p => Math.min(totalPages, p + 1))}
+                disabled={pageActuelle === totalPages}
+              >
+                <Text style={[s.pageBtnText, pageActuelle === totalPages && { color: '#ccc' }]}>Suivant</Text>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={pageActuelle === totalPages ? '#ccc' : '#9c27b0'} />
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
       />
 
         </>
@@ -1045,7 +1387,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                   <Text style={s.sectionTitle}>Produits achetés</Text>
                   {renderLignes(detailVente, loadingDetail)}
                   <Text style={[s.sectionTitle, { marginTop: 16 }]}>Historique des versements</Text>
-                  {renderVersements(versements, loadingVersements, detailCredit?.montantVerse ?? 0)}
+                  {renderVersementsModal()}
                 </>
               )}
             </ScrollView>
@@ -1250,6 +1592,32 @@ const s = StyleSheet.create({
   retardBtnActive: { backgroundColor: '#f44336' },
   retardBtnText: { fontSize: 12, color: '#f44336', fontWeight: '600' },
 
+  // Filtre dates
+  dateFilterRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 6 },
+  dateInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingHorizontal: 8, height: 36, borderWidth: 1, borderColor: '#e8d5f5' },
+  dateInput: { flex: 1, marginLeft: 4, fontSize: 12, color: '#333' },
+  dateSep: { color: '#9c27b0', fontWeight: '700', fontSize: 14 },
+  dateClearBtn: { padding: 4 },
+
+  // Chips clients
+  clientChipsWrap: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  clientChipsContent: { paddingHorizontal: 10, paddingVertical: 8, gap: 6 },
+  clientChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
+  clientChipActive: { backgroundColor: '#9c27b0', borderColor: '#9c27b0' },
+  clientChipText: { fontSize: 12, color: '#555', maxWidth: 100 },
+  clientChipTextActive: { color: '#fff', fontWeight: '700' },
+
+  // Compteur résultats
+  resultCountRow: { paddingHorizontal: 14, paddingVertical: 5, backgroundColor: '#fafafa' },
+  resultCountText: { fontSize: 11, color: '#888' },
+
+  // Pagination
+  paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 4, marginBottom: 8 },
+  pageBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#e0d0f0', backgroundColor: '#fff', gap: 2 },
+  pageBtnDisabled: { borderColor: '#eee', backgroundColor: '#fafafa' },
+  pageBtnText: { fontSize: 13, color: '#9c27b0', fontWeight: '600' },
+  pageInfo: { fontSize: 13, color: '#555', fontWeight: '600' },
+
   // Groupe client
   groupCard: { backgroundColor: '#fff', borderRadius: 14, marginBottom: 12, overflow: 'hidden', elevation: 2 },
   groupCardRetard: { borderLeftWidth: 3, borderLeftColor: '#f44336' },
@@ -1344,14 +1712,30 @@ const s = StyleSheet.create({
   versTotal: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 8, marginTop: 4, borderTopWidth: 2, borderTopColor: '#e2e8f0' },
   versTotalLabel: { fontWeight: '700', color: '#475569', fontSize: 13 },
   versTotalVal: { fontWeight: '700', color: '#16a34a', fontSize: 13 },
+
+  // Recherche versements
+  versSearchWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8f8f8', borderRadius: 10, paddingHorizontal: 10, height: 34, borderWidth: 1, borderColor: '#eee', marginBottom: 10, gap: 6 },
+  versSearchInput: { flex: 1, fontSize: 13, color: '#333' },
+
   // Banner paiement groupé (en tête de la liste de versements)
   groupeBanner: { backgroundColor: '#fef3c7', borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#fde68a' },
   groupeBannerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   groupeBannerTitle: { fontWeight: 'bold', color: '#92400e', fontSize: 13 },
   groupeBannerSub: { color: '#92400e', fontSize: 12, marginTop: 4 },
+
   // Badge inline par versement
   versGroupeBadge: { alignSelf: 'flex-start', backgroundColor: '#fef3c7', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2, marginTop: 4 },
   versGroupeBadgeText: { color: '#92400e', fontSize: 10, fontWeight: '700' },
+
+  // Paiements groupés dans modal détail
+  groupeDetailCard: { borderWidth: 1, borderColor: '#fde68a', borderRadius: 12, marginBottom: 8, overflow: 'hidden' },
+  groupeDetailHeader: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef3c7', padding: 12 },
+  groupeDetailRef: { fontWeight: '700', color: '#92400e', fontSize: 13, fontFamily: 'monospace' },
+  groupeDetailDate: { color: '#78350f', fontSize: 11, marginTop: 3 },
+  groupeDetailTotal: { fontWeight: '800', color: '#b45309', fontSize: 14 },
+  groupeDetailBody: { backgroundColor: '#fffbeb', paddingHorizontal: 12, paddingVertical: 4 },
+  groupeRefBadge: { backgroundColor: '#b45309', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  groupeRefBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
 
   // Formulaire
   fieldLabel: { color: '#666', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
@@ -1363,7 +1747,7 @@ const s = StyleSheet.create({
   chipTextActive: { color: '#fff', fontWeight: '600' },
   hint: { color: '#999', fontSize: 12, fontStyle: 'italic', marginTop: 6 },
 
-  // Groupé
+  // Groupé (modal règlement groupé)
   groupeItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, marginBottom: 6, backgroundColor: '#fafafa', borderWidth: 1, borderColor: '#eee' },
   groupeItemSelected: { borderColor: '#9c27b0', backgroundColor: '#f3e5f5' },
   groupeItemRegle: { opacity: 0.65, backgroundColor: '#f1f8e9', borderColor: '#c8e6c9' },
