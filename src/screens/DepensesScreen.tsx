@@ -2,21 +2,20 @@ import React, { useEffect, useState } from 'react';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
   ScrollView, TouchableOpacity, Pressable,
+  Modal as RNModal, TextInput as RNTextInput,
 } from 'react-native';
 import {
   Text, Card, FAB, ActivityIndicator, Modal, Portal,
   TextInput, Button, Divider,
 } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import {
   getDepenses, createDepense, updateDepense, deleteDepense, getPaiementsEmploye,
+  getTypesDepense, createTypeDepense, updateTypeDepense, deleteTypeDepense,
 } from '../services/api.service';
 
-const TYPES_DEPENSE = [
-  'Carburant', 'Électricité', 'Eau', 'Loyer', 'Nourriture',
-  'Transport', 'Téléphone', 'Maintenance', 'Publicité',
-  'Fournitures', 'Impôts', 'Salaire', 'Autre',
-];
+interface TypeDepense { id: number; nom: string; }
 
 function buildDepensesPdfHtml(
   depenses: any[],
@@ -101,10 +100,26 @@ export default function DepensesScreen() {
   });
   const [totauxParType, setTotauxParType] = useState<{ type: string; total: number }[]>([]);
 
+  // ── Types dépenses dynamiques ──
+  const [typesDepense, setTypesDepense] = useState<TypeDepense[]>([]);
+  const [showTypesModal, setShowTypesModal] = useState(false);
+  const [newTypeName, setNewTypeName] = useState('');
+  const [editingTypeId, setEditingTypeId] = useState<number | null>(null);
+  const [editingTypeName, setEditingTypeName] = useState('');
+  const [typesError, setTypesError] = useState('');
+  const [typesLoading, setTypesLoading] = useState(false);
+
   // ── Filtres ──
   const [filtreType, setFiltreType] = useState('');
   const [filtreMois, setFiltreMois] = useState('');
   const [showTypePicker2, setShowTypePicker2] = useState(false);
+
+  const loadTypes = async () => {
+    try {
+      const r = await getTypesDepense();
+      setTypesDepense((r.data?.types || []).sort((a: TypeDepense, b: TypeDepense) => a.nom.localeCompare(b.nom)));
+    } catch {}
+  };
 
   const charger = async () => {
     try {
@@ -140,7 +155,50 @@ export default function DepensesScreen() {
     setRefreshing(false);
   };
 
-  useEffect(() => { charger(); }, []);
+  useEffect(() => { charger(); loadTypes(); }, []);
+
+  const ajouterType = async () => {
+    if (!newTypeName.trim()) return;
+    setTypesLoading(true);
+    try {
+      const r = await createTypeDepense(newTypeName.trim());
+      const t: TypeDepense = r.data?.type;
+      setTypesDepense(prev => [...prev, t].sort((a, b) => a.nom.localeCompare(b.nom)));
+      setNewTypeName('');
+      setTypesError('');
+    } catch (e: any) {
+      setTypesError(e?.response?.data?.message || 'Erreur création type');
+    } finally { setTypesLoading(false); }
+  };
+
+  const saveEditType = async () => {
+    if (!editingTypeId || !editingTypeName.trim()) return;
+    setTypesLoading(true);
+    try {
+      const r = await updateTypeDepense(editingTypeId, editingTypeName.trim());
+      const updated: TypeDepense = r.data?.type;
+      setTypesDepense(prev => prev.map(t => t.id === updated.id ? updated : t).sort((a, b) => a.nom.localeCompare(b.nom)));
+      setEditingTypeId(null); setEditingTypeName(''); setTypesError('');
+    } catch (e: any) {
+      setTypesError(e?.response?.data?.message || 'Erreur modification type');
+    } finally { setTypesLoading(false); }
+  };
+
+  const supprimerType = async (type: TypeDepense) => {
+    Alert.alert('Supprimer', `Supprimer le type "${type.nom}" ?`, [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Supprimer', style: 'destructive', onPress: async () => {
+        setTypesLoading(true);
+        try {
+          await deleteTypeDepense(type.id);
+          setTypesDepense(prev => prev.filter(t => t.id !== type.id));
+          setTypesError('');
+        } catch (e: any) {
+          setTypesError(e?.response?.data?.message || 'Ce type est utilisé par des dépenses');
+        } finally { setTypesLoading(false); }
+      }},
+    ]);
+  };
 
   const ouvrirCreation = () => {
     setEditing(null);
@@ -360,14 +418,14 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                       Tous les types
                     </Text>
                   </TouchableOpacity>
-                  {TYPES_DEPENSE.map(t => (
+                  {typesDepense.map(t => (
                     <TouchableOpacity
-                      key={t}
+                      key={t.id}
                       style={styles.filtreTypeItem}
-                      onPress={() => { setFiltreType(t); setShowTypePicker2(false); }}
+                      onPress={() => { setFiltreType(t.nom); setShowTypePicker2(false); }}
                     >
-                      <Text style={[styles.filtreTypeText, filtreType === t && { color: '#f44336', fontWeight: 'bold' }]}>
-                        {t}
+                      <Text style={[styles.filtreTypeText, filtreType === t.nom && { color: '#f44336', fontWeight: 'bold' }]}>
+                        {t.nom}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -446,6 +504,86 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
 
       <FAB icon="plus" style={styles.fab} onPress={() => ouvrirCreation()} />
 
+      {/* Modal Types Dépenses */}
+      <RNModal
+        visible={showTypesModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowTypesModal(false)}
+      >
+        <View style={styles.typesModalOverlay}>
+          <View style={styles.typesModalSheet}>
+            {/* Header */}
+            <View style={styles.typesModalHeader}>
+              <Text style={styles.typesModalTitle}>Types de dépenses</Text>
+              <TouchableOpacity onPress={() => {
+                setShowTypesModal(false);
+                setNewTypeName('');
+                setEditingTypeId(null);
+                setTypesError('');
+              }}>
+                <Ionicons name="close-circle" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Erreur */}
+            {typesError ? (
+              <Text style={styles.typesError}>{typesError}</Text>
+            ) : null}
+
+            {/* Liste */}
+            <ScrollView style={{ maxHeight: 300 }}>
+              {typesDepense.map(t => (
+                <View key={t.id} style={styles.typesRow}>
+                  {editingTypeId === t.id ? (
+                    <>
+                      <RNTextInput
+                        value={editingTypeName}
+                        onChangeText={setEditingTypeName}
+                        style={styles.typesEditInput}
+                      />
+                      <TouchableOpacity onPress={saveEditType} style={{ marginLeft: 8 }}>
+                        <Ionicons name="checkmark-circle" size={24} color="green" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { setEditingTypeId(null); setEditingTypeName(''); }} style={{ marginLeft: 4 }}>
+                        <Ionicons name="close-circle" size={24} color="#999" />
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.typesItemText}>{t.nom}</Text>
+                      <TouchableOpacity onPress={() => { setEditingTypeId(t.id); setEditingTypeName(t.nom); }} style={{ marginLeft: 8 }}>
+                        <Ionicons name="pencil-outline" size={20} color="#1A56DB" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => supprimerType(t)} style={{ marginLeft: 8 }}>
+                        <Ionicons name="trash-outline" size={20} color="#DC2626" />
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* Ajouter */}
+            <View style={styles.typesAddRow}>
+              <RNTextInput
+                value={newTypeName}
+                onChangeText={setNewTypeName}
+                placeholder="Nouveau type..."
+                style={styles.typesAddInput}
+              />
+              <TouchableOpacity
+                onPress={ajouterType}
+                disabled={typesLoading || !newTypeName.trim()}
+                style={[styles.typesAddBtn, (!newTypeName.trim() || typesLoading) && { opacity: 0.5 }]}
+              >
+                <Ionicons name="add" size={24} color="white" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </RNModal>
+
       <Portal>
         <Modal
           visible={showModal}
@@ -465,34 +603,42 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
               style={styles.input}
             />
 
-            <Pressable
-              style={styles.typePickerTrigger}
-              onPress={() => setShowTypePicker(v => !v)}
-            >
-              <Text style={form.typeDepense ? styles.typePickerValue : styles.typePickerPlaceholder}>
-                {form.typeDepense || 'Type de dépense'}
-              </Text>
-              <Text style={{ color: '#94a3b8', fontSize: 12 }}>{showTypePicker ? '▲' : '▼'}</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Pressable
+                style={[styles.typePickerTrigger, { flex: 1, marginBottom: 0 }]}
+                onPress={() => setShowTypePicker(v => !v)}
+              >
+                <Text style={form.typeDepense ? styles.typePickerValue : styles.typePickerPlaceholder}>
+                  {form.typeDepense || 'Type de dépense'}
+                </Text>
+                <Text style={{ color: '#94a3b8', fontSize: 12 }}>{showTypePicker ? '▲' : '▼'}</Text>
+              </Pressable>
+              <TouchableOpacity
+                onPress={() => { setShowTypesModal(true); setTypesError(''); }}
+                style={{ padding: 8 }}
+              >
+                <Ionicons name="settings-outline" size={20} color="#1A56DB" />
+              </TouchableOpacity>
+            </View>
 
             {showTypePicker && (
               <View style={styles.typePicker}>
-                {TYPES_DEPENSE.map(t => (
+                {typesDepense.map(t => (
                   <TouchableOpacity
-                    key={t}
+                    key={t.id}
                     style={styles.typePickerItem}
                     onPress={() => {
-                      setForm({ ...form, typeDepense: t });
+                      setForm({ ...form, typeDepense: t.nom });
                       setShowTypePicker(false);
                     }}
                   >
                     <Text
                       style={[
                         styles.typePickerText,
-                        form.typeDepense === t && { color: '#f44336', fontWeight: 'bold' },
+                        form.typeDepense === t.nom && { color: '#f44336', fontWeight: 'bold' },
                       ]}
                     >
-                      {t}
+                      {t.nom}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -620,4 +766,16 @@ const styles = StyleSheet.create({
   cardActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 4 },
   recuBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
   recuBtnText: { color: '#166534', fontSize: 12, fontWeight: '700' },
+  // Modal types dépenses
+  typesModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  typesModalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%' as any, padding: 20 },
+  typesModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  typesModalTitle: { fontSize: 18, fontWeight: '700' },
+  typesError: { color: 'red', fontSize: 13, marginBottom: 8 },
+  typesRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  typesItemText: { flex: 1, fontSize: 15 },
+  typesEditInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  typesAddRow: { flexDirection: 'row', gap: 8, marginTop: 16 },
+  typesAddInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  typesAddBtn: { backgroundColor: '#1A56DB', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
 });

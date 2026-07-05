@@ -186,3 +186,9 @@ export const getClientVentes = (clientId: number) =>
   api.get('/ventes', { params: { clientId } });
 export const getCreditsClient = (clientNom: string) =>
   api.get('/caisse/credits/non-regles', { params: { clientNom } });
+
+// ─── Types Dépenses ────────────────────────────────────────────────────────
+export const getTypesDepense = () => api.get('/types-depense');
+export const createTypeDepense = (nom: string) => api.post('/types-depense', { nom });
+export const updateTypeDepense = (id: number, nom: string) => api.put(`/types-depense/${id}`, { nom });
+export const deleteTypeDepense = (id: number) => api.delete(`/types-depense/${id}`);
