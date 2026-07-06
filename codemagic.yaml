@@ -1,15 +1,13 @@
 workflows:
 
   android-workflow:
-    name: Ges Boutique RN - Android APK Release
+    name: Ges Boutique RN - Android APK Debug
     max_build_duration: 90
     instance_type: mac_mini_m2
 
     environment:
       node: 22.16.0
       java: 17
-      groups:
-        - android-signing
 
     scripts:
       - name: Install dependencies
@@ -42,18 +40,10 @@ workflows:
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build APK release
+      - name: Build APK debug
         script: |
-          set -e
           cd android
-          # Décodage du keystore depuis la variable Codemagic
-          echo "$CM_KEYSTORE" | base64 --decode > keystore.jks
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$(pwd)/keystore.jks \
-            -Pandroid.injected.signing.store.password="$CM_KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$CM_KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$CM_KEY_PASSWORD" \
-            --no-daemon 2>&1 | tail -80
+          ./gradlew assembleDebug --no-daemon 2>&1 | tail -80
           EXIT_CODE=${PIPESTATUS[0]}
           echo "=== Exit code Gradle: $EXIT_CODE ==="
           echo "=== Recherche APK ==="
@@ -62,7 +52,7 @@ workflows:
 
       - name: Copier APK a la racine
         script: |
-          APK=$(find android -name "*release*.apk" | head -1)
+          APK=$(find android -name "*debug*.apk" | head -1)
           if [ -z "$APK" ]; then
             APK=$(find android -name "*.apk" | head -1)
           fi
@@ -72,11 +62,11 @@ workflows:
             exit 1
           fi
           echo "APK trouve: $APK"
-          cp "$APK" ges-boutique-release.apk
-          ls -lh ges-boutique-release.apk
+          cp "$APK" ges-boutique-debug.apk
+          ls -lh ges-boutique-debug.apk
 
     artifacts:
-      - ges-boutique-release.apk
+      - ges-boutique-debug.apk
       - android/app/build/outputs/apk/**/*.apk
 
     publishing:
