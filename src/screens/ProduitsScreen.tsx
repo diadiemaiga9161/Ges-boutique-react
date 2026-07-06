@@ -232,23 +232,34 @@ export default function ProduitsScreen() {
     if (!produitCourant || !formNiveau.nom.trim()) { Alert.alert('Erreur', 'Nom du niveau obligatoire'); return; }
     // Le facteur n'est requis que si un parent est choisi
     const hasParent = !!formNiveau.parentId;
-    if (hasParent && Number(formNiveau.facteur) < 1) { Alert.alert('Erreur', 'La quantite doit etre >= 1'); return; }
+    if (hasParent) {
+      const facteurNum = parseFloat(formNiveau.facteur);
+      if (isNaN(facteurNum) || facteurNum < 1) {
+        Alert.alert('Erreur', 'La quantite contenue doit etre >= 1');
+        return;
+      }
+    }
     if (Number(formNiveau.prixVente) <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
     setSavingNiveau(true);
+    const parseNum = (val: string, fallback: number = 0) => {
+      const n = parseFloat(val);
+      return isNaN(n) ? fallback : n;
+    };
     try {
-      const parentIdVal = formNiveau.parentId ? Number(formNiveau.parentId) : undefined;
-      await creerNiveau(produitCourant.id, {
+      const payload = {
         nom: formNiveau.nom.trim(),
-        parentId: parentIdVal,
-        facteur: hasParent ? Number(formNiveau.facteur) : 1,
-        prixAchat: Number(formNiveau.prixAchat),
-        prixVente: Number(formNiveau.prixVente),
-        stock: Number(formNiveau.stock),
-      });
+        parentId: formNiveau.parentId ? Number(formNiveau.parentId) : null,
+        facteur: hasParent ? Math.max(1, parseNum(formNiveau.facteur, 1)) : 1,
+        prixAchat: parseNum(formNiveau.prixAchat, 0),
+        prixVente: parseNum(formNiveau.prixVente, 0),
+        stock: parseNum(formNiveau.stock, 0),
+      };
+      await creerNiveau(produitCourant.id, payload);
       await rechargerNiveaux(produitCourant.id);
       setFormNiveau({ nom: '', parentId: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
-    } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Ajout impossible');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Erreur lors de la creation du niveau';
+      Alert.alert('Erreur', msg);
     } finally {
       setSavingNiveau(false);
     }
