@@ -14,11 +14,16 @@ workflows:
     scripts:
       - name: Install dependencies
         script: |
+          set -e
           npm install --legacy-peer-deps
+          echo "=== Installing react-native-worklets for reanimated 4.x ==="
+          npm install react-native-worklets --legacy-peer-deps --no-save 2>&1 || echo "WARN: react-native-worklets install failed (non-fatal)"
+          echo "=== Expo version installed ==="
+          node -e "console.log('expo:', require('./node_modules/expo/package.json').version)"
           echo "=== Reanimated version installed ==="
-          node -e "console.log(require('./node_modules/react-native-reanimated/package.json').version)"
+          node -e "console.log('reanimated:', require('./node_modules/react-native-reanimated/package.json').version)"
           echo "=== Worklets version installed ==="
-          node -e "try{console.log(require('./node_modules/react-native-worklets/package.json').version)}catch(e){console.log('NOT FOUND: '+e.message)}"
+          node -e "try{console.log('worklets:', require('./node_modules/react-native-worklets/package.json').version)}catch(e){console.log('worklets NOT FOUND: '+e.message)}"
 
       - name: Accept Android licenses + install NDK
         script: |
@@ -27,11 +32,14 @@ workflows:
 
       - name: Expo prebuild Android
         script: |
-          npx expo prebuild --platform android --clean
+          set -e
+          echo "=== expo binary check ==="
+          ls -la ./node_modules/.bin/expo || echo "ERROR: expo binary not found in node_modules"
+          echo "=== expo version ==="
+          ./node_modules/.bin/expo --version
+          ./node_modules/.bin/expo prebuild --platform android --clean
           echo "=== newArchEnabled in gradle.properties ==="
           grep -i "newArchEnabled" android/gradle.properties || echo "NOT FOUND"
-          echo "=== Reanimated version after prebuild ==="
-          node -e "console.log(require('./node_modules/react-native-reanimated/package.json').version)"
 
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
