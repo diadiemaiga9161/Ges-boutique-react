@@ -20,8 +20,6 @@ workflows:
           node -e "console.log('reanimated:', require('./node_modules/react-native-reanimated/package.json').version)"
           echo "=== Worklets version installed ==="
           node -e "try{console.log('worklets:', require('./node_modules/react-native-worklets/package.json').version)}catch(e){console.log('worklets NOT FOUND: '+e.message)}"
-          echo "=== react-native-screens version installed ==="
-          node -e "console.log('rn-screens:', require('./node_modules/react-native-screens/package.json').version)"
 
       - name: Accept Android licenses + install NDK
         script: |
@@ -31,30 +29,56 @@ workflows:
       - name: Expo prebuild Android
         script: |
           set -e
-          echo "=== expo version ==="
-          ./node_modules/.bin/expo --version
           ./node_modules/.bin/expo prebuild --platform android --clean
-          # Forcer le bundle JS dans l'APK debug (sinon l'app cherche Metro)
-          echo "bundleInDebug=true" >> android/gradle.properties
-          echo "=== gradle.properties final ==="
-          grep -E "newArchEnabled|bundleInDebug" android/gradle.properties
+          echo "=== gradle.properties ==="
+          grep -E "newArchEnabled|hermesEnabled" android/gradle.properties || true
+
+      - name: Bundle JavaScript (diagnostic complet)
+        script: |
+          set -e
+          mkdir -p android/app/src/main/assets
+          echo "=== Bundling JS pour Android ==="
+          node ./node_modules/.bin/react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.ts \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+          echo "=== Bundle créé OK ==="
+          ls -lh android/app/src/main/assets/index.android.bundle
 
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build APK debug
+      - name: Build APK release (keystore de test auto)
         script: |
           cd android
-          ./gradlew assembleDebug --no-daemon 2>&1 | tail -80
+          echo "=== Génération keystore de test ==="
+          keytool -genkey -v \
+            -keystore test-release.jks \
+            -alias release \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 365 \
+            -noprompt \
+            -dname "CN=GesBoutique, O=Test, C=ML" \
+            -storepass testpass \
+            -keypass testpass
+          echo "=== Build release ==="
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/test-release.jks \
+            -Pandroid.injected.signing.store.password=testpass \
+            -Pandroid.injected.signing.key.alias=release \
+            -Pandroid.injected.signing.key.password=testpass \
+            --no-daemon 2>&1 | tail -150
           EXIT_CODE=${PIPESTATUS[0]}
           echo "=== Exit code Gradle: $EXIT_CODE ==="
-          echo "=== Recherche APK ==="
           find . -name "*.apk" -type f | sort
           exit $EXIT_CODE
 
       - name: Copier APK a la racine
         script: |
-          APK=$(find android -name "*debug*.apk" | head -1)
+          APK=$(find android -name "*release*.apk" | grep -v "unsigned" | head -1)
           if [ -z "$APK" ]; then
             APK=$(find android -name "*.apk" | head -1)
           fi
@@ -64,11 +88,11 @@ workflows:
             exit 1
           fi
           echo "APK trouve: $APK"
-          cp "$APK" ges-boutique-debug.apk
-          ls -lh ges-boutique-debug.apk
+          cp "$APK" ges-boutique-release.apk
+          ls -lh ges-boutique-release.apk
 
     artifacts:
-      - ges-boutique-debug.apk
+      - ges-boutique-release.apk
       - android/app/build/outputs/apk/**/*.apk
 
     publishing:
