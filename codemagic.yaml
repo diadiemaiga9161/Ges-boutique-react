@@ -33,21 +33,27 @@ workflows:
       - name: Expo prebuild Android
         script: |
           set -e
-          echo "=== expo binary check ==="
-          ls -la ./node_modules/.bin/expo || echo "ERROR: expo binary not found in node_modules"
           echo "=== expo version ==="
           ./node_modules/.bin/expo --version
           ./node_modules/.bin/expo prebuild --platform android --clean
           echo "=== newArchEnabled in gradle.properties ==="
-          grep -i "newArchEnabled" android/gradle.properties || echo "NOT FOUND"
+          grep -i "newArchEnabled" android/gradle.properties || echo "NOT FOUND (Old Architecture)"
 
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build APK debug
+      - name: Build APK release
         script: |
+          set -e
           cd android
-          ./gradlew assembleDebug --no-daemon 2>&1 | tail -60
+          # Décodage du keystore depuis la variable Codemagic
+          echo "$CM_KEYSTORE" | base64 --decode > keystore.jks
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/keystore.jks \
+            -Pandroid.injected.signing.store.password="$CM_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$CM_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$CM_KEY_PASSWORD" \
+            --no-daemon 2>&1 | tail -80
           EXIT_CODE=${PIPESTATUS[0]}
           echo "=== Exit code Gradle: $EXIT_CODE ==="
           echo "=== Recherche APK ==="
@@ -56,7 +62,7 @@ workflows:
 
       - name: Copier APK a la racine
         script: |
-          APK=$(find android -name "*debug*.apk" | head -1)
+          APK=$(find android -name "*release*.apk" | head -1)
           if [ -z "$APK" ]; then
             APK=$(find android -name "*.apk" | head -1)
           fi
@@ -66,11 +72,11 @@ workflows:
             exit 1
           fi
           echo "APK trouve: $APK"
-          cp "$APK" ges-boutique-debug.apk
-          ls -lh ges-boutique-debug.apk
+          cp "$APK" ges-boutique-release.apk
+          ls -lh ges-boutique-release.apk
 
     artifacts:
-      - ges-boutique-debug.apk
+      - ges-boutique-release.apk
       - android/app/build/outputs/apk/**/*.apk
 
     publishing:

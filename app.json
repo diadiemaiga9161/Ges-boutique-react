@@ -6,6 +6,11 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#081648"
+    },
     "ios": {
       "supportsTablet": true
     },
@@ -13,12 +18,13 @@
       "package": "com.gesboutique.lafia",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff",
+        "backgroundColor": "#081648",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "minSdkVersion": 21
     },
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "web": {
       "favicon": "./assets/favicon.png"
     },
