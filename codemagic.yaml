@@ -39,9 +39,15 @@ workflows:
       - name: Build APK debug
         script: |
           cd android
-          ./gradlew assembleDebug --no-daemon 2>&1 | tail -150
-          EXIT_CODE=${PIPESTATUS[0]}
-          echo "=== Exit code Gradle: $EXIT_CODE ==="
+          # NODE_ENV requis par les tâches Expo pour le bundling
+          export NODE_ENV=production
+          ./gradlew assembleDebug --no-daemon > /tmp/gradle.log 2>&1; EXIT_CODE=$?
+          # Afficher l'erreur node en premier (visible dans les 50 dernières lignes)
+          echo "=== ERREUR NODE (si présente) ==="
+          grep -A8 "Process.*command.*node\|error:\|Error:" /tmp/gradle.log | head -40 || echo "Aucune erreur node trouvée"
+          echo "=== FIN DU LOG GRADLE ==="
+          tail -20 /tmp/gradle.log
+          echo "=== Exit: $EXIT_CODE ==="
           find . -name "*.apk" -type f | sort
           exit $EXIT_CODE
 
