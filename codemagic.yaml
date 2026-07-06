@@ -14,8 +14,6 @@ workflows:
         script: |
           set -e
           npm install --legacy-peer-deps
-          echo "=== Expo version ==="
-          node -e "console.log('expo:', require('./node_modules/expo/package.json').version)"
           echo "=== @react-native-community/cli version ==="
           node -e "console.log('cli:', require('./node_modules/@react-native-community/cli/package.json').version)"
 
@@ -27,25 +25,39 @@ workflows:
       - name: Expo prebuild Android
         script: |
           set -e
+          export NODE_ENV=production
           ./node_modules/.bin/expo prebuild --platform android --clean
-          # Forcer le bundle JS dans l'APK debug (sinon l'app cherche Metro)
-          echo "bundleInDebug=true" >> android/gradle.properties
           echo "=== gradle.properties ==="
-          grep -E "newArchEnabled|bundleInDebug" android/gradle.properties
+          grep -E "newArchEnabled|bundleInDebug|hermes" android/gradle.properties || true
+
+      - name: Test bundle JS (expo export:embed)
+        script: |
+          export NODE_ENV=production
+          mkdir -p android/app/src/main/assets
+          echo "=== Test expo export:embed ==="
+          ./node_modules/.bin/expo export:embed \
+            --platform android \
+            --dev false \
+            --entry-file index.ts \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res 2>&1
+          EXPO_EXIT=$?
+          echo "=== expo export:embed exit: $EXPO_EXIT ==="
+          ls -lh android/app/src/main/assets/index.android.bundle 2>/dev/null || echo "Bundle NON créé"
 
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-      - name: Build APK debug
+      - name: Build APK debug (bundle pre-genere, skip bundle task)
         script: |
           cd android
-          # NODE_ENV requis par les tâches Expo pour le bundling
           export NODE_ENV=production
-          ./gradlew assembleDebug --no-daemon > /tmp/gradle.log 2>&1; EXIT_CODE=$?
-          # Afficher l'erreur node en premier (visible dans les 50 dernières lignes)
+          # Bundle JS déjà généré par expo export:embed - sauter la tâche bundle Gradle
+          ./gradlew assembleDebug \
+            -x bundleDebugJsAndAssets \
+            --no-daemon > /tmp/gradle.log 2>&1; EXIT_CODE=$?
           echo "=== ERREUR NODE (si présente) ==="
-          grep -A8 "Process.*command.*node\|error:\|Error:" /tmp/gradle.log | head -40 || echo "Aucune erreur node trouvée"
-          echo "=== FIN DU LOG GRADLE ==="
+          grep -A5 "Process.*node\|error:\|Error:" /tmp/gradle.log | head -30 || true
           tail -20 /tmp/gradle.log
           echo "=== Exit: $EXIT_CODE ==="
           find . -name "*.apk" -type f | sort
