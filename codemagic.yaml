@@ -22,6 +22,8 @@ workflows:
           node -e "console.log('reanimated:', require('./node_modules/react-native-reanimated/package.json').version)"
           echo "=== Worklets version installed ==="
           node -e "try{console.log('worklets:', require('./node_modules/react-native-worklets/package.json').version)}catch(e){console.log('worklets NOT FOUND: '+e.message)}"
+          echo "=== react-native-screens version installed ==="
+          node -e "console.log('rn-screens:', require('./node_modules/react-native-screens/package.json').version)"
 
       - name: Accept Android licenses + install NDK
         script: |
