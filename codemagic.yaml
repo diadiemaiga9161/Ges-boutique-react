@@ -17,6 +17,8 @@ workflows:
           npm install --legacy-peer-deps
           echo "=== Reanimated version installed ==="
           node -e "console.log(require('./node_modules/react-native-reanimated/package.json').version)"
+          echo "=== Worklets version installed ==="
+          node -e "try{console.log(require('./node_modules/react-native-worklets/package.json').version)}catch(e){console.log('NOT FOUND: '+e.message)}"
 
       - name: Accept Android licenses + install NDK
         script: |
