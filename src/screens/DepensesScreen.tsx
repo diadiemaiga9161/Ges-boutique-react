@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
   ScrollView, TouchableOpacity, Pressable,
@@ -113,6 +113,10 @@ export default function DepensesScreen() {
   const [filtreType, setFiltreType] = useState('');
   const [filtreMois, setFiltreMois] = useState('');
   const [showTypePicker2, setShowTypePicker2] = useState(false);
+
+  // ── Pagination ──
+  const [pageDepenses, setPageDepenses] = useState(1);
+  const ITEMS_PAGE = 10;
 
   const loadTypes = async () => {
     try {
@@ -287,6 +291,19 @@ export default function DepensesScreen() {
 
   const filtreActif = filtreType !== '' || filtreMois !== '';
 
+  // ── Pagination dépenses ──
+  const depensesPaginees = useMemo(
+    () => depensesFiltrees.slice((pageDepenses - 1) * ITEMS_PAGE, pageDepenses * ITEMS_PAGE),
+    [depensesFiltrees, pageDepenses],
+  );
+  const totalPagesDepenses = useMemo(
+    () => Math.max(1, Math.ceil(depensesFiltrees.length / ITEMS_PAGE)),
+    [depensesFiltrees],
+  );
+
+  // Reset page quand les filtres changent
+  useEffect(() => { setPageDepenses(1); }, [filtreType, filtreMois]);
+
   const filtreTitre = (() => {
     const parts: string[] = [];
     if (filtreType) parts.push(filtreType);
@@ -375,7 +392,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
       </View>
 
       <FlatList
-        data={depensesFiltrees}
+        data={depensesPaginees}
         keyExtractor={d => String(d.id)}
         refreshControl={
           <RefreshControl
@@ -499,6 +516,29 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
             </Card.Content>
           </Card>
         )}
+        ListFooterComponent={
+          totalPagesDepenses > 1 ? (
+            <View style={styles.paginationRow}>
+              <TouchableOpacity
+                onPress={() => setPageDepenses(p => Math.max(1, p - 1))}
+                disabled={pageDepenses === 1}
+              >
+                <Text style={[styles.paginationBtn, pageDepenses === 1 && styles.paginationDisabled]}>
+                  Precedent
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.paginationInfo}>Page {pageDepenses}/{totalPagesDepenses}</Text>
+              <TouchableOpacity
+                onPress={() => setPageDepenses(p => Math.min(totalPagesDepenses, p + 1))}
+                disabled={pageDepenses === totalPagesDepenses}
+              >
+                <Text style={[styles.paginationBtn, pageDepenses === totalPagesDepenses && styles.paginationDisabled]}>
+                  Suivant
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={<Text style={styles.empty}>Aucune dépense{filtreActif ? ' pour ces filtres' : ''}</Text>}
       />
 
@@ -766,6 +806,11 @@ const styles = StyleSheet.create({
   cardActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 4 },
   recuBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
   recuBtnText: { color: '#166534', fontSize: 12, fontWeight: '700' },
+  // Pagination
+  paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 8, marginTop: 4, marginBottom: 8 },
+  paginationBtn: { fontSize: 14, color: '#dc2626', fontWeight: '700', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#dc2626', backgroundColor: '#fff' },
+  paginationDisabled: { color: '#ccc', borderColor: '#eee', backgroundColor: '#fafafa' },
+  paginationInfo: { fontSize: 13, color: '#555', fontWeight: '600' },
   // Modal types dépenses
   typesModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   typesModalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%' as any, padding: 20 },

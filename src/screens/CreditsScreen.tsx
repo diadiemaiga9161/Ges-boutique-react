@@ -154,11 +154,36 @@ export default function CreditsScreen() {
   const [paiementsGroupesLoading, setPaiementsGroupesLoading] = useState(false);
   const [expandedGroupes, setExpandedGroupes] = useState<Set<string>>(new Set());
 
+  // ── Filtres onglet paiements groupés ──
+  const [rechercheGroupe, setRechercheGroupe] = useState('');
+  const [dateDebutGroupe, setDateDebutGroupe] = useState('');
+  const [dateFinGroupe, setDateFinGroupe] = useState('');
+  const [clientGroupeSelectionne, setClientGroupeSelectionne] = useState('');
+
   // ─── Clients uniques (pour filtre chip) ──────────────────────────────────
   const clientsUniques = useMemo(() => {
     const noms = allCredits.map(c => c.clientNom).filter(Boolean);
     return Array.from(new Set(noms)).sort();
   }, [allCredits]);
+
+  // ─── Clients uniques onglet paiements groupés ──────────────────────────
+  const clientsGroupesUniques = useMemo(() => {
+    const noms = (paiementsGroupes || []).map((g: PaiementGroupe) => g.clientNom || '').filter(Boolean);
+    return [...new Set(noms)].sort();
+  }, [paiementsGroupes]);
+
+  // ─── Paiements groupés filtrés ────────────────────────────────────────
+  const paiementsGroupesFiltres = useMemo(() => {
+    return (paiementsGroupes || []).filter((g: PaiementGroupe) => {
+      const client = g.clientNom || '';
+      const date = g.date || '';
+      const okRecherche = !rechercheGroupe || client.toLowerCase().includes(rechercheGroupe.toLowerCase());
+      const okClient = !clientGroupeSelectionne || client === clientGroupeSelectionne;
+      const okDebut = !dateDebutGroupe || date >= dateDebutGroupe;
+      const okFin = !dateFinGroupe || date <= dateFinGroupe + 'T23:59:59';
+      return okRecherche && okClient && okDebut && okFin;
+    });
+  }, [paiementsGroupes, rechercheGroupe, clientGroupeSelectionne, dateDebutGroupe, dateFinGroupe]);
 
   // ─── Pagination ───────────────────────────────────────────────────────────
   const creditsPagines = useMemo(() => {
@@ -1258,6 +1283,97 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
 
       {activeTab === 'groupes' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
+          {/* ── Filtres paiements groupés ── */}
+          {!paiementsGroupesLoading && paiementsGroupes.length > 0 && (
+            <View style={s.groupeFiltresBox}>
+              {/* Recherche client */}
+              <View style={s.groupeSearchWrap}>
+                <MaterialCommunityIcons name="magnify" size={16} color="#d97706" />
+                <TextInput
+                  style={s.groupeSearchInput}
+                  value={rechercheGroupe}
+                  onChangeText={setRechercheGroupe}
+                  placeholder="Rechercher un client..."
+                  placeholderTextColor="#bbb"
+                />
+                {rechercheGroupe.length > 0 && (
+                  <TouchableOpacity onPress={() => setRechercheGroupe('')}>
+                    <MaterialCommunityIcons name="close-circle" size={15} color="#bbb" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filtre dates */}
+              <View style={s.groupeDateRow}>
+                <View style={s.groupeDateWrap}>
+                  <MaterialCommunityIcons name="calendar-start" size={13} color="#d97706" />
+                  <TextInput
+                    style={s.groupeDateInput}
+                    value={dateDebutGroupe}
+                    onChangeText={setDateDebutGroupe}
+                    placeholder="Du (AAAA-MM-JJ)"
+                    placeholderTextColor="#bbb"
+                  />
+                </View>
+                <Text style={{ color: '#d97706', fontWeight: '700', fontSize: 13 }}>→</Text>
+                <View style={s.groupeDateWrap}>
+                  <MaterialCommunityIcons name="calendar-end" size={13} color="#d97706" />
+                  <TextInput
+                    style={s.groupeDateInput}
+                    value={dateFinGroupe}
+                    onChangeText={setDateFinGroupe}
+                    placeholder="Au (AAAA-MM-JJ)"
+                    placeholderTextColor="#bbb"
+                  />
+                </View>
+                {(dateDebutGroupe || dateFinGroupe) && (
+                  <TouchableOpacity onPress={() => { setDateDebutGroupe(''); setDateFinGroupe(''); }} style={{ padding: 4 }}>
+                    <MaterialCommunityIcons name="close-circle" size={16} color="#f44336" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Chips clients groupes */}
+              {clientsGroupesUniques.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 6, gap: 6 }}>
+                  <TouchableOpacity
+                    style={[s.clientChip, !clientGroupeSelectionne && s.groupeChipActive]}
+                    onPress={() => setClientGroupeSelectionne('')}
+                  >
+                    <Text style={[s.clientChipText, !clientGroupeSelectionne && s.groupeChipTextActive]}>Tous</Text>
+                  </TouchableOpacity>
+                  {clientsGroupesUniques.map(nom => (
+                    <TouchableOpacity
+                      key={nom}
+                      style={[s.clientChip, clientGroupeSelectionne === nom && s.groupeChipActive]}
+                      onPress={() => setClientGroupeSelectionne(prev => prev === nom ? '' : nom)}
+                    >
+                      <Text style={[s.clientChipText, clientGroupeSelectionne === nom && s.groupeChipTextActive]} numberOfLines={1}>
+                        {nom}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+
+              {/* Bouton effacer + compteur */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                <Text style={{ color: '#78350f', fontSize: 12, fontWeight: '600' }}>
+                  {paiementsGroupesFiltres.length} session{paiementsGroupesFiltres.length !== 1 ? 's' : ''}
+                </Text>
+                {(rechercheGroupe || dateDebutGroupe || dateFinGroupe || clientGroupeSelectionne) && (
+                  <TouchableOpacity
+                    onPress={() => { setRechercheGroupe(''); setDateDebutGroupe(''); setDateFinGroupe(''); setClientGroupeSelectionne(''); }}
+                    style={s.groupeClearBtn}
+                  >
+                    <MaterialCommunityIcons name="filter-remove-outline" size={14} color="#f44336" />
+                    <Text style={{ color: '#f44336', fontSize: 12, fontWeight: '600' }}>Effacer filtres</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
+
           {paiementsGroupesLoading && (
             <View style={{ alignItems: 'center', paddingVertical: 32 }}>
               <ActivityIndicator color="#d97706" />
@@ -1270,7 +1386,13 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
               <Text style={{ color: '#888', marginTop: 12, fontSize: 16 }}>Aucun paiement groupé</Text>
             </View>
           )}
-          {!paiementsGroupesLoading && paiementsGroupes.map(pg => (
+          {!paiementsGroupesLoading && paiementsGroupes.length > 0 && paiementsGroupesFiltres.length === 0 && (
+            <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+              <MaterialCommunityIcons name="filter-off-outline" size={40} color="#d1d5db" />
+              <Text style={{ color: '#888', marginTop: 10, fontSize: 14 }}>Aucun résultat pour ces filtres</Text>
+            </View>
+          )}
+          {!paiementsGroupesLoading && paiementsGroupesFiltres.map((pg: PaiementGroupe) => (
             <View key={pg.referenceGroupe} style={{ marginBottom: 12, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#fde68a', backgroundColor: '#fff' }}>
 
               {/* Header session */}
@@ -1757,6 +1879,17 @@ const s = StyleSheet.create({
   groupeTotal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f3e5f5', borderRadius: 10, padding: 12, marginVertical: 10 },
   groupeTotalLabel: { color: '#666', fontSize: 13 },
   groupeTotalVal: { fontWeight: 'bold', color: '#9c27b0', fontSize: 16 },
+
+  // Filtres onglet paiements groupés
+  groupeFiltresBox: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a', elevation: 1 },
+  groupeSearchWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fefce8', borderRadius: 10, paddingHorizontal: 10, height: 38, borderWidth: 1, borderColor: '#fde68a', marginBottom: 8, gap: 6 },
+  groupeSearchInput: { flex: 1, fontSize: 13, color: '#333' },
+  groupeDateRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  groupeDateWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fefce8', borderRadius: 10, paddingHorizontal: 8, height: 34, borderWidth: 1, borderColor: '#fde68a' },
+  groupeDateInput: { flex: 1, marginLeft: 4, fontSize: 11, color: '#333' },
+  groupeChipActive: { backgroundColor: '#d97706', borderColor: '#d97706' },
+  groupeChipTextActive: { color: '#fff', fontWeight: '700' },
+  groupeClearBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#fca5a5', backgroundColor: '#fff5f5' },
 
   // Boutons footer modal
   btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
