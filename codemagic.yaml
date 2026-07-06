@@ -34,8 +34,10 @@ workflows:
           echo "=== expo version ==="
           ./node_modules/.bin/expo --version
           ./node_modules/.bin/expo prebuild --platform android --clean
-          echo "=== newArchEnabled in gradle.properties ==="
-          grep -i "newArchEnabled" android/gradle.properties || echo "NOT FOUND (Old Architecture)"
+          # Forcer le bundle JS dans l'APK debug (sinon l'app cherche Metro)
+          echo "bundleInDebug=true" >> android/gradle.properties
+          echo "=== gradle.properties final ==="
+          grep -E "newArchEnabled|bundleInDebug" android/gradle.properties
 
       - name: Configure Android SDK path
         script: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
