@@ -230,14 +230,10 @@ export default function ProduitsScreen() {
 
   const ajouterNiveauFn = async () => {
     if (!produitCourant || !formNiveau.nom.trim()) { Alert.alert('Erreur', 'Nom du niveau obligatoire'); return; }
-    // Le facteur n'est requis que si un parent est choisi
-    const hasParent = !!formNiveau.parentId;
-    if (hasParent) {
-      const facteurNum = parseFloat(formNiveau.facteur);
-      if (isNaN(facteurNum) || facteurNum < 1) {
-        Alert.alert('Erreur', 'La quantite contenue doit etre >= 1');
-        return;
-      }
+    const facteurNum = parseFloat(formNiveau.facteur);
+    if (isNaN(facteurNum) || facteurNum < 1) {
+      Alert.alert('Erreur', 'La quantité doit être >= 1');
+      return;
     }
     if (Number(formNiveau.prixVente) <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
     setSavingNiveau(true);
@@ -249,7 +245,7 @@ export default function ProduitsScreen() {
       const payload = {
         nom: formNiveau.nom.trim(),
         parentId: formNiveau.parentId ? Number(formNiveau.parentId) : null,
-        facteur: hasParent ? Math.max(1, parseNum(formNiveau.facteur, 1)) : 1,
+        facteur: Math.max(1, parseNum(formNiveau.facteur, 1)),
         prixAchat: parseNum(formNiveau.prixAchat, 0),
         prixVente: parseNum(formNiveau.prixVente, 0),
         stock: parseNum(formNiveau.stock, 0),
@@ -719,14 +715,14 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                     onPress={() => setFormNiveau(f => ({ ...f, parentId: '', facteur: '1' }))}
                   >
                     <Text style={[nStyles.parentOptionText, formNiveau.parentId === '' && nStyles.parentOptionTextActive]}>
-                      C'est le plus grand
+                      {produitCourant?.nom} (produit principal)
                     </Text>
                   </TouchableOpacity>
                   {niveaux.map(pn => (
                     <TouchableOpacity
                       key={pn.id}
                       style={[nStyles.parentOption, formNiveau.parentId === String(pn.id) && nStyles.parentOptionActive]}
-                      onPress={() => setFormNiveau(f => ({ ...f, parentId: String(pn.id) }))}
+                      onPress={() => setFormNiveau(f => ({ ...f, parentId: String(pn.id), facteur: '1' }))}
                     >
                       <Text style={[nStyles.parentOptionText, formNiveau.parentId === String(pn.id) && nStyles.parentOptionTextActive]}>
                         {pn.nom}
@@ -735,17 +731,18 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   ))}
                 </View>
 
-                {/* Facteur — visible uniquement si un parent est choisi */}
-                {formNiveau.parentId !== '' && (
-                  <TextInput
-                    label={labelFacteur(
-                      { nom: formNiveau.nom, parentId: Number(formNiveau.parentId), facteur: Number(formNiveau.facteur), prixAchat: 0, prixVente: 0 },
-                      niveaux
-                    )}
-                    value={formNiveau.facteur}
-                    onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
-                    keyboardType="numeric" style={nStyles.inp} mode="outlined" />
-                )}
+                {/* Facteur — toujours visible */}
+                <TextInput
+                  label={(() => {
+                    if (formNiveau.parentId) {
+                      const parent = niveaux.find(n => String(n.id) === formNiveau.parentId);
+                      return `Quantité dans 1 ${parent?.nom || 'unité parent'}`;
+                    }
+                    return `Quantité dans 1 ${produitCourant?.nom || 'produit'}`;
+                  })()}
+                  value={formNiveau.facteur}
+                  onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
+                  keyboardType="numeric" style={nStyles.inp} mode="outlined" />
 
                 <View style={nStyles.row2}>
                   <TextInput label="Prix achat (FCFA)" value={formNiveau.prixAchat}
