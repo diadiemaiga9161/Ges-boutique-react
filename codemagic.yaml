@@ -16,8 +16,6 @@ workflows:
         script: |
           set -e
           npm install --legacy-peer-deps
-          echo "=== Installing react-native-worklets for reanimated 4.x ==="
-          npm install react-native-worklets --legacy-peer-deps --no-save 2>&1 || echo "WARN: react-native-worklets install failed (non-fatal)"
           echo "=== Expo version installed ==="
           node -e "console.log('expo:', require('./node_modules/expo/package.json').version)"
           echo "=== Reanimated version installed ==="
