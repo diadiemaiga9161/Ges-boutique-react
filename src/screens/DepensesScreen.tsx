@@ -121,7 +121,8 @@ export default function DepensesScreen() {
   const loadTypes = async () => {
     try {
       const r = await getTypesDepense();
-      setTypesDepense((r.data?.types || []).sort((a: TypeDepense, b: TypeDepense) => a.nom.localeCompare(b.nom)));
+      const rawTypes = Array.isArray(r.data) ? r.data : (r.data?.types || []);
+      setTypesDepense(rawTypes.sort((a: TypeDepense, b: TypeDepense) => a.nom.localeCompare(b.nom)));
     } catch {}
   };
 
@@ -711,7 +712,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
             />
 
             <Button mode="contained" onPress={sauvegarder} style={{ marginTop: 4 }}>
-              Enregistrer
+              {editing ? 'Modifier' : 'Ajouter'}
             </Button>
           </ScrollView>
         </Modal>
