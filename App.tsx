@@ -1,5 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useState, useEffect } from 'react';
+import { LangProvider } from './src/i18n/LangContext';
 import { PaperProvider, MD3LightTheme, Portal } from 'react-native-paper';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -88,6 +89,7 @@ export default function App() {
   }
 
   return (
+    <LangProvider>
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider theme={theme}>
@@ -109,6 +111,7 @@ export default function App() {
         </PaperProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+    </LangProvider>
   );
 }
 

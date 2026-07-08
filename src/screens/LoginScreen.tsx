@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
@@ -7,6 +7,8 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { login } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 const LANGUAGES = [
   { code: 'fr', flag: '🇫🇷', name: 'Français' },
@@ -20,30 +22,26 @@ const LANGUAGES = [
 ];
 
 export default function LoginScreen({ onLogin, navigation }: any) {
+  const { lang, setLang } = useLang();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword]     = useState('');
   const [loading, setLoading]       = useState(false);
   const [showPwd, setShowPwd]       = useState(false);
-  const [lang, setLang]             = useState(LANGUAGES[0]);
   const [showLang, setShowLang]     = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
-  useEffect(() => {
-    AsyncStorage.getItem('lang').then(code => {
-      if (code) {
-        const found = LANGUAGES.find(l => l.code === code);
-        if (found) setLang(found);
-      }
-    });
-  }, []);
+  const currentLang = LANGUAGES.find(l => l.code === lang) || LANGUAGES[0];
 
   const selectLang = async (l: typeof LANGUAGES[0]) => {
-    setLang(l);
-    await AsyncStorage.setItem('lang', l.code);
+    await setLang(l.code);
     setShowLang(false);
   };
 
   const handleLogin = async () => {
-    if (!identifier || !password) { Alert.alert('Erreur', 'Remplis tous les champs'); return; }
+    if (!identifier || !password) {
+      Alert.alert(tr('erreur', lang), tr('remplir_champs', lang));
+      return;
+    }
     setLoading(true);
     try {
       const res  = await login(identifier, password);
@@ -53,15 +51,37 @@ export default function LoginScreen({ onLogin, navigation }: any) {
       await AsyncStorage.setItem('token', data.token);
       onLogin(user);
     } catch (e: any) {
-      Alert.alert('Connexion échouée', e.response?.data?.message || 'Identifiants incorrects');
+      let msg: string;
+      if (e.response) {
+        // Le serveur a répondu avec une erreur HTTP
+        msg = e.response.data?.message
+           || e.response.data?.error
+           || `Erreur ${e.response.status}`;
+      } else if (e.request) {
+        // Requête envoyée mais pas de réponse (hors ligne / serveur éteint)
+        msg = tr('serveur_inaccessible', lang);
+      } else {
+        msg = e.message || tr('identifiants_incorrects', lang);
+      }
+      Alert.alert(tr('connexion_echouee', lang), msg);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+    // Fix clavier Android : behavior="height" au lieu de undefined
+    <KeyboardAvoidingView
+      style={s.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'android' ? 0 : 0}
+    >
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={s.scroll}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
 
         {/* ══ HERO ══ */}
         <View style={s.hero}>
@@ -69,11 +89,11 @@ export default function LoginScreen({ onLogin, navigation }: any) {
           <View style={[s.deco, s.deco2]} />
           <View style={[s.deco, s.deco3]} />
 
-          {/* Sélecteur de langue */}
+          {/* Sélecteur de langue — utilise le contexte global */}
           <View style={s.langWrap}>
             <TouchableOpacity style={s.langBtn} onPress={() => setShowLang(!showLang)}>
-              <Text style={s.langFlag}>{lang.flag}</Text>
-              <Text style={s.langCode}>{lang.code.toUpperCase()}</Text>
+              <Text style={s.langFlag}>{currentLang.flag}</Text>
+              <Text style={s.langCode}>{currentLang.code.toUpperCase()}</Text>
               <Text style={s.langChevron}>▾</Text>
             </TouchableOpacity>
             {showLang && (
@@ -81,11 +101,11 @@ export default function LoginScreen({ onLogin, navigation }: any) {
                 {LANGUAGES.map(l => (
                   <TouchableOpacity
                     key={l.code}
-                    style={[s.langOption, l.code === lang.code && s.langActive]}
+                    style={[s.langOption, l.code === lang && s.langActive]}
                     onPress={() => selectLang(l)}
                   >
                     <Text style={s.langOptFlag}>{l.flag}</Text>
-                    <Text style={[s.langOptName, l.code === lang.code && s.langOptNameActive]}>{l.name}</Text>
+                    <Text style={[s.langOptName, l.code === lang && s.langOptNameActive]}>{l.name}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -101,7 +121,7 @@ export default function LoginScreen({ onLogin, navigation }: any) {
             <Text style={s.tagline}>Maïga Consulting · Gestion de boutique</Text>
           </View>
 
-          {/* Vague de séparation */}
+          {/* Vague */}
           <Svg viewBox="0 0 375 60" style={s.wave} preserveAspectRatio="none">
             <Path d="M0,20 C60,50 120,0 200,25 C270,48 330,5 375,25 L375,60 L0,60 Z" fill="#f0f4f8" />
           </Svg>
@@ -110,50 +130,63 @@ export default function LoginScreen({ onLogin, navigation }: any) {
         {/* ══ FORMULAIRE ══ */}
         <View style={s.formZone}>
           <View style={s.card}>
-            <Text style={s.cardTitle}>Connexion</Text>
-            <Text style={s.cardSub}>Accédez à votre espace boutique</Text>
+            <Text style={s.cardTitle}>{tr('connexion', lang)}</Text>
+            <Text style={s.cardSub}>{tr('sub_connexion', lang)}</Text>
 
             <View style={s.inputGroup}>
-              <Text style={s.label}>👤  Identifiant</Text>
+              <Text style={s.label}>👤  {tr('identifiant', lang)}</Text>
               <View style={s.inputWrap}>
                 <TextInput
                   style={s.input}
                   value={identifier}
                   onChangeText={setIdentifier}
-                  placeholder="Email, téléphone ou nom d'utilisateur"
+                  placeholder={tr('placeholder_id', lang)}
                   placeholderTextColor="#cbd5e1"
                   autoCapitalize="none"
                   keyboardType="email-address"
+                  returnKeyType="next"
                 />
               </View>
             </View>
 
             <View style={s.inputGroup}>
-              <Text style={s.label}>🔒  Mot de passe</Text>
+              <Text style={s.label}>🔒  {tr('mot_de_passe', lang)}</Text>
               <View style={s.inputWrap}>
                 <TextInput
                   style={s.input}
                   value={password}
                   onChangeText={setPassword}
-                  placeholder="Votre mot de passe"
+                  placeholder={tr('placeholder_pwd', lang)}
                   placeholderTextColor="#cbd5e1"
                   secureTextEntry={!showPwd}
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                  // Scroll vers le bas quand le champ mot de passe est focus (Android)
+                  onFocus={() => {
+                    if (Platform.OS === 'android') {
+                      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+                    }
+                  }}
                 />
                 <TouchableOpacity onPress={() => setShowPwd(!showPwd)} style={s.eyeBtn}>
-                  <Text>{showPwd ? '🙈' : '👁️'}</Text>
+                  <Text style={{ fontSize: 18 }}>{showPwd ? '🙈' : '👁️'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
-            <TouchableOpacity style={[s.btn, loading && s.btnDis]} onPress={handleLogin} disabled={loading}>
+            <TouchableOpacity
+              style={[s.btn, loading && s.btnDis]}
+              onPress={handleLogin}
+              disabled={loading}
+            >
               {loading
                 ? <ActivityIndicator color="#fff" />
-                : <Text style={s.btnText}>Se connecter</Text>
+                : <Text style={s.btnText}>{tr('se_connecter', lang)}</Text>
               }
             </TouchableOpacity>
 
             <TouchableOpacity onPress={() => navigation?.navigate('ForgotPassword')}>
-              <Text style={s.forgot}>Mot de passe oublié ?</Text>
+              <Text style={s.forgot}>{tr('mdp_oublie', lang)}</Text>
             </TouchableOpacity>
 
             <Text style={s.version}>Ges Lafia · v1.0 · Maïga Consulting</Text>
@@ -165,89 +198,50 @@ export default function LoginScreen({ onLogin, navigation }: any) {
   );
 }
 
-const DARK  = '#081648';
-const BLUE  = '#1a56db';
+const DARK = '#081648';
+const BLUE = '#1a56db';
 
 const s = StyleSheet.create({
   root:   { flex: 1, backgroundColor: '#f0f4f8' },
   scroll: { flexGrow: 1 },
 
-  // Hero
   hero:  { backgroundColor: DARK, position: 'relative', overflow: 'hidden' },
   deco:  { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.05)' },
   deco1: { width: 280, height: 280, top: -100, right: -80 },
   deco2: { width: 160, height: 160, top: 30, left: -60 },
-  deco3: { width: 90,  height: 90,  bottom: 40, right: 40, opacity: 0.07 },
+  deco3: { width: 90, height: 90, bottom: 40, right: 40, opacity: 0.07 },
 
-  // Langue
   langWrap:    { position: 'absolute', top: 48, right: 16, zIndex: 100 },
-  langBtn:     {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.30)',
-    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
-  },
+  langBtn:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.30)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
   langFlag:    { fontSize: 16 },
   langCode:    { color: '#fff', fontSize: 12, fontWeight: '700', marginHorizontal: 4 },
   langChevron: { color: '#fff', fontSize: 10 },
-  langDropdown: {
-    position: 'absolute', top: 38, right: 0,
-    backgroundColor: '#fff', borderRadius: 14,
-    borderWidth: 1, borderColor: '#e2e8f0',
-    minWidth: 170, elevation: 12,
-    shadowColor: '#000', shadowOpacity: 0.15,
-    shadowOffset: { width: 0, height: 8 }, shadowRadius: 16,
-    overflow: 'hidden',
-  },
+  langDropdown: { position: 'absolute', top: 38, right: 0, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', minWidth: 170, elevation: 16, shadowColor: '#000', shadowOpacity: 0.18, shadowOffset: { width: 0, height: 8 }, shadowRadius: 16, overflow: 'hidden' },
   langOption:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11 },
   langActive:       { backgroundColor: '#eff6ff' },
   langOptFlag:      { fontSize: 18, marginRight: 10 },
   langOptName:      { fontSize: 14, color: '#1e293b' },
-  langOptNameActive:{ fontWeight: '700', color: BLUE },
+  langOptNameActive: { fontWeight: '700', color: BLUE },
 
-  // Hero body
   heroBody: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 20, paddingBottom: 28 },
-  logoBox:  {
-    width: 90, height: 90, borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)',
-    justifyContent: 'center', alignItems: 'center',
-    marginBottom: 18,
-  },
+  logoBox:  { width: 90, height: 90, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)', justifyContent: 'center', alignItems: 'center', marginBottom: 18 },
   logoImg:  { width: 68, height: 68, borderRadius: 14 },
   appName:  { color: '#fff', fontSize: 28, fontWeight: '900', marginBottom: 6, letterSpacing: 0.5 },
   tagline:  { color: 'rgba(255,255,255,0.60)', fontSize: 13, letterSpacing: 0.3 },
   wave:     { width: '100%', height: 56, marginBottom: -2 },
 
-  // Formulaire
   formZone: { backgroundColor: '#f0f4f8', flex: 1, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32 },
-  card:     {
-    backgroundColor: '#fff', borderRadius: 22, padding: 24,
-    borderWidth: 1, borderColor: '#e8eef8',
-    shadowColor: DARK, shadowOpacity: 0.10,
-    shadowOffset: { width: 0, height: 4 }, shadowRadius: 24, elevation: 4,
-  },
+  card:     { backgroundColor: '#fff', borderRadius: 22, padding: 24, borderWidth: 1, borderColor: '#e8eef8', shadowColor: DARK, shadowOpacity: 0.10, shadowOffset: { width: 0, height: 4 }, shadowRadius: 24, elevation: 4 },
   cardTitle: { fontSize: 22, fontWeight: '800', color: '#0f172a', marginBottom: 4 },
   cardSub:   { fontSize: 13, color: '#94a3b8', marginBottom: 22 },
 
   inputGroup: { marginBottom: 16 },
   label:      { fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 6, letterSpacing: 0.2 },
-  inputWrap:  {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#f8fafc', borderWidth: 1.5,
-    borderColor: '#e2e8f0', borderRadius: 14,
-    paddingHorizontal: 12, paddingVertical: 2,
-  },
-  input:   { flex: 1, height: 44, color: '#0f172a', fontSize: 15, fontWeight: '500' },
-  eyeBtn:  { padding: 8 },
+  inputWrap:  { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 2 },
+  input:      { flex: 1, height: 44, color: '#0f172a', fontSize: 15, fontWeight: '500' },
+  eyeBtn:     { padding: 8 },
 
-  btn:     {
-    backgroundColor: BLUE, height: 52, borderRadius: 14,
-    justifyContent: 'center', alignItems: 'center',
-    marginTop: 4, marginBottom: 8,
-    shadowColor: BLUE, shadowOpacity: 0.38,
-    shadowOffset: { width: 0, height: 6 }, shadowRadius: 22, elevation: 6,
-  },
+  btn:     { backgroundColor: BLUE, height: 52, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginTop: 4, marginBottom: 8, shadowColor: BLUE, shadowOpacity: 0.38, shadowOffset: { width: 0, height: 6 }, shadowRadius: 22, elevation: 6 },
   btnDis:  { opacity: 0.65 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
 

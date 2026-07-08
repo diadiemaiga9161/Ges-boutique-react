@@ -3,12 +3,15 @@ import { View, FlatList, StyleSheet, TouchableOpacity, Image } from 'react-nativ
 import { Text } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BOUTIQUES_CONFIG } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface Props {
   onSelect: () => void;
 }
 
 export default function BoutiqueSelectScreen({ onSelect }: Props) {
+  const { lang } = useLang();
   const choisir = async (b: typeof BOUTIQUES_CONFIG[0]) => {
     await AsyncStorage.setItem('api_url', b.url);
     await AsyncStorage.setItem('boutique_nom', b.nom);
@@ -22,7 +25,7 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
           <Image source={require('../../assets/icon.png')} style={styles.logoImg} />
         </View>
         <Text style={styles.title}>Ges Lafia</Text>
-        <Text style={styles.sub}>Sélectionnez votre boutique</Text>
+        <Text style={styles.sub}>{tr('selectionnez_boutique', lang)}</Text>
       </View>
 
       <FlatList
