@@ -38,10 +38,7 @@ workflows:
         script: |
           cd android
           export NODE_ENV=production
-          ./gradlew assembleRelease \
-            -x lintVitalRelease \
-            -x lintVitalReleaseExecute \
-            --no-daemon > /tmp/gradle.log 2>&1; EXIT_CODE=$?
+          ./gradlew assembleRelease --no-daemon > /tmp/gradle.log 2>&1; EXIT_CODE=$?
           echo "=== ERREURS BUNDLE JS (si présentes) ==="
           grep -E "FAILED|error:|Error:|Cannot resolve|Execution failed|Process.*node" /tmp/gradle.log | head -30 || true
           echo "=== FIN LOG ==="
