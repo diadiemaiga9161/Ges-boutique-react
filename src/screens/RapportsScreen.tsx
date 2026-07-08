@@ -3,8 +3,11 @@ import { View, ScrollView, StyleSheet, Linking } from 'react-native';
 import { Text, Card, Button, SegmentedButtons, ActivityIndicator, Divider } from 'react-native-paper';
 import { getRapportJour, getRapportSemaine, getRapportMois } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function RapportsScreen() {
+  const { lang } = useLang();
   const [periode, setPeriode] = useState<'jour' | 'semaine' | 'mois'>('jour');
   const [rapport, setRapport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -72,9 +75,9 @@ export default function RapportsScreen() {
         value={periode}
         onValueChange={v => switchPeriode(v as any)}
         buttons={[
-          { value: 'jour', label: 'Jour' },
-          { value: 'semaine', label: 'Semaine' },
-          { value: 'mois', label: 'Mois' },
+          { value: 'jour', label: tr('rapport_journalier', lang) },
+          { value: 'semaine', label: tr('rapport_semaine', lang) },
+          { value: 'mois', label: tr('rapport_mois', lang) },
         ]}
         style={styles.segments}
       />
@@ -86,7 +89,7 @@ export default function RapportsScreen() {
               <Card style={styles.card}>
                 <Card.Content>
                   <Text variant="titleMedium" style={styles.cardTitle}>
-                    {isVendeur ? 'Résumé des ventes' : "Chiffre d'affaires"}
+                    {isVendeur ? tr('vente', lang) : tr('chiffre_affaires', lang)}
                   </Text>
                   {!isVendeur && (
                     <Text variant="headlineMedium" style={styles.bigNum}>{money(rapport.chiffreAffaireTotal)}</Text>
@@ -94,12 +97,12 @@ export default function RapportsScreen() {
                   <Divider style={{ marginVertical: 8 }} />
                   {!isVendeur && rapport.beneficeTotal != null && (
                     <View style={styles.row}>
-                      <Text>Bénéfice</Text>
+                      <Text>{tr('benefice', lang)}</Text>
                       <Text style={styles.green}>{money(rapport.beneficeTotal)}</Text>
                     </View>
                   )}
                   <View style={styles.row}>
-                    <Text>Nombre de ventes</Text>
+                    <Text>{tr('nb_ventes', lang)}</Text>
                     <Text style={styles.bold}>{rapport.nombreVentes || 0}</Text>
                   </View>
                   {!isVendeur && rapport.montantRemisesTotal > 0 && (
@@ -115,7 +118,7 @@ export default function RapportsScreen() {
               {rapport.topProduits?.length > 0 && (
                 <Card style={styles.card}>
                   <Card.Content>
-                    <Text variant="titleMedium" style={styles.cardTitle}>Top produits</Text>
+                    <Text variant="titleMedium" style={styles.cardTitle}>Top {tr('produits', lang).toLowerCase()}</Text>
                     {rapport.topProduits.slice(0, 5).map((p: any, i: number) => (
                       <View key={i} style={styles.row}>
                         <Text>{i + 1}. {p.nom}</Text>
@@ -130,7 +133,7 @@ export default function RapportsScreen() {
               {rapport.categoriesStats?.length > 0 && (
                 <Card style={styles.card}>
                   <Card.Content>
-                    <Text variant="titleMedium" style={styles.cardTitle}>Ventes par catégorie</Text>
+                    <Text variant="titleMedium" style={styles.cardTitle}>{tr('vente', lang)} / catégorie</Text>
                     {rapport.categoriesStats.map((c: any, i: number) => (
                       <View key={i} style={styles.row}>
                         <Text>{c.nom}</Text>
@@ -151,7 +154,7 @@ export default function RapportsScreen() {
               </Button>
             </>
           ) : (
-            <Text style={styles.empty}>Données non disponibles</Text>
+            <Text style={styles.empty}>{tr('aucun_resultat', lang)}</Text>
           )}
         </ScrollView>
       )}

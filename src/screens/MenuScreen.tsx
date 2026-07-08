@@ -2,36 +2,39 @@ import React from 'react';
 import { View, StyleSheet, ScrollView, Alert } from 'react-native';
 import { Text, List, Divider, Avatar } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
-const MENU_ITEMS = [
-  { icon: 'history', label: 'Historique des ventes', screen: 'Historique' },
-  { icon: 'file-document-edit-outline', label: 'Commandes', screen: 'Commandes' },
-  { icon: 'account-group', label: 'Clients', screen: 'Clients' },
-  { icon: 'warehouse', label: 'Inventaire / Stock', screen: 'Inventaire' },
-  { icon: 'cash-minus', label: 'Dépenses', screen: 'Depenses' },
-  { icon: 'credit-card-clock', label: 'Crédits clients', screen: 'Credits' },
-  { icon: 'truck', label: 'Fournisseurs', screen: 'Fournisseurs' },
-  { icon: 'bank-transfer', label: 'Dépôts', screen: 'Depots' },
-  { icon: 'trending-up', label: 'Bénéfices', screen: 'Benefices' },
-  { icon: 'calculator', label: 'Résultat net', screen: 'ResultatNet' },
-  { icon: 'swap-horizontal', label: 'Transferts', screen: 'Transferts' },
-  { icon: 'cellphone-wireless', label: 'Mobile Money', screen: 'MobileMoney' },
-  { icon: 'receipt', label: 'Factures', screen: 'Factures' },
-  { icon: 'gift', label: 'Bonus fournisseurs', screen: 'BonusFournisseurs' },
+const getMenuItems = (lang: string) => [
+  { icon: 'history', label: tr('historique_ventes', lang), screen: 'Historique' },
+  { icon: 'file-document-edit-outline', label: tr('commandes', lang), screen: 'Commandes' },
+  { icon: 'account-group', label: tr('clients', lang), screen: 'Clients' },
+  { icon: 'warehouse', label: tr('stock_inventaire', lang), screen: 'Inventaire' },
+  { icon: 'cash-minus', label: tr('depenses', lang), screen: 'Depenses' },
+  { icon: 'credit-card-clock', label: tr('credits', lang), screen: 'Credits' },
+  { icon: 'truck', label: tr('fournisseurs', lang), screen: 'Fournisseurs' },
+  { icon: 'bank-transfer', label: tr('depots_garde', lang), screen: 'Depots' },
+  { icon: 'trending-up', label: tr('benefices_titre', lang), screen: 'Benefices' },
+  { icon: 'calculator', label: tr('resultat_net', lang), screen: 'ResultatNet' },
+  { icon: 'swap-horizontal', label: tr('transferts', lang), screen: 'Transferts' },
+  { icon: 'cellphone-wireless', label: tr('mobile_money', lang), screen: 'MobileMoney' },
+  { icon: 'receipt', label: tr('factures', lang), screen: 'Factures' },
+  { icon: 'gift', label: tr('bonus_fournisseurs', lang), screen: 'BonusFournisseurs' },
   { icon: 'bell', label: 'Notifications', screen: 'Notifications' },
   { icon: 'translate', label: 'Langue', screen: 'Langue' },
   { icon: 'tag-multiple', label: 'Promotions', screen: 'Promotions' },
   { icon: 'robot', label: 'Assistant IA', screen: 'AssistantIA' },
-  { icon: 'receipt-text-edit', label: 'Modèle de facture', screen: 'FactureDesign' },
-  { icon: 'swap-horizontal-bold', label: 'Config. transferts', screen: 'ConfigTransferts' },
-  { icon: 'help-circle', label: 'Aide & Ressources', screen: 'Resources' },
-  { icon: 'store-settings', label: 'Paramètres boutique', screen: 'BoutiqueSettings' },
-  { icon: 'account', label: 'Mon profil', screen: 'Profil' },
+  { icon: 'receipt-text-edit', label: tr('modele_facture', lang), screen: 'FactureDesign' },
+  { icon: 'swap-horizontal-bold', label: tr('config_transferts', lang), screen: 'ConfigTransferts' },
+  { icon: 'help-circle', label: tr('aide_ressources', lang), screen: 'Resources' },
+  { icon: 'store-settings', label: tr('parametres_boutique', lang), screen: 'BoutiqueSettings' },
+  { icon: 'account', label: tr('mon_profil', lang), screen: 'Profil' },
 ];
 
 export default function MenuScreen({ navigation, onLogout }: any) {
   const [user, setUser] = React.useState<any>(null);
   const [boutique, setBoutique] = React.useState<any>({});
+  const { lang } = useLang();
 
   React.useEffect(() => {
     AsyncStorage.getItem('user').then(raw => raw && setUser(JSON.parse(raw)));
@@ -39,15 +42,17 @@ export default function MenuScreen({ navigation, onLogout }: any) {
   }, []);
 
   const logout = () => {
-    Alert.alert('Déconnexion', 'Voulez-vous vous déconnecter ?', [
-      { text: 'Annuler' },
-      { text: 'Oui', onPress: async () => {
+    Alert.alert(tr('deconnexion', lang), tr('deconnexion_confirm', lang), [
+      { text: tr('annuler', lang) },
+      { text: tr('oui', lang), onPress: async () => {
         await AsyncStorage.removeItem('user');
         await AsyncStorage.removeItem('token');
         onLogout?.();
       }},
     ]);
   };
+
+  const menuItems = getMenuItems(lang);
 
   return (
     <ScrollView style={styles.container}>
@@ -63,7 +68,7 @@ export default function MenuScreen({ navigation, onLogout }: any) {
 
       {/* Navigation */}
       <View style={styles.list}>
-        {MENU_ITEMS.map((item, i) => (
+        {menuItems.map((item, i) => (
           <React.Fragment key={item.screen}>
             <List.Item
               title={item.label}
@@ -72,13 +77,13 @@ export default function MenuScreen({ navigation, onLogout }: any) {
               onPress={() => navigation.navigate(item.screen)}
               style={styles.item}
             />
-            {i < MENU_ITEMS.length - 1 && <Divider />}
+            {i < menuItems.length - 1 && <Divider />}
           </React.Fragment>
         ))}
 
         <Divider style={{ marginTop: 8 }} />
         <List.Item
-          title="Déconnexion"
+          title={tr('deconnexion', lang)}
           titleStyle={{ color: '#f44336' }}
           left={props => <List.Icon {...props} icon="logout" color="#f44336" />}
           onPress={logout}

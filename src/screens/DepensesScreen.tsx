@@ -14,6 +14,8 @@ import {
   getDepenses, createDepense, updateDepense, deleteDepense, getPaiementsEmploye,
   getTypesDepense, createTypeDepense, updateTypeDepense, deleteTypeDepense,
 } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface TypeDepense { id: number; nom: string; }
 
@@ -84,6 +86,8 @@ td{padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:11px}
 }
 
 export default function DepensesScreen() {
+  const { lang } = useLang();
+
   const [depenses, setDepenses] = useState<any[]>([]);
   const [paiementsEmploye, setPaiementsEmploye] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -190,9 +194,9 @@ export default function DepensesScreen() {
   };
 
   const supprimerType = async (type: TypeDepense) => {
-    Alert.alert('Supprimer', `Supprimer le type "${type.nom}" ?`, [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Supprimer', style: 'destructive', onPress: async () => {
+    Alert.alert(tr('supprimer', lang), `Supprimer le type "${type.nom}" ?`, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: tr('supprimer', lang), style: 'destructive', onPress: async () => {
         setTypesLoading(true);
         try {
           await deleteTypeDepense(type.id);
@@ -247,18 +251,18 @@ export default function DepensesScreen() {
       setShowModal(false);
       charger();
     } catch {
-      Alert.alert('Erreur', 'Impossible d\'enregistrer la dépense');
+      Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer la dépense');
     }
   };
 
   const supprimer = (d: any) => {
     Alert.alert(
-      'Supprimer ?',
+      tr('supprimer', lang) + ' ?',
       `${d.nom} — ${d.montant?.toLocaleString('fr-FR')} FCFA`,
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: tr('annuler', lang), style: 'cancel' },
         {
-          text: 'Supprimer', style: 'destructive', onPress: async () => {
+          text: tr('supprimer', lang), style: 'destructive', onPress: async () => {
             try { await deleteDepense(d.id); charger(); } catch { }
           },
         },
@@ -317,7 +321,7 @@ export default function DepensesScreen() {
       const html = buildDepensesPdfHtml(depensesFiltrees, totalFiltre, totauxFiltres, filtreTitre);
       await Print.printAsync({ html });
     } catch {
-      Alert.alert('Erreur', 'Impossible de générer le PDF');
+      Alert.alert(tr('erreur', lang), 'Impossible de générer le PDF');
     }
   };
 
@@ -374,7 +378,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
     try {
       await Print.printAsync({ html });
     } catch (e) {
-      Alert.alert('Erreur', 'Impossible de générer le reçu');
+      Alert.alert(tr('erreur', lang), 'Impossible de générer le reçu');
     }
   };
 
@@ -384,7 +388,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
     <View style={styles.container}>
       <View style={styles.totalBanner}>
         <Text style={styles.totalLabel}>
-          {filtreActif ? `Dépenses filtrées — ${filtreTitre}` : 'Total dépenses'}
+          {filtreActif ? `${tr('depenses', lang)} — ${filtreTitre}` : `Total ${tr('depenses', lang).toLowerCase()}`}
         </Text>
         <Text style={styles.totalVal}>{totalFiltre.toLocaleString('fr-FR')} FCFA</Text>
         {filtreActif && (
@@ -540,7 +544,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
             </View>
           ) : null
         }
-        ListEmptyComponent={<Text style={styles.empty}>Aucune dépense{filtreActif ? ' pour ces filtres' : ''}</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{tr('aucune_depense', lang)}{filtreActif ? ` (${tr('aucun_resultat', lang).toLowerCase()})` : ''}</Text>}
       />
 
       <FAB icon="plus" style={styles.fab} onPress={() => ouvrirCreation()} />
@@ -556,7 +560,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
           <View style={styles.typesModalSheet}>
             {/* Header */}
             <View style={styles.typesModalHeader}>
-              <Text style={styles.typesModalTitle}>Types de dépenses</Text>
+              <Text style={styles.typesModalTitle}>{tr('type_depense', lang)}</Text>
               <TouchableOpacity onPress={() => {
                 setShowTypesModal(false);
                 setNewTypeName('');
@@ -633,11 +637,11 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
         >
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <Text variant="titleLarge" style={{ marginBottom: 16 }}>
-              {editing ? 'Modifier la dépense' : 'Nouvelle dépense'}
+              {editing ? tr('modifier', lang) : tr('nouvelle_depense', lang)}
             </Text>
 
             <TextInput
-              label="Nom *"
+              label={tr('nom_client', lang)}
               value={form.nom}
               onChangeText={t => setForm({ ...form, nom: t })}
               mode="outlined"
@@ -712,7 +716,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
             />
 
             <Button mode="contained" onPress={sauvegarder} style={{ marginTop: 4 }}>
-              {editing ? 'Modifier' : 'Ajouter'}
+              {editing ? tr('modifier', lang) : tr('ajouter', lang)}
             </Button>
           </ScrollView>
         </Modal>

@@ -9,6 +9,8 @@ import * as Print from 'expo-print';
 import api, { getPaiementsGroupes } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildRecuReglementCreditHtml } from '../services/invoice.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CreditInfo {
@@ -98,6 +100,8 @@ const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '�
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function CreditsScreen() {
+  const { lang } = useLang();
+
   const [allCredits, setAllCredits] = useState<CreditInfo[]>([]);
   const [groups, setGroups] = useState<ClientGroup[]>([]);
   const [filtered, setFiltered] = useState<ClientGroup[]>([]);
@@ -469,7 +473,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 </div>
 <div class="ftr">Ges Boutique · Crédits ${labels[statutFilter]} · ${date} · ${liste.length} crédit(s)</div>
 </div></body></html>`;
-    try { await Print.printAsync({ html }); } catch { Alert.alert('Erreur', 'Impossible de générer le PDF'); }
+    try { await Print.printAsync({ html }); } catch { Alert.alert(tr('erreur', lang), 'Impossible de générer le PDF'); }
   };
 
   // ─── Chargement vente ────────────────────────────────────────────────────
@@ -639,7 +643,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
     try {
       await Print.printAsync({ html });
     } catch (e) {
-      Alert.alert('Erreur', 'Impossible de générer le PDF');
+      Alert.alert(tr('erreur', lang), 'Impossible de générer le PDF');
     }
   };
 
@@ -658,9 +662,9 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
   const saveSimple = async () => {
     if (!selectedCredit) return;
     const montant = parseFloat(simpleMontant);
-    if (!montant || montant <= 0) { Alert.alert('Erreur', 'Montant invalide'); return; }
+    if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
     if (montant > selectedCredit.montantRestant) {
-      Alert.alert('Erreur', `Montant max : ${money(selectedCredit.montantRestant)}`); return;
+      Alert.alert(tr('erreur', lang), `Montant max : ${money(selectedCredit.montantRestant)}`); return;
     }
     setSavingSimple(true);
     try {
@@ -686,7 +690,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         await Print.printAsync({ html });
       } catch { /* impression optionnelle, ne pas bloquer */ }
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Règlement impossible');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement impossible');
     }
     setSavingSimple(false);
   };
@@ -720,17 +724,17 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
 
   const saveGroupe = async () => {
     const creditsSelec = (selectedGroup?.credits || []).filter(c => !c.estReglee && selectedIds.has(c.venteId));
-    if (!creditsSelec.length) { Alert.alert('Erreur', 'Sélectionnez au moins un crédit'); return; }
+    if (!creditsSelec.length) { Alert.alert(tr('erreur', lang), 'Sélectionnez au moins un crédit'); return; }
     const montant = parseFloat(groupeMontant);
-    if (!montant || montant <= 0) { Alert.alert('Erreur', 'Montant invalide'); return; }
+    if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
 
     Alert.alert(
-      'Confirmer règlement groupé',
+      tr('confirmer', lang),
       `${creditsSelec.length} crédit(s) — ${money(montant)}`,
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: tr('annuler', lang), style: 'cancel' },
         {
-          text: 'Confirmer', onPress: async () => {
+          text: tr('confirmer', lang), onPress: async () => {
             setSavingGroupe(true);
             const raw = await AsyncStorage.getItem('user');
             const user = raw ? JSON.parse(raw) : {};
@@ -753,7 +757,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
               setShowGroupe(false);
               charger();
             } catch (e: any) {
-              Alert.alert('Erreur', e.response?.data?.message || 'Règlement groupé impossible');
+              Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement groupé impossible');
             }
             setSavingGroupe(false);
           }
@@ -931,7 +935,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         <TouchableOpacity
           style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: activeTab === 'credits' ? '#1a56db' : '#f9fafb' }}
           onPress={() => setActiveTab('credits')}>
-          <Text style={{ color: activeTab === 'credits' ? '#fff' : '#374151', fontWeight: '700', fontSize: 13 }}>Crédits</Text>
+          <Text style={{ color: activeTab === 'credits' ? '#fff' : '#374151', fontWeight: '700', fontSize: 13 }}>{tr('credits', lang)}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: activeTab === 'groupes' ? '#d97706' : '#f9fafb' }}
@@ -948,12 +952,12 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
       {/* Hero — 4 stats */}
       <View style={s.hero}>
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>Total dû</Text>
+          <Text style={s.heroLabel}>{tr('reste_a_payer', lang)}</Text>
           <Text style={s.heroVal}>{money(totalDu)}</Text>
         </View>
         <View style={s.heroDivider} />
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>Clients</Text>
+          <Text style={s.heroLabel}>{tr('clients', lang)}</Text>
           <Text style={s.heroVal}>{nbClients}</Text>
         </View>
         <View style={s.heroDivider} />
@@ -963,7 +967,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         </View>
         <View style={s.heroDivider} />
         <View style={[s.heroStat, { opacity: nbRegles > 0 ? 1 : 0.5 }]}>
-          <Text style={s.heroLabel}>Réglés</Text>
+          <Text style={s.heroLabel}>{tr('regle', lang)}</Text>
           <Text style={[s.heroVal, { color: '#c8e6c9' }]}>{nbRegles}</Text>
         </View>
       </View>
@@ -1241,7 +1245,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                             { nom: 'Ges Boutique' }
                           );
                           await Print.printAsync({ html });
-                        } catch { Alert.alert('Erreur', 'Impossible de générer le reçu'); }
+                        } catch { Alert.alert(tr('erreur', lang), 'Impossible de générer le reçu'); }
                       }}
                     >
                       <MaterialCommunityIcons name="receipt" size={14} color="#2e7d32" />
@@ -1515,7 +1519,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             </ScrollView>
             <View style={s.modalFoot}>
               <TouchableOpacity style={s.btnCancel} onPress={() => setShowDetail(false)}>
-                <Text style={s.btnCancelText}>Fermer</Text>
+                <Text style={s.btnCancelText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
               {versements.length > 0 && !loadingVersements && (
                 <TouchableOpacity style={s.btnPdf} onPress={imprimerVersements}>
@@ -1526,7 +1530,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
               {!detailCredit?.estReglee && (
                 <TouchableOpacity style={s.btnConfirm} onPress={() => { setShowDetail(false); if (detailCredit) openSimple(detailCredit); }}>
                   <MaterialCommunityIcons name="cash" size={15} color="#fff" />
-                  <Text style={s.btnConfirmText}>Régler</Text>
+                  <Text style={s.btnConfirmText}>{tr('payer_credit', lang)}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1540,7 +1544,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
           <View style={s.sheet}>
             <View style={s.handle} />
             <View style={s.modalHead}>
-              <Text style={s.modalTitle}>Règlement crédit</Text>
+              <Text style={s.modalTitle}>{tr('credits', lang)} — {tr('payer_credit', lang)}</Text>
               <TouchableOpacity onPress={() => setShowSimple(false)}>
                 <MaterialCommunityIcons name="close" size={22} color="#666" />
               </TouchableOpacity>
@@ -1567,7 +1571,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                   {renderLignes(simpleVente, loadingVente)}
 
                   <Text style={s.sectionTitle}>Règlement</Text>
-                  <Text style={s.fieldLabel}>Montant à régler</Text>
+                  <Text style={s.fieldLabel}>{tr('montant_payer', lang)}</Text>
                   <TextInput
                     style={s.fieldInput}
                     value={simpleMontant}
@@ -1588,12 +1592,12 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             </ScrollView>
             <View style={s.modalFoot}>
               <TouchableOpacity style={s.btnCancel} onPress={() => setShowSimple(false)}>
-                <Text style={s.btnCancelText}>Annuler</Text>
+                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.btnConfirm, savingSimple && { opacity: 0.6 }]} onPress={saveSimple} disabled={savingSimple}>
                 {savingSimple
                   ? <ActivityIndicator size="small" color="#fff" />
-                  : <><MaterialCommunityIcons name="cash" size={15} color="#fff" /><Text style={s.btnConfirmText}>Enregistrer</Text></>
+                  : <><MaterialCommunityIcons name="cash" size={15} color="#fff" /><Text style={s.btnConfirmText}>{tr('enregistrer', lang)}</Text></>
                 }
               </TouchableOpacity>
             </View>
@@ -1667,7 +1671,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             </ScrollView>
             <View style={s.modalFoot}>
               <TouchableOpacity style={s.btnCancel} onPress={() => setShowGroupe(false)}>
-                <Text style={s.btnCancelText}>Annuler</Text>
+                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.btnConfirm, (savingGroupe || !selectedIds.size) && { opacity: 0.5 }]}

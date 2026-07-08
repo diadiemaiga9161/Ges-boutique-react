@@ -12,6 +12,8 @@ import {
   reglerCreditCaisse, getStatsCaisseJour, getHistoriqueReglementsCredit,
 } from '../services/api.service';
 import { TextInput } from 'react-native';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v || 0).toLocaleString('fr-FR') + ' FCFA';
@@ -70,6 +72,7 @@ interface Operation {
 
 // ─── Composant ────────────────────────────────────────────────────────────────
 export default function CaisseScreen() {
+  const { lang } = useLang();
   const [onglet, setOnglet] = useState<Onglet>('etat');
 
   // --- État ---
@@ -265,7 +268,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     try {
       await Print.printAsync({ html });
     } catch {
-      Alert.alert('Erreur', 'Impossible de générer le PDF');
+      Alert.alert(tr('erreur', lang), 'Impossible de générer le PDF');
     }
   };
 
@@ -292,9 +295,9 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
   const saveReglement = async () => {
     if (!selectedCredit) return;
     const montant = parseFloat(reglMontant);
-    if (!montant || montant <= 0) { Alert.alert('Erreur', 'Montant invalide'); return; }
+    if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
     if (montant > selectedCredit.montantRestant) {
-      Alert.alert('Erreur', `Montant max : ${money(selectedCredit.montantRestant)}`);
+      Alert.alert(tr('erreur', lang), `Montant max : ${money(selectedCredit.montantRestant)}`);
       return;
     }
     setSavingRegl(true);
@@ -306,9 +309,9 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       });
       setShowReglement(false);
       chargerCredits(filtreCredit);
-      Alert.alert('Succès', 'Règlement enregistré');
+      Alert.alert('OK', tr('enregistrer', lang));
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Règlement impossible');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement impossible');
     }
     setSavingRegl(false);
   };
@@ -316,8 +319,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
   // ─── Ajouter opération ───────────────────────────────────────────────────
   const saveOperation = async () => {
     const montant = parseFloat(opMontant);
-    if (!montant || montant <= 0) { Alert.alert('Erreur', 'Montant invalide'); return; }
-    if (!opMotif.trim()) { Alert.alert('Erreur', 'Motif requis'); return; }
+    if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
+    if (!opMotif.trim()) { Alert.alert(tr('erreur', lang), 'Motif requis'); return; }
     setSavingOp(true);
     const data = {
       montant,
@@ -337,9 +340,9 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       setOpRef('');
       chargerOperations(filtrePeriode);
       chargerEtat();
-      Alert.alert('Succès', `${opType === 'ENTREE' ? 'Entrée' : 'Sortie'} enregistrée`);
+      Alert.alert('OK', `${opType === 'ENTREE' ? tr('entree', lang) : tr('sortie', lang)}`);
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Opération impossible');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Opération impossible');
     }
     setSavingOp(false);
   };
@@ -361,8 +364,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
   // ─── Barre d'onglets ─────────────────────────────────────────────────────
   const ONGLETS: { key: Onglet; label: string }[] = [
-    { key: 'etat', label: 'État' },
-    { key: 'credits', label: 'Crédits' },
+    { key: 'etat', label: tr('solde_actuel', lang) },
+    { key: 'credits', label: tr('credits', lang) },
     { key: 'operations', label: 'Opérations' },
     { key: 'stats', label: 'Stats' },
   ];
@@ -392,7 +395,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             <>
               {/* Hero solde */}
               <View style={st.hero}>
-                <Text style={st.heroLabel}>Solde caisse</Text>
+                <Text style={st.heroLabel}>{tr('solde_actuel', lang)}</Text>
                 <Text style={st.heroVal}>
                   {money(etatCaisse?.solde ?? etatCaisse?.soldeCaisse ?? 0)}
                 </Text>
@@ -425,45 +428,45 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 <TouchableOpacity
                   style={[st.caisseBtn, { backgroundColor: '#16a34a' }]}
                   onPress={() =>
-                    Alert.alert('Ouvrir caisse', 'Confirmer l\'ouverture de la caisse ?', [
-                      { text: 'Annuler', style: 'cancel' },
+                    Alert.alert(tr('ouvrir_caisse', lang), tr('confirmer', lang) + ' ?', [
+                      { text: tr('annuler', lang), style: 'cancel' },
                       {
-                        text: 'Ouvrir',
+                        text: tr('confirmer', lang),
                         onPress: () =>
-                          ouvrirCaisse({}).then(() => chargerEtat()).catch(() => Alert.alert('Erreur', 'Impossible d\'ouvrir la caisse')),
+                          ouvrirCaisse({}).then(() => chargerEtat()).catch(() => Alert.alert(tr('erreur', lang), 'Impossible d\'ouvrir la caisse')),
                       },
                     ])
                   }
                 >
-                  <Text style={st.caisseBtnText}>Ouvrir caisse</Text>
+                  <Text style={st.caisseBtnText}>{tr('ouvrir_caisse', lang)}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[st.caisseBtn, { backgroundColor: '#dc2626' }]}
                   onPress={() =>
-                    Alert.alert('Fermer caisse', 'Confirmer la fermeture de la caisse ?', [
-                      { text: 'Annuler', style: 'cancel' },
+                    Alert.alert(tr('fermer_caisse', lang), tr('confirmer', lang) + ' ?', [
+                      { text: tr('annuler', lang), style: 'cancel' },
                       {
-                        text: 'Fermer',
+                        text: tr('confirmer', lang),
                         onPress: () =>
-                          fermerCaisse({}).then(() => chargerEtat()).catch(() => Alert.alert('Erreur', 'Impossible de fermer la caisse')),
+                          fermerCaisse({}).then(() => chargerEtat()).catch(() => Alert.alert(tr('erreur', lang), 'Impossible de fermer la caisse')),
                       },
                     ])
                   }
                 >
-                  <Text style={st.caisseBtnText}>Fermer caisse</Text>
+                  <Text style={st.caisseBtnText}>{tr('fermer_caisse', lang)}</Text>
                 </TouchableOpacity>
               </View>
 
               {/* CA du jour total */}
               <View style={st.totalJourCard}>
-                <Text style={st.totalJourLabel}>CA total du jour</Text>
+                <Text style={st.totalJourLabel}>{tr('chiffre_affaires', lang)}</Text>
                 <Text style={st.totalJourVal}>{money(totalJour)}</Text>
               </View>
 
               {/* Ventes du jour */}
-              <Text style={st.sectionTitle}>Ventes du jour ({ventesJour.length})</Text>
+              <Text style={st.sectionTitle}>{tr('vente', lang)} ({ventesJour.length})</Text>
               {ventesJour.length === 0 ? (
-                <Text style={st.empty}>Aucune vente aujourd'hui</Text>
+                <Text style={st.empty}>{tr('aucun_resultat', lang)}</Text>
               ) : (
                 ventesJour.map((v: any) => (
                   <View key={v.id} style={st.venteCard}>
@@ -498,8 +501,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
           <View style={st.chipBar}>
             {(['EN_COURS', 'REGLES', 'EN_RETARD'] as FiltreCredit[]).map((f) => {
               const labels: Record<FiltreCredit, string> = {
-                EN_COURS: 'En cours',
-                REGLES: 'Réglés',
+                EN_COURS: tr('non_regle', lang),
+                REGLES: tr('regle', lang),
                 EN_RETARD: 'En retard',
               };
               return (
@@ -601,9 +604,9 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
           <View style={st.chipBar}>
             {(['AUJOURD_HUI', 'SEMAINE', 'MOIS'] as FiltrePeriode[]).map((f) => {
               const labels: Record<FiltrePeriode, string> = {
-                AUJOURD_HUI: 'Aujourd\'hui',
-                SEMAINE: 'Semaine',
-                MOIS: 'Mois',
+                AUJOURD_HUI: tr('rapport_journalier', lang),
+                SEMAINE: tr('rapport_semaine', lang),
+                MOIS: tr('rapport_mois', lang),
               };
               return (
                 <TouchableOpacity
@@ -720,7 +723,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
           <View style={st.sheet}>
             <View style={st.handle} />
             <View style={st.modalHead}>
-              <Text style={st.modalTitle}>Détail du crédit</Text>
+              <Text style={st.modalTitle}>{tr('details', lang)} {tr('credits', lang).toLowerCase()}</Text>
               <TouchableOpacity onPress={() => setShowDetailCredit(false)}>
                 <Text style={{ fontSize: 22, color: '#666' }}>×</Text>
               </TouchableOpacity>
@@ -746,7 +749,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                     ))}
                   </View>
 
-                  <Text style={st.sectionTitle}>Historique des versements</Text>
+                  <Text style={st.sectionTitle}>Historique {tr('montant_payer', lang).toLowerCase()}</Text>
                   {loadingVersements ? (
                     <ActivityIndicator size="small" style={{ margin: 12 }} />
                   ) : versements.length === 0 ? (
@@ -768,7 +771,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             </ScrollView>
             <View style={st.modalFoot}>
               <TouchableOpacity style={st.btnCancel} onPress={() => setShowDetailCredit(false)}>
-                <Text style={st.btnCancelText}>Fermer</Text>
+                <Text style={st.btnCancelText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
               {selectedCredit && !selectedCredit.estReglee && (
                 <TouchableOpacity
@@ -778,7 +781,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                     if (selectedCredit) openReglement(selectedCredit);
                   }}
                 >
-                  <Text style={st.btnConfirmText}>Régler</Text>
+                  <Text style={st.btnConfirmText}>{tr('payer_credit', lang)}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -793,7 +796,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             <View style={st.sheet}>
               <View style={st.handle} />
               <View style={st.modalHead}>
-                <Text style={st.modalTitle}>Règlement crédit</Text>
+                <Text style={st.modalTitle}>{tr('credits', lang)} — {tr('payer_credit', lang)}</Text>
                 <TouchableOpacity onPress={() => setShowReglement(false)}>
                   <Text style={{ fontSize: 22, color: '#666' }}>×</Text>
                 </TouchableOpacity>
@@ -813,7 +816,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                     </View>
                   </View>
                 )}
-                <Text style={st.fieldLabel}>Montant à régler</Text>
+                <Text style={st.fieldLabel}>{tr('montant_payer', lang)}</Text>
                 <TextInput
                   style={st.fieldInput}
                   value={reglMontant}
@@ -827,7 +830,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               </ScrollView>
               <View style={st.modalFoot}>
                 <TouchableOpacity style={st.btnCancel} onPress={() => setShowReglement(false)}>
-                  <Text style={st.btnCancelText}>Annuler</Text>
+                  <Text style={st.btnCancelText}>{tr('annuler', lang)}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[st.btnConfirm, savingRegl && { opacity: 0.6 }]}
@@ -837,7 +840,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   {savingRegl ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <Text style={st.btnConfirmText}>Enregistrer</Text>
+                    <Text style={st.btnConfirmText}>{tr('enregistrer', lang)}</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -853,7 +856,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             <View style={st.sheet}>
               <View style={st.handle} />
               <View style={st.modalHead}>
-                <Text style={st.modalTitle}>Nouvelle opération</Text>
+                <Text style={st.modalTitle}>{tr('ajouter', lang)} opération</Text>
                 <TouchableOpacity onPress={() => setShowAjoutOp(false)}>
                   <Text style={{ fontSize: 22, color: '#666' }}>×</Text>
                 </TouchableOpacity>
@@ -866,13 +869,13 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                     style={[st.toggleBtn, opType === 'ENTREE' && { backgroundColor: '#16a34a' }]}
                     onPress={() => setOpType('ENTREE')}
                   >
-                    <Text style={[st.toggleBtnText, opType === 'ENTREE' && { color: '#fff' }]}>Entrée</Text>
+                    <Text style={[st.toggleBtnText, opType === 'ENTREE' && { color: '#fff' }]}>{tr('entree', lang)}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[st.toggleBtn, opType === 'SORTIE' && { backgroundColor: '#dc2626' }]}
                     onPress={() => setOpType('SORTIE')}
                   >
-                    <Text style={[st.toggleBtnText, opType === 'SORTIE' && { color: '#fff' }]}>Sortie</Text>
+                    <Text style={[st.toggleBtnText, opType === 'SORTIE' && { color: '#fff' }]}>{tr('sortie', lang)}</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -913,7 +916,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               </ScrollView>
               <View style={st.modalFoot}>
                 <TouchableOpacity style={st.btnCancel} onPress={() => setShowAjoutOp(false)}>
-                  <Text style={st.btnCancelText}>Annuler</Text>
+                  <Text style={st.btnCancelText}>{tr('annuler', lang)}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
@@ -927,7 +930,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   {savingOp ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <Text style={st.btnConfirmText}>Enregistrer</Text>
+                    <Text style={st.btnConfirmText}>{tr('enregistrer', lang)}</Text>
                   )}
                 </TouchableOpacity>
               </View>

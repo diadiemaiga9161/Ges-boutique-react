@@ -1,37 +1,33 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
 import { Text, List, Divider } from 'react-native-paper';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 const LANGUES = [
   { code: 'fr', label: 'Français', flag: '🇫🇷' },
   { code: 'en', label: 'English', flag: '🇬🇧' },
   { code: 'ar', label: 'العربية', flag: '🇸🇦' },
-  { code: 'wo', label: 'Wolof', flag: '🇸🇳' },
-  { code: 'bm', label: 'Bambara', flag: '🇲🇱' },
-  { code: 'ff', label: 'Fulfulde', flag: '🌍' },
-  { code: 'ha', label: 'Haoussa', flag: '🌍' },
-  { code: 'sw', label: 'Swahili', flag: '🌍' },
+  { code: 'wo', label: 'Wolof', flag: '🌍' },
+  { code: 'bm', label: 'Bambara', flag: '🌍' },
+  { code: 'ff', label: 'Fula', flag: '🌍' },
+  { code: 'sw', label: 'Kiswahili', flag: '🌍' },
+  { code: 'pt', label: 'Português', flag: '🇵🇹' },
 ];
 
 export default function LangueScreen({ navigation }: any) {
-  const [langueActive, setLangueActive] = useState('fr');
+  const { lang, setLang } = useLang();
 
-  React.useEffect(() => {
-    AsyncStorage.getItem('langue').then(l => { if (l) setLangueActive(l); });
-  }, []);
-
-  const choisirLangue = async (code: string) => {
-    await AsyncStorage.setItem('langue', code);
-    setLangueActive(code);
+  const choisir = async (code: string) => {
+    await setLang(code);
     navigation.goBack();
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text variant="titleLarge" style={styles.headerTitle}>Choisir la langue</Text>
-        <Text style={styles.headerSub}>Sélectionnez votre langue préférée</Text>
+        <Text variant="titleLarge" style={styles.headerTitle}>{tr('choisir_langue', lang)}</Text>
+        <Text style={styles.headerSub}>{tr('selectionner_langue', lang)}</Text>
       </View>
       <FlatList
         data={LANGUES}
@@ -41,13 +37,10 @@ export default function LangueScreen({ navigation }: any) {
         renderItem={({ item }) => (
           <List.Item
             title={`${item.flag}  ${item.label}`}
-            titleStyle={[styles.langLabel, item.code === langueActive && styles.langActive]}
-            right={() => item.code === langueActive
-              ? <List.Icon icon="check-circle" color="#1a56db" />
-              : null
-            }
-            style={[styles.item, item.code === langueActive && styles.itemActive]}
-            onPress={() => choisirLangue(item.code)}
+            titleStyle={[styles.langLabel, item.code === lang && styles.langActive]}
+            right={() => item.code === lang ? <List.Icon icon="check-circle" color="#1a56db" /> : null}
+            style={[styles.item, item.code === lang && styles.itemActive]}
+            onPress={() => choisir(item.code)}
           />
         )}
       />

@@ -8,6 +8,8 @@ import NetInfo from '@react-native-community/netinfo';
 import { Produit, Client, LigneVenteRequest } from '../types';
 import { ProduitNiveau, getNiveaux, calculerFacteurTotal } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface CartItem {
   produit: Produit;
@@ -23,6 +25,7 @@ interface CartItem {
 const MODES_PAIEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE', 'CARTE_BANCAIRE'];
 
 export default function VenteScreen() {
+  const { lang } = useLang();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
@@ -108,14 +111,14 @@ export default function VenteScreen() {
 
   const ajouterSansNiveau = (p: Produit) => {
     if (p.quantite <= 0) {
-      Alert.alert('Rupture de stock', `${p.nom} est en rupture de stock.`);
+      Alert.alert(tr('rupture_stock', lang), `${p.nom} est en rupture de stock.`);
       return;
     }
     setPanier(prev => {
       const idx = prev.findIndex(i => i.produit.id === p.id && !i.niveauId);
       if (idx >= 0) {
         if (prev[idx].quantite >= p.quantite) {
-          Alert.alert('Stock insuffisant', `Stock maximum atteint : ${p.quantite} unité(s).`);
+          Alert.alert(tr('stock_insuffisant', lang), `Stock maximum atteint : ${p.quantite} unité(s).`);
           return prev;
         }
         const updated = [...prev];
@@ -159,7 +162,7 @@ export default function VenteScreen() {
     setPanier(prev => {
       const item = prev.find(i => i.produit.id === id);
       if (item && delta > 0 && item.quantite >= item.produit.quantite) {
-        Alert.alert('Stock insuffisant', `Stock maximum : ${item.produit.quantite} unité(s).`);
+        Alert.alert(tr('stock_insuffisant', lang), `Stock maximum : ${item.produit.quantite} unité(s).`);
         return prev;
       }
       return prev
@@ -196,7 +199,7 @@ export default function VenteScreen() {
     // Vérification stock avant envoi
     for (const item of panier) {
       if (!item.niveauId && item.quantite > item.produit.quantite) {
-        Alert.alert('Stock insuffisant', `${item.produit.nom} : demandé ${item.quantite}, disponible ${item.produit.quantite}`);
+        Alert.alert(tr('stock_insuffisant', lang), `${item.produit.nom} : demandé ${item.quantite}, disponible ${item.produit.quantite}`);
         return;
       }
     }
@@ -222,9 +225,9 @@ export default function VenteScreen() {
     if (result.success) {
       mettreAJourStockLocal(panierSnapshot); // stock mis à jour immédiatement
       const msg = result.offline
-        ? 'Vente enregistrée hors ligne — sera synchronisée quand internet revient'
-        : 'Vente enregistrée avec succès !';
-      Alert.alert(result.offline ? 'Hors ligne' : 'Succès', msg);
+        ? tr('vente_hors_ligne', lang)
+        : tr('vente_enregistree', lang);
+      Alert.alert(result.offline ? tr('hors_ligne', lang) : tr('succes', lang), msg);
       setPanier([]);
       setShowCheckout(false);
       setMontantRecu('');
@@ -239,7 +242,7 @@ export default function VenteScreen() {
     <View style={styles.container}>
       {offline && (
         <View style={styles.offlineBanner}>
-          <Text style={styles.offlineText}>Hors ligne — ventes sauvegardées localement</Text>
+          <Text style={styles.offlineText}>{tr('hors_ligne', lang)} — ventes sauvegardées localement</Text>
         </View>
       )}
       {ventesPending > 0 && (
@@ -252,7 +255,7 @@ export default function VenteScreen() {
         {/* Liste produits */}
         <View style={styles.left}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Searchbar placeholder="Produit..." value={search} onChangeText={setSearch} style={[styles.search, { flex: 1 }]} />
+            <Searchbar placeholder={tr('recherche_produit', lang)} value={search} onChangeText={setSearch} style={[styles.search, { flex: 1 }]} />
             <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
           </View>
           <FlatList
@@ -274,7 +277,7 @@ export default function VenteScreen() {
 
         {/* Panier */}
         <View style={styles.right}>
-          <Text variant="titleMedium" style={styles.panierTitle}>Panier ({panier.length})</Text>
+          <Text variant="titleMedium" style={styles.panierTitle}>{tr('panier', lang)} ({panier.length})</Text>
           <FlatList
             data={panier}
             keyExtractor={i => String(i.produit.id)}
@@ -296,17 +299,17 @@ export default function VenteScreen() {
             )}
           />
           <Divider style={{ marginVertical: 8 }} />
-          <Text variant="titleLarge" style={styles.total}>Total : {total.toFixed(0)} FCFA</Text>
+          <Text variant="titleLarge" style={styles.total}>{tr('total', lang)} : {total.toFixed(0)} FCFA</Text>
           <Button
             mode="contained"
             onPress={() => setShowCheckout(true)}
             disabled={panier.length === 0}
             style={styles.btnValider}
           >
-            Encaisser
+            {tr('encaisser', lang)}
           </Button>
           {panier.length > 0 && (
-            <Button onPress={() => setPanier([])} textColor="#f44336">Vider</Button>
+            <Button onPress={() => setPanier([])} textColor="#f44336">{tr('vider', lang)}</Button>
           )}
         </View>
       </View>
@@ -367,11 +370,11 @@ export default function VenteScreen() {
       <Portal>
         <Modal visible={showCheckout} onDismiss={() => setShowCheckout(false)} contentContainerStyle={styles.modal}>
           <ScrollView>
-            <Text variant="titleLarge" style={{ marginBottom: 16 }}>Encaissement</Text>
+            <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('encaissement', lang)}</Text>
             <Text variant="titleMedium" style={{ color: '#1a56db', marginBottom: 12 }}>
-              Total : {total.toFixed(0)} FCFA
+              {tr('total', lang)} : {total.toFixed(0)} FCFA
             </Text>
-            <Text variant="labelLarge">Mode de paiement</Text>
+            <Text variant="labelLarge">{tr('mode_paiement', lang)}</Text>
             {MODES_PAIEMENT.map(m => (
               <View key={m} style={styles.radioRow}>
                 <RadioButton value={m} status={modePaiement === m ? 'checked' : 'unchecked'} onPress={() => setModePaiement(m)} />
@@ -380,7 +383,7 @@ export default function VenteScreen() {
             ))}
             {modePaiement === 'ESPECES' && (
               <TextInput
-                label="Montant reçu"
+                label={tr('montant_recu', lang)}
                 value={montantRecu}
                 onChangeText={setMontantRecu}
                 keyboardType="numeric"
@@ -390,11 +393,11 @@ export default function VenteScreen() {
             )}
             {montantRecu !== '' && modePaiement === 'ESPECES' && (
               <Text style={{ marginTop: 8, color: monnaie >= 0 ? '#4caf50' : '#f44336' }}>
-                Monnaie : {monnaie.toFixed(0)} FCFA
+                {tr('monnaie', lang)} : {monnaie.toFixed(0)} FCFA
               </Text>
             )}
             <Button mode="contained" onPress={valider} style={{ marginTop: 16 }}>
-              Confirmer la vente
+              {tr('confirmer_vente', lang)}
             </Button>
           </ScrollView>
         </Modal>

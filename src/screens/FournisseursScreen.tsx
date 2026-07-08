@@ -16,6 +16,8 @@ import {
   getAvancesFournisseur, creerAvanceFournisseur,
 } from '../services/api.service';
 import { buildRecuPaiementFournisseurHtml } from '../services/invoice.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 const MODES_PAIEMENT = ['ESPECES', 'VIREMENT', 'CHEQUE'];
 const STATUT_COLOR: Record<string, string> = {
@@ -102,6 +104,8 @@ tr:nth-child(even){background:#fafafa}
 }
 
 export default function FournisseursScreen() {
+  const { lang } = useLang();
+
   const [mode, setMode] = useState<'list' | 'detail'>('list');
   const [fournisseurs, setFournisseurs] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
@@ -181,13 +185,13 @@ export default function FournisseursScreen() {
   };
 
   const ajouterFournisseur = async () => {
-    if (!fournForm.nom || !fournForm.code) { Alert.alert('Erreur', 'Nom et code obligatoires'); return; }
+    if (!fournForm.nom || !fournForm.code) { Alert.alert(tr('erreur', lang), 'Nom et code obligatoires'); return; }
     try {
       await createFournisseur(fournForm);
       setShowFournModal(false);
       setFournForm({ nom: '', code: '', telephone: '', email: '', adresse: '' });
       charger();
-    } catch { Alert.alert('Erreur', 'Impossible d\'ajouter le fournisseur'); }
+    } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'ajouter le fournisseur'); }
   };
 
   const ouvrirAchat = async () => {
@@ -202,8 +206,8 @@ export default function FournisseursScreen() {
   };
 
   const enregistrerAchat = async () => {
-    if (!achatForm.produitId) { Alert.alert('Erreur', 'Sélectionnez un produit'); return; }
-    if (!achatForm.quantite || !achatForm.prixAchatUnitaire) { Alert.alert('Erreur', 'Quantité et prix obligatoires'); return; }
+    if (!achatForm.produitId) { Alert.alert(tr('erreur', lang), 'Sélectionnez un produit'); return; }
+    if (!achatForm.quantite || !achatForm.prixAchatUnitaire) { Alert.alert(tr('erreur', lang), 'Quantité et prix obligatoires'); return; }
     try {
       await creerAchatFournisseur({
         fournisseurId: selected.id,
@@ -218,11 +222,11 @@ export default function FournisseursScreen() {
       });
       setShowAchatModal(false);
       chargerDetail(selected.id);
-    } catch { Alert.alert('Erreur', 'Impossible d\'enregistrer l\'achat'); }
+    } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'achat'); }
   };
 
   const enregistrerPaiement = async () => {
-    if (!paiForm.montant) { Alert.alert('Erreur', 'Montant obligatoire'); return; }
+    if (!paiForm.montant) { Alert.alert(tr('erreur', lang), 'Montant obligatoire'); return; }
     try {
       await payerFournisseur({
         fournisseurId: selected.id,
@@ -233,24 +237,24 @@ export default function FournisseursScreen() {
       });
       setShowPaiementModal(false);
       chargerDetail(selected.id);
-    } catch { Alert.alert('Erreur', 'Impossible d\'enregistrer le paiement'); }
+    } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer le paiement'); }
   };
 
   const confirmerAnnulerAchat = (achat: any) => {
     Alert.alert(
-      'Annuler cet achat ?',
-      `Achat du ${fdate(achat.dateAchat)} — ${money(achat.montantTotal)}\nCette action est irréversible.`,
+      tr('annuler', lang) + ' ?',
+      `${tr('achat', lang)} du ${fdate(achat.dateAchat)} — ${money(achat.montantTotal)}\nCette action est irréversible.`,
       [
-        { text: 'Retour', style: 'cancel' },
+        { text: tr('fermer', lang), style: 'cancel' },
         {
-          text: 'Annuler l\'achat',
+          text: tr('annuler', lang),
           style: 'destructive',
           onPress: async () => {
             try {
               await annulerAchatFournisseur(achat.id);
               chargerDetail(selected.id);
             } catch {
-              Alert.alert('Erreur', 'Impossible d\'annuler cet achat');
+              Alert.alert(tr('erreur', lang), 'Impossible d\'annuler cet achat');
             }
           },
         },
@@ -260,7 +264,7 @@ export default function FournisseursScreen() {
 
   const enregistrerAvance = async () => {
     if (!avanceForm.montant || isNaN(Number(avanceForm.montant)) || Number(avanceForm.montant) <= 0) {
-      Alert.alert('Erreur', 'Montant invalide'); return;
+      Alert.alert(tr('erreur', lang), 'Montant invalide'); return;
     }
     try {
       await creerAvanceFournisseur({
@@ -272,7 +276,7 @@ export default function FournisseursScreen() {
       setAvanceForm({ montant: '', motif: '' });
       chargerDetail(selected.id);
     } catch {
-      Alert.alert('Erreur', 'Impossible d\'enregistrer l\'avance');
+      Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'avance');
     }
   };
 
@@ -281,7 +285,7 @@ export default function FournisseursScreen() {
       const html = buildFicheFournisseurHtml(selected, achats, paiements, situation);
       await Print.printAsync({ html });
     } catch {
-      Alert.alert('Erreur', 'Impossible de générer la fiche PDF');
+      Alert.alert(tr('erreur', lang), 'Impossible de générer la fiche PDF');
     }
   };
 
@@ -311,7 +315,7 @@ export default function FournisseursScreen() {
           {(['achats', 'paiements', 'situation', 'avances'] as const).map(t => (
             <TouchableOpacity key={t} style={[styles.tabBtn, tab === t && styles.tabBtnActive]} onPress={() => setTab(t)}>
               <Text style={[styles.tabLabel, tab === t && styles.tabLabelActive]}>
-                {t === 'achats' ? 'Achats' : t === 'paiements' ? 'Paiements' : t === 'situation' ? 'Situation' : 'Avances'}
+                {t === 'achats' ? tr('achat', lang) : t === 'paiements' ? 'Paiements' : t === 'situation' ? 'Situation' : 'Avances'}
               </Text>
             </TouchableOpacity>
           ))}
@@ -429,7 +433,7 @@ export default function FournisseursScreen() {
                           try {
                             const html = buildRecuPaiementFournisseurHtml(p, selected, { nom: selected?.nom || 'Ges Boutique', telephone: selected?.telephone });
                             await Print.printAsync({ html });
-                          } catch { Alert.alert('Erreur', 'Impossible de générer le reçu'); }
+                          } catch { Alert.alert(tr('erreur', lang), 'Impossible de générer le reçu'); }
                         }}
                       >
                         <Text style={styles.recuBtnText}>Recu PDF</Text>
@@ -522,7 +526,7 @@ export default function FournisseursScreen() {
         <Portal>
           <Modal visible={showAchatModal} onDismiss={() => setShowAchatModal(false)} contentContainerStyle={styles.modal}>
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouvel achat</Text>
+              <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('ajouter', lang)} {tr('achat', lang).toLowerCase()}</Text>
 
               <TouchableOpacity style={styles.picker} onPress={() => setShowProduitPicker(v => !v)}>
                 <Text style={achatForm.produitNom ? styles.pickerVal : styles.pickerPh}>
@@ -550,7 +554,7 @@ export default function FournisseursScreen() {
               <TextInput label="Prix vente" value={achatForm.prixVente} onChangeText={t => setAchatForm({ ...achatForm, prixVente: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
               <TextInput label="Montant payé" value={achatForm.montantPaye} onChangeText={t => setAchatForm({ ...achatForm, montantPaye: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
               <TextInput label="Commentaire" value={achatForm.commentaire} onChangeText={t => setAchatForm({ ...achatForm, commentaire: t })} mode="outlined" style={styles.input} />
-              <Button mode="contained" onPress={enregistrerAchat} style={{ marginTop: 4 }}>Enregistrer l'achat</Button>
+              <Button mode="contained" onPress={enregistrerAchat} style={{ marginTop: 4 }}>{tr('enregistrer', lang)}</Button>
             </ScrollView>
           </Modal>
         </Portal>
@@ -558,7 +562,7 @@ export default function FournisseursScreen() {
         {/* Modal Paiement */}
         <Portal>
           <Modal visible={showPaiementModal} onDismiss={() => setShowPaiementModal(false)} contentContainerStyle={styles.modal}>
-            <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouveau paiement</Text>
+            <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('ajouter', lang)} paiement</Text>
             <TextInput label="Montant *" value={paiForm.montant} onChangeText={t => setPaiForm({ ...paiForm, montant: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
             <Text style={styles.sectionLabel}>Mode de paiement</Text>
             <View style={{ flexDirection: 'row', marginBottom: 12, gap: 6 }}>
@@ -570,14 +574,14 @@ export default function FournisseursScreen() {
             </View>
             <TextInput label="Reference" value={paiForm.reference} onChangeText={t => setPaiForm({ ...paiForm, reference: t })} mode="outlined" style={styles.input} />
             <TextInput label="Observation" value={paiForm.observation} onChangeText={t => setPaiForm({ ...paiForm, observation: t })} mode="outlined" style={styles.input} />
-            <Button mode="contained" onPress={enregistrerPaiement} style={{ marginTop: 4, backgroundColor: '#16a34a' }}>Enregistrer le paiement</Button>
+            <Button mode="contained" onPress={enregistrerPaiement} style={{ marginTop: 4, backgroundColor: '#16a34a' }}>{tr('enregistrer', lang)}</Button>
           </Modal>
         </Portal>
 
         {/* Modal Avance */}
         <Portal>
           <Modal visible={showAvanceModal} onDismiss={() => setShowAvanceModal(false)} contentContainerStyle={styles.modal}>
-            <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouvelle avance</Text>
+            <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('ajouter', lang)} avance</Text>
             <TextInput
               label="Montant *"
               value={avanceForm.montant}
@@ -594,7 +598,7 @@ export default function FournisseursScreen() {
               style={styles.input}
             />
             <Button mode="contained" onPress={enregistrerAvance} style={{ marginTop: 4, backgroundColor: '#1e88e5' }}>
-              Enregistrer l'avance
+              {tr('enregistrer', lang)}
             </Button>
           </Modal>
         </Portal>
@@ -605,7 +609,7 @@ export default function FournisseursScreen() {
   // ──── VUE LISTE ────
   return (
     <View style={styles.container}>
-      <Searchbar placeholder="Rechercher un fournisseur..." value={search} onChangeText={setSearch} style={styles.search} />
+      <Searchbar placeholder={tr('recherche_fournisseur', lang)} value={search} onChangeText={setSearch} style={styles.search} />
       <FlatList
         data={filtered}
         keyExtractor={f => String(f.id)}
@@ -630,18 +634,18 @@ export default function FournisseursScreen() {
             </Card>
           </TouchableOpacity>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucun fournisseur</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_resultat', lang)}</Text>}
       />
       <FAB icon="plus" style={styles.fab} onPress={() => setShowFournModal(true)} />
       <Portal>
         <Modal visible={showFournModal} onDismiss={() => setShowFournModal(false)} contentContainerStyle={styles.modal}>
-          <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouveau fournisseur</Text>
-          <TextInput label="Nom *" value={fournForm.nom} onChangeText={t => setFournForm({ ...fournForm, nom: t })} mode="outlined" style={styles.input} />
+          <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('nouveau_fournisseur', lang)}</Text>
+          <TextInput label={tr('nom_fournisseur', lang)} value={fournForm.nom} onChangeText={t => setFournForm({ ...fournForm, nom: t })} mode="outlined" style={styles.input} />
           <TextInput label="Code *" value={fournForm.code} onChangeText={t => setFournForm({ ...fournForm, code: t })} mode="outlined" style={styles.input} placeholder="ex: FOUR-001" />
-          <TextInput label="Téléphone" value={fournForm.telephone} onChangeText={t => setFournForm({ ...fournForm, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
-          <TextInput label="Email" value={fournForm.email} onChangeText={t => setFournForm({ ...fournForm, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
-          <TextInput label="Adresse" value={fournForm.adresse} onChangeText={t => setFournForm({ ...fournForm, adresse: t })} mode="outlined" style={styles.input} />
-          <Button mode="contained" onPress={ajouterFournisseur}>Enregistrer</Button>
+          <TextInput label={tr('telephone', lang)} value={fournForm.telephone} onChangeText={t => setFournForm({ ...fournForm, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
+          <TextInput label={tr('email', lang)} value={fournForm.email} onChangeText={t => setFournForm({ ...fournForm, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
+          <TextInput label={tr('adresse', lang)} value={fournForm.adresse} onChangeText={t => setFournForm({ ...fournForm, adresse: t })} mode="outlined" style={styles.input} />
+          <Button mode="contained" onPress={ajouterFournisseur}>{tr('enregistrer', lang)}</Button>
         </Modal>
       </Portal>
     </View>

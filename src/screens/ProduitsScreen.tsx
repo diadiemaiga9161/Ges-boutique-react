@@ -15,6 +15,8 @@ import NetInfo from '@react-native-community/netinfo';
 import { Produit } from '../types';
 import { getNiveaux, creerNiveau, modifierNiveau, supprimerNiveau, decomposer, ProduitNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface FormProduit {
   nom: string;
@@ -33,6 +35,7 @@ const emptyForm = (): FormProduit => ({
 });
 
 export default function ProduitsScreen() {
+  const { lang } = useLang();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
@@ -160,11 +163,11 @@ export default function ProduitsScreen() {
 
   const confirmerSuppression = (p: Produit) => {
     Alert.alert(
-      'Supprimer', `Supprimer "${p.nom}" ?`,
+      tr('supprimer', lang), `Supprimer "${p.nom}" ?`,
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: tr('annuler', lang), style: 'cancel' },
         {
-          text: 'Supprimer', style: 'destructive',
+          text: tr('supprimer', lang), style: 'destructive',
           onPress: async () => {
             try {
               await deleteProduit(p.id);
@@ -296,9 +299,9 @@ export default function ProduitsScreen() {
   };
 
   const supprimerNiveauFn = (n: ProduitNiveau) => {
-    Alert.alert('Supprimer niveau', `Supprimer "${n.nom}" ?`, [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Supprimer', style: 'destructive', onPress: async () => {
+    Alert.alert(tr('supprimer', lang), `Supprimer "${n.nom}" ?`, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: tr('supprimer', lang), style: 'destructive', onPress: async () => {
         try {
           await supprimerNiveau(n.id!);
           if (produitCourant) await rechargerNiveaux(produitCourant.id);
@@ -372,8 +375,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       {offline && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineText}>
-            📡 Hors ligne — données en cache
-            {pendingCount > 0 ? ` · ${pendingCount} en attente de sync` : ''}
+            {tr('hors_ligne', lang)} — données en cache
+            {pendingCount > 0 ? ` · ${pendingCount} ${tr('en_attente_sync', lang)}` : ''}
           </Text>
         </View>
       )}
@@ -385,7 +388,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
         <Searchbar
-          placeholder="Rechercher un produit..."
+          placeholder={tr('recherche_produit', lang)}
           value={search}
           onChangeText={setSearch}
           style={[styles.search, { flex: 1, margin: 0 }]}
@@ -431,7 +434,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
       <FAB
         icon="plus"
-        label="Nouveau produit"
+        label={tr('nouveau_produit', lang)}
         style={styles.fab}
         color="#fff"
         onPress={ouvrirCreation}
@@ -442,43 +445,43 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalHeader}>
             <Text variant="titleLarge" style={styles.modalTitle}>
-              {editing ? 'Modifier le produit' : 'Nouveau produit'}
+              {editing ? tr('modifier', lang) : tr('nouveau_produit', lang)}
             </Text>
             <IconButton icon="close" onPress={fermerModal} />
           </View>
           {offline && (
             <View style={styles.offlineBanner}>
-              <Text style={styles.offlineText}>📡 Mode hors ligne — sera synchronisé au retour</Text>
+              <Text style={styles.offlineText}>{tr('hors_ligne', lang)} — sera synchronisé au retour</Text>
             </View>
           )}
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
-            <TextInput label="Nom du produit *" value={form.nom}
+            <TextInput label={tr('nom_produit', lang)} value={form.nom}
               onChangeText={v => setForm(f => ({ ...f, nom: v }))}
               style={styles.input} mode="outlined" />
             <View style={styles.row2}>
-              <TextInput label="Prix achat (FCFA)" value={form.prixAchat}
+              <TextInput label={`${tr('prix_achat', lang)} (FCFA)`} value={form.prixAchat}
                 onChangeText={v => setForm(f => ({ ...f, prixAchat: v }))}
                 keyboardType="numeric" style={[styles.input, { flex: 1, marginRight: 8 }]} mode="outlined" />
-              <TextInput label="Prix vente (FCFA) *" value={form.prixVente}
+              <TextInput label={`${tr('prix_vente', lang)} (FCFA) *`} value={form.prixVente}
                 onChangeText={v => setForm(f => ({ ...f, prixVente: v }))}
                 keyboardType="numeric" style={[styles.input, { flex: 1 }]} mode="outlined" />
             </View>
             <View style={styles.row2}>
-              <TextInput label="Stock initial" value={form.quantite}
+              <TextInput label={tr('stock', lang)} value={form.quantite}
                 onChangeText={v => setForm(f => ({ ...f, quantite: v }))}
                 keyboardType="numeric" style={[styles.input, { flex: 1, marginRight: 8 }]} mode="outlined" />
-              <TextInput label="Seuil alerte" value={form.seuilAlerte}
+              <TextInput label={tr('seuil_alerte', lang)} value={form.seuilAlerte}
                 onChangeText={v => setForm(f => ({ ...f, seuilAlerte: v }))}
                 keyboardType="numeric" style={[styles.input, { flex: 1 }]} mode="outlined" />
             </View>
-            <TextInput label="Catégorie" value={form.categorie}
+            <TextInput label={tr('categorie', lang)} value={form.categorie}
               onChangeText={v => setForm(f => ({ ...f, categorie: v }))}
               style={styles.input} mode="outlined" />
             <TextInput label="Description" value={form.description}
               onChangeText={v => setForm(f => ({ ...f, description: v }))}
               style={styles.input} mode="outlined" multiline numberOfLines={3} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <TextInput label="Code-barres" value={form.codeBarres}
+              <TextInput label={tr('code_barres', lang)} value={form.codeBarres}
                 onChangeText={v => setForm(f => ({ ...f, codeBarres: v }))}
                 style={[styles.input, { flex: 1 }]} mode="outlined"
                 keyboardType="default" placeholder="Ex: 3017620422003" />
@@ -489,10 +492,10 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             <Button mode="contained" onPress={sauvegarder} loading={saving}
               disabled={saving} style={styles.btnSave} contentStyle={{ height: 48 }}
               buttonColor="#1a56db">
-              {editing ? 'Enregistrer les modifications' : 'Créer le produit'}
+              {editing ? tr('enregistrer', lang) : tr('nouveau_produit', lang)}
             </Button>
             <Button mode="outlined" onPress={fermerModal} style={{ marginTop: 8 }}>
-              Annuler
+              {tr('annuler', lang)}
             </Button>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -604,9 +607,9 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                           keyboardType="numeric" style={nStyles.inp} mode="outlined" />
                         <View style={nStyles.row2}>
                           <Button mode="contained" onPress={sauvegarderEditNiveauFn} loading={savingNiveau}
-                            style={{ flex: 1, marginRight: 6 }} buttonColor="#7c3aed">Enregistrer</Button>
+                            style={{ flex: 1, marginRight: 6 }} buttonColor="#7c3aed">{tr('enregistrer', lang)}</Button>
                           <Button mode="outlined" onPress={() => setEditingNiveauId(null)}
-                            style={{ flex: 1 }}>Annuler</Button>
+                            style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
                         </View>
                       </View>
                     ) : (

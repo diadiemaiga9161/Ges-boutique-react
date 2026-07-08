@@ -13,6 +13,8 @@ import {
 } from '../services/api.service';
 import { cacheClients } from '../db/database';
 import { Client } from '../types';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 // ─── Types locaux ─────────────────────────────────────────────────────────────
 interface VenteClient {
@@ -43,6 +45,8 @@ function initiales(nom: string) { return nom.trim().split(/\s+/).map(p => p[0]).
 
 // ─── Composant principal ───────────────────────────────────────────────────────
 export default function ClientsScreen() {
+  const { lang } = useLang();
+
   // ── Liste ──────────────────────────────────────────────────────────────────
   const [clients, setClients] = useState<Client[]>([]);
   const [filtered, setFiltered] = useState<Client[]>([]);
@@ -119,7 +123,7 @@ export default function ClientsScreen() {
       setEditingClient(null);
       await charger();
     } catch {
-      Alert.alert('Erreur', editingClient ? 'Impossible de modifier le client' : 'Impossible d\'ajouter le client');
+      Alert.alert(tr('erreur', lang), editingClient ? 'Impossible de modifier le client' : 'Impossible d\'ajouter le client');
     }
   };
 
@@ -129,9 +133,9 @@ export default function ClientsScreen() {
       'Supprimer ce client ?',
       `${client.nom} sera définitivement supprimé.`,
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: tr('annuler', lang), style: 'cancel' },
         {
-          text: 'Supprimer',
+          text: tr('supprimer', lang),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -139,7 +143,7 @@ export default function ClientsScreen() {
               setShowDetail(false);
               await charger();
             } catch {
-              Alert.alert('Erreur', 'Impossible de supprimer ce client');
+              Alert.alert(tr('erreur', lang), 'Impossible de supprimer ce client');
             }
           },
         },
@@ -215,7 +219,7 @@ export default function ClientsScreen() {
     <View style={styles.container}>
       {/* ── Barre de recherche ─────────────────────────────────────────────── */}
       <Searchbar
-        placeholder="Rechercher..."
+        placeholder={tr('recherche_client', lang)}
         value={search}
         onChangeText={setSearch}
         style={styles.search}
@@ -248,7 +252,7 @@ export default function ClientsScreen() {
             </Card>
           </TouchableOpacity>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucun client</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_client', lang)}</Text>}
       />
 
       {/* ── FAB ajout ──────────────────────────────────────────────────────── */}
@@ -265,17 +269,17 @@ export default function ClientsScreen() {
         >
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Text variant="titleLarge" style={{ marginBottom: 16 }}>
-              {editingClient ? 'Modifier le client' : 'Nouveau client'}
+              {editingClient ? tr('modifier', lang) + ' ' + tr('clients', lang).toLowerCase() : tr('nouveau_client', lang)}
             </Text>
             <TextInput
-              label="Nom *"
+              label={tr('nom_client', lang)}
               value={form.nom}
               onChangeText={t => setForm({ ...form, nom: t })}
               mode="outlined"
               style={styles.input}
             />
             <TextInput
-              label="Telephone"
+              label={tr('telephone', lang)}
               value={form.telephone}
               onChangeText={t => setForm({ ...form, telephone: t })}
               mode="outlined"
@@ -283,7 +287,7 @@ export default function ClientsScreen() {
               style={styles.input}
             />
             <TextInput
-              label="Email"
+              label={tr('email', lang)}
               value={form.email}
               onChangeText={t => setForm({ ...form, email: t })}
               mode="outlined"
@@ -291,7 +295,7 @@ export default function ClientsScreen() {
               style={styles.input}
             />
             <TextInput
-              label="Adresse"
+              label={tr('adresse', lang)}
               value={form.adresse}
               onChangeText={t => setForm({ ...form, adresse: t })}
               mode="outlined"
@@ -302,7 +306,7 @@ export default function ClientsScreen() {
               onPress={enregistrer}
               style={{ marginTop: 8, backgroundColor: '#1a56db' }}
             >
-              {editingClient ? 'Enregistrer les modifications' : 'Enregistrer'}
+              {editingClient ? tr('enregistrer', lang) : tr('enregistrer', lang)}
             </Button>
           </KeyboardAvoidingView>
         </PaperModal>
@@ -343,7 +347,7 @@ export default function ClientsScreen() {
             {/* Barre onglets */}
             <View style={styles.tabBar}>
               {(['infos', 'achats', 'credits'] as Onglet[]).map(o => {
-                const labels: Record<Onglet, string> = { infos: 'Infos', achats: 'Achats', credits: 'Credits' };
+                const labels: Record<Onglet, string> = { infos: 'Infos', achats: tr('achat', lang), credits: tr('credits', lang) };
                 return (
                   <TouchableOpacity
                     key={o}
@@ -366,10 +370,10 @@ export default function ClientsScreen() {
                 <View>
                   <View style={styles.infoCard}>
                     {[
-                      ['Nom', selectedClient.nom],
-                      ['Telephone', selectedClient.telephone ?? '—'],
-                      ['Email', selectedClient.email ?? '—'],
-                      ['Adresse', selectedClient.adresse ?? '—'],
+                      [tr('nom_client', lang).replace(' *', ''), selectedClient.nom],
+                      [tr('telephone', lang), selectedClient.telephone ?? '—'],
+                      [tr('email', lang), selectedClient.email ?? '—'],
+                      [tr('adresse', lang), selectedClient.adresse ?? '—'],
                     ].map(([label, val]) => (
                       <View key={label} style={styles.infoRow}>
                         <Text style={styles.infoLabel}>{label}</Text>
@@ -391,13 +395,13 @@ export default function ClientsScreen() {
                       style={styles.btnModifier}
                       onPress={() => ouvrirFormModif(selectedClient)}
                     >
-                      <Text style={styles.btnModifierText}>Modifier</Text>
+                      <Text style={styles.btnModifierText}>{tr('modifier', lang)}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.btnSupprimer}
                       onPress={() => confirmerSuppression(selectedClient)}
                     >
-                      <Text style={styles.btnSupprimerText}>Supprimer</Text>
+                      <Text style={styles.btnSupprimerText}>{tr('supprimer', lang)}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -509,7 +513,7 @@ export default function ClientsScreen() {
             {/* Pied modal */}
             <View style={styles.detailFoot}>
               <TouchableOpacity style={styles.btnFermer} onPress={() => setShowDetail(false)}>
-                <Text style={styles.btnFermerText}>Fermer</Text>
+                <Text style={styles.btnFermerText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
             </View>
           </View>
