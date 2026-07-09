@@ -11,6 +11,8 @@ import { getNiveaux, decomposer } from '../services/produit-niveau.service';
 import { Produit } from '../types';
 import { ProduitNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 type FiltrePrincipal = 'tous' | 'faible' | 'rupture' | 'niveaux' | 'mouvements';
 type TypeMouvement = 'TOUS' | 'ENTREE' | 'SORTIE' | 'AJUSTEMENT';
@@ -35,6 +37,7 @@ function getPeriodeDates(p: FiltrePeriode): { dateDebut?: string; dateFin?: stri
 }
 
 export default function InventaireScreen() {
+  const { lang } = useLang();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
@@ -151,9 +154,9 @@ export default function InventaireScreen() {
       const res = await decomposer(niveau.id!);
       setNiveauxMap(prev => ({ ...prev, [produit.id]: res.niveaux }));
       setProduits(prev => prev.map(p => p.id === produit.id ? { ...p, quantite: res.produitQuantite } : p));
-      Alert.alert('Succes', res.message || 'Decomposition effectuee');
+      Alert.alert(tr('succes', lang), res.message || tr('succes', lang));
     } catch (e: any) {
-      Alert.alert('Erreur', e.message || 'Decomposition impossible');
+      Alert.alert(tr('erreur', lang), e.message || tr('erreur', lang));
     }
   };
 
@@ -175,9 +178,9 @@ export default function InventaireScreen() {
   };
 
   const enregistrerMouvement = async () => {
-    if (!mouvForm.produitId) { Alert.alert('Erreur', 'Selectionnez un produit'); return; }
+    if (!mouvForm.produitId) { Alert.alert(tr('erreur', lang), tr('selectionner_produit', lang)); return; }
     if (!mouvForm.quantite || isNaN(Number(mouvForm.quantite)) || Number(mouvForm.quantite) <= 0) {
-      Alert.alert('Erreur', 'Quantite invalide'); return;
+      Alert.alert(tr('erreur', lang), tr('quantite', lang)); return;
     }
     try {
       await ajouterMouvement({
@@ -190,7 +193,7 @@ export default function InventaireScreen() {
       setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '' });
       chargerMouvements(filtrePeriode);
     } catch {
-      Alert.alert('Erreur', 'Impossible d\'enregistrer le mouvement');
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
     }
   };
 
@@ -206,23 +209,23 @@ export default function InventaireScreen() {
       <View style={styles.kpiRow}>
         <View style={styles.kpi}>
           <Text style={styles.kpiVal}>{produits.length}</Text>
-          <Text style={styles.kpiLabel}>Produits</Text>
+          <Text style={styles.kpiLabel}>{tr('produits', lang)}</Text>
         </View>
         <View style={[styles.kpi, { backgroundColor: '#fff3e0' }]}>
           <Text style={[styles.kpiVal, { color: '#ff9800' }]}>{stockFaible}</Text>
-          <Text style={styles.kpiLabel}>Stock bas</Text>
+          <Text style={styles.kpiLabel}>{tr('stock_bas', lang)}</Text>
         </View>
         <View style={[styles.kpi, { backgroundColor: '#ffebee' }]}>
           <Text style={[styles.kpiVal, { color: '#f44336' }]}>{ruptures}</Text>
-          <Text style={styles.kpiLabel}>Ruptures</Text>
+          <Text style={styles.kpiLabel}>{tr('ruptures', lang)}</Text>
         </View>
       </View>
-      <Text style={styles.valeur}>Valeur stock : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
+      <Text style={styles.valeur}>{tr('valeur_stock', lang)} : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
 
       <View style={styles.filtreRow}>
         {(['tous', 'faible', 'rupture', 'niveaux', 'mouvements'] as const).map(f => (
           <Chip key={f} selected={filtre === f} onPress={() => setFiltre(f)} style={styles.filtreChip}>
-            {f === 'tous' ? 'Tous' : f === 'faible' ? 'Stock bas' : f === 'rupture' ? 'Rupture' : f === 'niveaux' ? 'Niveaux' : 'Mouvements'}
+            {f === 'tous' ? 'Tous' : f === 'faible' ? tr('stock_bas', lang) : f === 'rupture' ? tr('en_rupture', lang) : f === 'niveaux' ? tr('niveaux', lang) : tr('mouvements', lang)}
           </Chip>
         ))}
       </View>
@@ -234,7 +237,7 @@ export default function InventaireScreen() {
           keyExtractor={p => String(p.id)}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
           ListHeaderComponent={
-            <Searchbar placeholder="Rechercher un produit..." value={searchNiveaux}
+            <Searchbar placeholder={tr('recherche_produit', lang)} value={searchNiveaux}
                        onChangeText={setSearchNiveaux} style={{ margin: 12 }} />
           }
           contentContainerStyle={{ paddingBottom: 20 }}
@@ -253,7 +256,7 @@ export default function InventaireScreen() {
                   {niveauxLoading[item.id] ? (
                     <ActivityIndicator size="small" style={{ padding: 12 }} />
                   ) : !niveauxMap[item.id]?.length ? (
-                    <Text style={styles.pnEmpty}>Aucun niveau de conditionnement</Text>
+                    <Text style={styles.pnEmpty}>{tr('aucun_resultat', lang)}</Text>
                   ) : (
                     niveauxMap[item.id].map((niveau, i) => (
                       <View key={niveau.id} style={styles.niveauRow}>
@@ -330,7 +333,7 @@ export default function InventaireScreen() {
                 />
               }
               contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
-              ListEmptyComponent={<Text style={styles.empty}>Aucun mouvement</Text>}
+              ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_mouvement', lang)}</Text>}
               renderItem={({ item }) => (
                 <Card style={styles.card}>
                   <Card.Content>
@@ -376,7 +379,7 @@ export default function InventaireScreen() {
               contentContainerStyle={styles.modal}
             >
               <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouveau mouvement</Text>
+                <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('nouveau_mouvement', lang)}</Text>
 
                 {/* Sélecteur produit */}
                 <TouchableOpacity
@@ -384,7 +387,7 @@ export default function InventaireScreen() {
                   onPress={() => setShowProduitPicker(v => !v)}
                 >
                   <Text style={mouvForm.produitNom ? styles.pickerVal : styles.pickerPh}>
-                    {mouvForm.produitNom || 'Sélectionner un produit *'}
+                    {mouvForm.produitNom || tr('selectionner_produit', lang)}
                   </Text>
                   <Text style={{ color: '#94a3b8' }}>{showProduitPicker ? '▲' : '▼'}</Text>
                 </TouchableOpacity>
@@ -408,7 +411,7 @@ export default function InventaireScreen() {
                 )}
 
                 {/* Type mouvement */}
-                <Text style={styles.inputLabel}>Type de mouvement *</Text>
+                <Text style={styles.inputLabel}>{tr('type_mouvement', lang)}</Text>
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                   {(['ENTREE', 'SORTIE', 'AJUSTEMENT'] as const).map(t => (
                     <TouchableOpacity
@@ -427,7 +430,7 @@ export default function InventaireScreen() {
                 </View>
 
                 <TextInput
-                  label="Quantite *"
+                  label={tr('quantite', lang) + ' *'}
                   value={mouvForm.quantite}
                   onChangeText={t => setMouvForm({ ...mouvForm, quantite: t })}
                   mode="outlined"
@@ -435,14 +438,14 @@ export default function InventaireScreen() {
                   style={styles.input}
                 />
                 <TextInput
-                  label="Motif"
+                  label={tr('raison', lang)}
                   value={mouvForm.motif}
                   onChangeText={t => setMouvForm({ ...mouvForm, motif: t })}
                   mode="outlined"
                   style={styles.input}
                 />
                 <Button mode="contained" onPress={enregistrerMouvement} style={{ marginTop: 4 }}>
-                  Enregistrer
+                  {tr('enregistrer', lang)}
                 </Button>
               </ScrollView>
             </Modal>
@@ -452,7 +455,7 @@ export default function InventaireScreen() {
         /* ─── Vue stock normale ─── */
         <>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 4 }}>
-            <Searchbar placeholder="Rechercher..." value={search} onChangeText={setSearch} style={[styles.search, { flex: 1, marginHorizontal: 0, marginBottom: 0 }]} />
+            <Searchbar placeholder={tr('recherche_produit', lang)} value={search} onChangeText={setSearch} style={[styles.search, { flex: 1, marginHorizontal: 0, marginBottom: 0 }]} />
             <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
           </View>
           <FlatList

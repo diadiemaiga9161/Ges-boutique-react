@@ -3,6 +3,8 @@ import { View, FlatList, StyleSheet, Alert, RefreshControl, TouchableOpacity, Sc
 import { Text, FAB, ActivityIndicator, Switch } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import api from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface Promotion {
   id: number;
@@ -20,6 +22,7 @@ const money = (v: number) => v?.toLocaleString('fr-FR') + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 
 export default function PromotionsScreen() {
+  const { lang } = useLang();
   const [promos, setPromos] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -64,10 +67,10 @@ export default function PromotionsScreen() {
   };
 
   const sauvegarder = async () => {
-    if (!form.titre.trim()) { Alert.alert('Erreur', 'Le titre est obligatoire'); return; }
+    if (!form.titre.trim()) { Alert.alert(tr('erreur', lang), tr('remplir_champs', lang)); return; }
     const valeur = parseFloat(form.valeurReduction);
-    if (!valeur || valeur <= 0) { Alert.alert('Erreur', 'La valeur doit être supérieure à 0'); return; }
-    if (form.typeReduction === 'POURCENTAGE' && valeur > 100) { Alert.alert('Erreur', 'Le pourcentage ne peut pas dépasser 100%'); return; }
+    if (!valeur || valeur <= 0) { Alert.alert(tr('erreur', lang), tr('valeur', lang)); return; }
+    if (form.typeReduction === 'POURCENTAGE' && valeur > 100) { Alert.alert(tr('erreur', lang), tr('remise', lang)); return; }
 
     setSaving(true);
     try {
@@ -80,7 +83,7 @@ export default function PromotionsScreen() {
       setShowModal(false);
       charger();
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Impossible d\'enregistrer');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
     }
     setSaving(false);
   };
@@ -89,16 +92,16 @@ export default function PromotionsScreen() {
     try {
       await api.put(`/promotions/${p.id}`, { ...p, active: !p.active });
       setPromos(prev => prev.map(x => x.id === p.id ? { ...x, active: !x.active } : x));
-    } catch { Alert.alert('Erreur', 'Impossible de modifier'); }
+    } catch { Alert.alert(tr('erreur', lang), tr('erreur', lang)); }
   };
 
   const supprimer = (p: Promotion) => {
-    Alert.alert('Supprimer', `Supprimer "${p.titre}" ?`, [
-      { text: 'Annuler', style: 'cancel' },
+    Alert.alert(tr('supprimer', lang), `${tr('supprimer', lang)} "${p.titre}" ?`, [
+      { text: tr('annuler', lang), style: 'cancel' },
       {
-        text: 'Supprimer', style: 'destructive', onPress: async () => {
+        text: tr('supprimer', lang), style: 'destructive', onPress: async () => {
           try { await api.delete(`/promotions/${p.id}`); charger(); }
-          catch { Alert.alert('Erreur', 'Impossible de supprimer'); }
+          catch { Alert.alert(tr('erreur', lang), tr('erreur', lang)); }
         }
       }
     ]);
@@ -113,17 +116,17 @@ export default function PromotionsScreen() {
       {/* Hero */}
       <View style={s.hero}>
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>Total promos</Text>
+          <Text style={s.heroLabel}>{tr('total_promos', lang)}</Text>
           <Text style={s.heroVal}>{promos.length}</Text>
         </View>
         <View style={s.heroDivider} />
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>Actives</Text>
+          <Text style={s.heroLabel}>{tr('active', lang)}</Text>
           <Text style={[s.heroVal, { color: '#a5f3a5' }]}>{activeCount}</Text>
         </View>
         <View style={s.heroDivider} />
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>Inactives</Text>
+          <Text style={s.heroLabel}>{tr('inactive', lang)}</Text>
           <Text style={[s.heroVal, { color: '#ffb3b3' }]}>{promos.length - activeCount}</Text>
         </View>
       </View>
@@ -136,7 +139,7 @@ export default function PromotionsScreen() {
         ListEmptyComponent={
           <View style={s.empty}>
             <MaterialCommunityIcons name="tag-off-outline" size={48} color="#ccc" />
-            <Text style={s.emptyText}>Aucune promotion</Text>
+            <Text style={s.emptyText}>{tr('aucune_promo', lang)}</Text>
           </View>
         }
         renderItem={({ item: p }) => (
@@ -149,10 +152,10 @@ export default function PromotionsScreen() {
                 <Text style={s.cardTitle}>{p.titre}</Text>
                 <View style={s.cardBadges}>
                   <View style={[s.badge, p.globale ? s.badgeGlobal : s.badgeProduit]}>
-                    <Text style={s.badgeText}>{p.globale ? 'Globale' : 'Par produit'}</Text>
+                    <Text style={s.badgeText}>{p.globale ? tr('globale', lang) : tr('par_produit', lang)}</Text>
                   </View>
                   <View style={[s.badge, p.active ? s.badgeActive : s.badgeInactive]}>
-                    <Text style={s.badgeText}>{p.active ? '● Actif' : '○ Inactif'}</Text>
+                    <Text style={s.badgeText}>{p.active ? '● ' + tr('active', lang) : '○ ' + tr('inactive', lang)}</Text>
                   </View>
                 </View>
               </View>
@@ -170,8 +173,8 @@ export default function PromotionsScreen() {
               />
               <Text style={s.reductionText}>
                 {p.typeReduction === 'POURCENTAGE'
-                  ? `${p.valeurReduction}% de réduction`
-                  : `${money(p.valeurReduction)} de réduction`}
+                  ? `${p.valeurReduction}% ${tr('remise', lang).toLowerCase()}`
+                  : `${money(p.valeurReduction)} ${tr('remise', lang).toLowerCase()}`}
               </Text>
             </View>
 
@@ -191,11 +194,11 @@ export default function PromotionsScreen() {
             <View style={s.cardActions}>
               <TouchableOpacity style={s.editBtn} onPress={() => openEdit(p)}>
                 <MaterialCommunityIcons name="pencil-outline" size={15} color="#e91e63" />
-                <Text style={s.editBtnText}>Modifier</Text>
+                <Text style={s.editBtnText}>{tr('modifier', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.deleteBtn} onPress={() => supprimer(p)}>
                 <MaterialCommunityIcons name="trash-can-outline" size={15} color="#f44336" />
-                <Text style={s.deleteBtnText}>Supprimer</Text>
+                <Text style={s.deleteBtnText}>{tr('supprimer', lang)}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -210,21 +213,21 @@ export default function PromotionsScreen() {
           <View style={s.sheet}>
             <View style={s.handle} />
             <View style={s.modalHead}>
-              <Text style={s.modalTitle}>{editing ? 'Modifier la promo' : 'Nouvelle promotion'}</Text>
+              <Text style={s.modalTitle}>{editing ? tr('modifier_promo', lang) : tr('nouvelle_promo', lang)}</Text>
               <TouchableOpacity onPress={() => setShowModal(false)}>
                 <MaterialCommunityIcons name="close" size={22} color="#666" />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody}>
-              <Text style={s.fieldLabel}>Titre *</Text>
+              <Text style={s.fieldLabel}>{tr('titre_promo', lang)}</Text>
               <TextInput
                 style={s.input}
                 value={form.titre}
                 onChangeText={t => setForm({ ...form, titre: t })}
-                placeholder="Ex: Promo Ramadan, -20% sur tout..."
+                placeholder="Ex: Promo Ramadan, -20%..."
               />
 
-              <Text style={s.fieldLabel}>Type de réduction</Text>
+              <Text style={s.fieldLabel}>{tr('type_reduction', lang)}</Text>
               <View style={s.typeRow}>
                 {(['POURCENTAGE', 'MONTANT_FIXE'] as const).map(t => (
                   <TouchableOpacity
@@ -237,14 +240,14 @@ export default function PromotionsScreen() {
                       size={16} color={form.typeReduction === t ? '#fff' : '#e91e63'}
                     />
                     <Text style={[s.typeBtnText, form.typeReduction === t && { color: '#fff' }]}>
-                      {t === 'POURCENTAGE' ? 'Pourcentage' : 'Montant fixe'}
+                      {t === 'POURCENTAGE' ? tr('pourcentage', lang) : tr('montant_fixe', lang)}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
               <Text style={s.fieldLabel}>
-                Valeur {form.typeReduction === 'POURCENTAGE' ? '(%)' : '(FCFA)'} *
+                {tr('valeur', lang)} {form.typeReduction === 'POURCENTAGE' ? '(%)' : '(FCFA)'} *
               </Text>
               <TextInput
                 style={s.input}
@@ -256,8 +259,8 @@ export default function PromotionsScreen() {
 
               <View style={s.switchRow}>
                 <View>
-                  <Text style={s.fieldLabel}>Promotion globale</Text>
-                  <Text style={{ color: '#999', fontSize: 12 }}>S'applique à tous les produits</Text>
+                  <Text style={s.fieldLabel}>{tr('promo_globale', lang)}</Text>
+                  <Text style={{ color: '#999', fontSize: 12 }}>{tr('applique_tous', lang)}</Text>
                 </View>
                 <Switch
                   value={form.globale}
@@ -267,7 +270,7 @@ export default function PromotionsScreen() {
               </View>
 
               <View style={s.switchRow}>
-                <Text style={s.fieldLabel}>Active</Text>
+                <Text style={s.fieldLabel}>{tr('active', lang)}</Text>
                 <Switch
                   value={form.active}
                   onValueChange={v => setForm({ ...form, active: v })}
@@ -277,12 +280,12 @@ export default function PromotionsScreen() {
             </ScrollView>
             <View style={s.modalFoot}>
               <TouchableOpacity style={s.btnCancel} onPress={() => setShowModal(false)}>
-                <Text style={s.btnCancelText}>Annuler</Text>
+                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.btnConfirm, saving && { opacity: 0.6 }]} onPress={sauvegarder} disabled={saving}>
                 {saving
                   ? <ActivityIndicator size="small" color="#fff" />
-                  : <Text style={s.btnConfirmText}>{editing ? 'Enregistrer' : 'Créer'}</Text>
+                  : <Text style={s.btnConfirmText}>{editing ? tr('enregistrer', lang) : tr('creer', lang)}</Text>
                 }
               </TouchableOpacity>
             </View>

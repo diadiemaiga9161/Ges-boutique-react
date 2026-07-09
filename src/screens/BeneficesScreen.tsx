@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { Text, Card, ActivityIndicator, SegmentedButtons } from 'react-native-paper';
 import { getRapportJour, getRapportSemaine, getRapportMois } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function BeneficesScreen() {
+  const { lang } = useLang();
   const [periode, setPeriode] = useState<'jour' | 'semaine' | 'mois'>('jour');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -35,14 +38,14 @@ export default function BeneficesScreen() {
       {loading ? <ActivityIndicator style={{ flex: 1 }} size="large" /> : (
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           <View style={[styles.hero, { backgroundColor: benefice >= 0 ? '#388e3c' : '#c62828' }]}>
-            <Text style={styles.heroLabel}>Bénéfice</Text>
+            <Text style={styles.heroLabel}>{tr('benefice', lang)}</Text>
             <Text style={styles.heroVal}>{benefice.toLocaleString('fr-FR')} FCFA</Text>
             <Text style={styles.heroSub}>Marge : {marge}%</Text>
           </View>
           <View style={styles.kpiRow}>
             <View style={styles.kpi}>
               <Text style={styles.kpiVal}>{ca.toLocaleString('fr-FR')}</Text>
-              <Text style={styles.kpiLabel}>Chiffre d'affaires</Text>
+              <Text style={styles.kpiLabel}>{tr('chiffre_affaires', lang)}</Text>
             </View>
             <View style={[styles.kpi, { backgroundColor: '#fce4ec' }]}>
               <Text style={[styles.kpiVal, { color: '#c62828' }]}>{(ca - benefice).toLocaleString('fr-FR')}</Text>
@@ -52,9 +55,9 @@ export default function BeneficesScreen() {
           <Card style={styles.card}>
             <Card.Content>
               <Text variant="titleMedium" style={{ color: '#1a56db', marginBottom: 8 }}>Résumé</Text>
-              <View style={styles.row}><Text>CA total</Text><Text style={styles.bold}>{ca.toLocaleString('fr-FR')} FCFA</Text></View>
-              <View style={styles.row}><Text>Bénéfice net</Text><Text style={[styles.bold, { color: benefice >= 0 ? '#388e3c' : '#f44336' }]}>{benefice.toLocaleString('fr-FR')} FCFA</Text></View>
-              <View style={styles.row}><Text>Nombre de ventes</Text><Text style={styles.bold}>{data?.nombreVentes || 0}</Text></View>
+              <View style={styles.row}><Text>{tr('chiffre_affaires', lang)}</Text><Text style={styles.bold}>{ca.toLocaleString('fr-FR')} FCFA</Text></View>
+              <View style={styles.row}><Text>{tr('benefice_net', lang)}</Text><Text style={[styles.bold, { color: benefice >= 0 ? '#388e3c' : '#f44336' }]}>{benefice.toLocaleString('fr-FR')} FCFA</Text></View>
+              <View style={styles.row}><Text>{tr('nb_ventes', lang)}</Text><Text style={styles.bold}>{data?.nombreVentes || 0}</Text></View>
               {data?.montantRemisesTotal > 0 && <View style={styles.row}><Text>Remises accordées</Text><Text style={[styles.bold, { color: '#ff9800' }]}>{data.montantRemisesTotal.toLocaleString('fr-FR')} FCFA</Text></View>}
             </Card.Content>
           </Card>

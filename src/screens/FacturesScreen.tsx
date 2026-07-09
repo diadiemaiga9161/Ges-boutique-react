@@ -4,8 +4,11 @@ import { Text, Card, Button, ActivityIndicator } from 'react-native-paper';
 import { getVentes } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { imprimerFactureRN, partagerFactureRN, DesignFacture } from '../services/invoice.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function FacturesScreen() {
+  const { lang } = useLang();
   const [ventes, setVentes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -55,7 +58,7 @@ export default function FacturesScreen() {
     try {
       await imprimerFactureRN(buildInvoiceData(vente), boutique, design);
     } catch (e: any) {
-      Alert.alert('Erreur', e?.message || 'Impossible d\'imprimer');
+      Alert.alert(tr('erreur', lang), e?.message || 'Impossible d\'imprimer');
     }
   };
 
@@ -63,7 +66,7 @@ export default function FacturesScreen() {
     try {
       await partagerFactureRN(buildInvoiceData(vente), boutique, design);
     } catch (e: any) {
-      Alert.alert('Erreur', e?.message || 'Impossible de partager');
+      Alert.alert(tr('erreur', lang), e?.message || 'Impossible de partager');
     }
   };
 
@@ -96,20 +99,20 @@ export default function FacturesScreen() {
           <Card style={styles.card}>
             <Card.Content>
               <View style={styles.row}>
-                <Text variant="titleMedium">{item.numeroVente || `Facture #${item.id}`}</Text>
+                <Text variant="titleMedium">{item.numeroVente || `${tr('factures', lang)} #${item.id}`}</Text>
                 <Text style={styles.montant}>{item.montantTotal?.toLocaleString('fr-FR')} FCFA</Text>
               </View>
               <Text style={styles.sub}>{item.clientNom || 'Client anonyme'}</Text>
               <Text style={styles.date}>{item.dateVente ? new Date(item.dateVente).toLocaleDateString('fr-FR') : ''}</Text>
               {item.estCredit && (
                 <View style={styles.creditBadge}>
-                  <Text style={styles.creditText}>Crédit — Reste : {item.montantRestant?.toLocaleString('fr-FR')} FCFA</Text>
+                  <Text style={styles.creditText}>{tr('credits', lang)} — {tr('reste_a_payer', lang)} : {item.montantRestant?.toLocaleString('fr-FR')} FCFA</Text>
                 </View>
               )}
             </Card.Content>
             <Card.Actions style={styles.actions}>
               <Button icon="printer" mode="contained" compact onPress={() => handleImprimer(item)} style={styles.btnPrint}>
-                Imprimer
+                {tr('imprimer', lang)}
               </Button>
               <Button icon="share-variant" compact onPress={() => handlePartager(item)}>
                 PDF
@@ -120,7 +123,7 @@ export default function FacturesScreen() {
             </Card.Actions>
           </Card>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucune facture</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{tr('aucune_facture', lang)}</Text>}
       />
     </View>
   );

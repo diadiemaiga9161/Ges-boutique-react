@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, ScrollView, StyleSheet, Linking } from 'react-native';
 import { Text, Card, List, Divider } from 'react-native-paper';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 const RESOURCES = [
   {
@@ -22,10 +24,11 @@ const RESOURCES = [
 ];
 
 export default function ResourcesScreen() {
+  const { lang } = useLang();
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
       <View style={styles.header}>
-        <Text variant="headlineSmall" style={styles.headerTitle}>Ressources & Aide</Text>
+        <Text variant="headlineSmall" style={styles.headerTitle}>{tr('aide_ressources', lang)}</Text>
         <Text style={styles.headerSub}>Guides et support pour Ges Boutique</Text>
       </View>
 

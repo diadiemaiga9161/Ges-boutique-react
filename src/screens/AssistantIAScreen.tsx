@@ -2,6 +2,8 @@ import React, { useState, useRef } from 'react';
 import { View, FlatList, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { Text, TextInput, IconButton, Card, ActivityIndicator } from 'react-native-paper';
 import api from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface Message {
   id: string;
@@ -10,6 +12,7 @@ interface Message {
 }
 
 export default function AssistantIAScreen() {
+  const { lang } = useLang();
   const [messages, setMessages] = useState<Message[]>([
     { id: '0', role: 'assistant', content: 'Bonjour ! Je suis votre assistant IA. Comment puis-je vous aider à gérer votre boutique ?' }
   ]);
@@ -54,7 +57,7 @@ export default function AssistantIAScreen() {
         <TextInput
           value={input}
           onChangeText={setInput}
-          placeholder="Posez votre question..."
+          placeholder={tr('ecrire_message', lang)}
           style={styles.input}
           mode="outlined"
           onSubmitEditing={envoyer}

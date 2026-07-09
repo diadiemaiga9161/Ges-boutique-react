@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
 import { Text, TextInput, Button, Avatar, Card } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function ProfilScreen() {
+  const { lang } = useLang();
   const [user, setUser] = useState<any>({});
   const [form, setForm] = useState({ nom: '', email: '', telephone: '', ancienMotDePasse: '', nouveauMotDePasse: '' });
 
@@ -30,11 +33,11 @@ export default function ProfilScreen() {
       <Card style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>Informations personnelles</Text>
-          <TextInput label="Nom complet" value={form.nom} onChangeText={t => setForm({ ...form, nom: t })} mode="outlined" style={styles.input} />
-          <TextInput label="Email" value={form.email} onChangeText={t => setForm({ ...form, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
-          <TextInput label="Téléphone" value={form.telephone} onChangeText={t => setForm({ ...form, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
+          <TextInput label={tr('nom_complet', lang)} value={form.nom} onChangeText={t => setForm({ ...form, nom: t })} mode="outlined" style={styles.input} />
+          <TextInput label={tr('email', lang)} value={form.email} onChangeText={t => setForm({ ...form, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
+          <TextInput label={tr('telephone', lang)} value={form.telephone} onChangeText={t => setForm({ ...form, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
           <Button mode="contained" style={styles.btn} onPress={() => Alert.alert('Info', 'Fonctionnalité à venir')}>
-            Enregistrer
+            {tr('enregistrer', lang)}
           </Button>
         </Card.Content>
       </Card>

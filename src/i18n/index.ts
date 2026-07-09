@@ -149,6 +149,178 @@ const T: Record<string, Partial<Record<L, string>>> = {
   succes:              { fr: 'Succès', en: 'Success', ar: 'نجاح', wo: 'Defar ak dëkk', bm: 'Kɛra ka ɲɛ', ff: 'Moƴƴi', sw: 'Mafanikio', pt: 'Sucesso' },
   vente_enregistree:   { fr: 'Vente enregistrée avec succès !', en: 'Sale recorded successfully!', ar: 'تم تسجيل البيع بنجاح!', wo: 'Jaay bi sos na!', bm: 'Jaara kɛra ka ɲɛ!', ff: 'Mbelgaaji maran!', sw: 'Mauzo yamehifadhiwa!', pt: 'Venda registrada com sucesso!' },
   vente_hors_ligne:    { fr: 'Vente enregistrée hors ligne — sera synchronisée quand internet revient', en: 'Sale saved offline — will sync when internet returns', ar: 'تم حفظ البيع دون اتصال', wo: 'Jaay sos ci offline', bm: 'Jaara mara offline', ff: 'Mbelgaaji maran offline', sw: 'Mauzo yamehifadhiwa bila mtandao', pt: 'Venda salva offline' },
+
+  // ── Navigation tabs ──────────────────────────────────────────────────────────
+  tab_produits:  { fr: 'Produits', en: 'Products', ar: 'المنتجات', wo: 'Benn-benn', bm: 'Joli', ff: 'Dewe', sw: 'Bidhaa', pt: 'Produtos' },
+  tab_vente:     { fr: 'Vente', en: 'Sales', ar: 'مبيعات', wo: 'Jaay', bm: 'Jaara', ff: 'Mbelgaaji', sw: 'Mauzo', pt: 'Vendas' },
+  tab_caisse:    { fr: 'Caisse', en: 'Cash', ar: 'الصندوق', wo: 'Caisse', bm: 'Wari', ff: 'Sariyaaji', sw: 'Fedha', pt: 'Caixa' },
+  tab_rapports:  { fr: 'Rapports', en: 'Reports', ar: 'التقارير', wo: 'Wax-waxu', bm: 'Kunnafoniko', ff: 'Limooje', sw: 'Ripoti', pt: 'Relatórios' },
+  tab_menu:      { fr: 'Menu', en: 'Menu', ar: 'القائمة', wo: 'Listu', bm: 'Listu', ff: 'Listu', sw: 'Menyu', pt: 'Menu' },
+
+  // ── Actions générales ─────────────────────────────────────────────────────────
+  imprimer:      { fr: 'Imprimer', en: 'Print', ar: 'طباعة', wo: 'Daf', bm: 'Sɛbɛn', ff: 'Winndude', sw: 'Chapisha', pt: 'Imprimir' },
+  partager:      { fr: 'Partager', en: 'Share', ar: 'مشاركة', wo: 'Yónn', bm: 'Ladɔnnin', ff: 'Heblude', sw: 'Shiriki', pt: 'Partilhar' },
+
+  // ── Factures ─────────────────────────────────────────────────────────────────
+  voir_facture:  { fr: 'Voir facture', en: 'View invoice', ar: 'عرض الفاتورة', wo: 'Xool facture', bm: 'Facture jeli', ff: 'Janngo facture', sw: 'Ona ankara', pt: 'Ver fatura' },
+  telecharger:   { fr: 'Télécharger', en: 'Download', ar: 'تحميل', wo: 'Jël', bm: 'Sɔrɔ', ff: 'Jaɓɓirde', sw: 'Pakua', pt: 'Baixar' },
+  aucune_facture: { fr: 'Aucune facture', en: 'No invoice', ar: 'لا توجد فواتير', wo: 'Amul facture', bm: 'Facture ma sɔrɔ', ff: 'Alaa facture', sw: 'Hakuna ankara', pt: 'Nenhuma fatura' },
+
+  // ── Notifications ─────────────────────────────────────────────────────────────
+  aucune_notif:  { fr: 'Aucune notification', en: 'No notifications', ar: 'لا توجد إشعارات', wo: 'Amul notification', bm: 'Notification ma sɔrɔ', ff: 'Alaa notifications', sw: 'Hakuna arifa', pt: 'Nenhuma notificação' },
+  tout_lire:     { fr: 'Tout marquer comme lu', en: 'Mark all as read', ar: 'تعليم الكل كمقروء', wo: 'Dëkk yépp jël', bm: 'Yépp kalan', ff: 'Hoyti fof', sw: 'Weka zote kama zilizosomwa', pt: 'Marcar tudo como lido' },
+
+  // ── Profil ────────────────────────────────────────────────────────────────────
+  mon_profil_titre: { fr: 'Mon profil', en: 'My profile', ar: 'ملفي الشخصي', wo: 'Sa profil', bm: 'N profil', ff: 'Profil am', sw: 'Wasifu wangu', pt: 'Meu perfil' },
+  nom_complet:   { fr: 'Nom complet', en: 'Full name', ar: 'الاسم الكامل', wo: 'Turu bu dëkk', bm: 'Tɔgɔ bɛɛ', ff: 'Innde fof', sw: 'Jina kamili', pt: 'Nome completo' },
+  role:          { fr: 'Rôle', en: 'Role', ar: 'الدور', wo: 'Rôle', bm: 'Baara', ff: 'Teɓɓere', sw: 'Jukumu', pt: 'Função' },
+  changer_photo: { fr: 'Changer la photo', en: 'Change photo', ar: 'تغيير الصورة', wo: 'Yëbël liggéey', bm: 'Fɔtɔ yɛlɛma', ff: 'Waylude ɓiɓɓe', sw: 'Badilisha picha', pt: 'Alterar foto' },
+
+  // ── Boutique settings ─────────────────────────────────────────────────────────
+  infos_boutique: { fr: 'Informations boutique', en: 'Shop information', ar: 'معلومات المتجر', wo: 'Xam-xam boutique', bm: 'Boutique kunnafoni', ff: 'Humpito boutique', sw: 'Maelezo ya duka', pt: 'Informações da boutique' },
+  nom_boutique:  { fr: 'Nom de la boutique', en: 'Shop name', ar: 'اسم المتجر', wo: 'Turu boutique bi', bm: 'Boutique tɔgɔ', ff: 'Innde boutique', sw: 'Jina la duka', pt: 'Nome da boutique' },
+  ville:         { fr: 'Ville', en: 'City', ar: 'المدينة', wo: 'Dëkk', bm: 'Dugu', ff: 'Wuro', sw: 'Mji', pt: 'Cidade' },
+  pays:          { fr: 'Pays', en: 'Country', ar: 'البلد', wo: 'Réew', bm: 'Mara', ff: 'Leydi', sw: 'Nchi', pt: 'País' },
+  devise:        { fr: 'Devise', en: 'Currency', ar: 'العملة', wo: 'Xaalis', bm: 'Wari', ff: 'Kaalisi', sw: 'Sarafu', pt: 'Moeda' },
+  sauvegarder:   { fr: 'Sauvegarder', en: 'Save', ar: 'حفظ', wo: 'Sos', bm: 'Mara', ff: 'Soodude', sw: 'Hifadhi', pt: 'Guardar' },
+
+  // ── Transferts ────────────────────────────────────────────────────────────────
+  nouveau_transfert: { fr: 'Nouveau transfert', en: 'New transfer', ar: 'تحويل جديد', wo: 'Yëbël bu bees', bm: 'Yiriɛ kura', ff: 'Nafoore keso', sw: 'Uhamishaji mpya', pt: 'Nova transferência' },
+  boutique_source: { fr: 'Boutique source', en: 'Source shop', ar: 'المتجر المصدر', wo: 'Boutique bu jiitu', bm: 'Boutique sɔrɔ', ff: 'Boutique taworde', sw: 'Duka chanzo', pt: 'Boutique de origem' },
+  boutique_dest: { fr: 'Boutique destination', en: 'Destination shop', ar: 'المتجر الوجهة', wo: 'Boutique bu des', bm: 'Boutique tɔgɔ kɔni', ff: 'Boutique naatorde', sw: 'Duka la marudio', pt: 'Boutique de destino' },
+
+  // ── Bénéfices / Résultat ──────────────────────────────────────────────────────
+  benefice_brut: { fr: 'Bénéfice brut', en: 'Gross profit', ar: 'الربح الإجمالي', wo: 'Nafa bu jëm', bm: 'Nafa bɛɛ', ff: 'Nafaaji', sw: 'Faida ghafi', pt: 'Lucro bruto' },
+  benefice_net:  { fr: 'Bénéfice net', en: 'Net profit', ar: 'الربح الصافي', wo: 'Nafa bu dëkk', bm: 'Nafa dɔgɔtɔ', ff: 'Nafaaji bure', sw: 'Faida halisi', pt: 'Lucro líquido' },
+  charges:       { fr: 'Charges', en: 'Charges', ar: 'التكاليف', wo: 'Yóbbu', bm: 'Fali', ff: 'Ɓatuɗe', sw: 'Gharama', pt: 'Encargos' },
+
+  // ── Mobile Money ──────────────────────────────────────────────────────────────
+  envoi_argent:  { fr: "Envoi d'argent", en: 'Send money', ar: 'إرسال المال', wo: 'Yónn xaalis', bm: 'Wari ci', ff: 'Jawde wari', sw: 'Tuma pesa', pt: 'Enviar dinheiro' },
+  numero:        { fr: 'Numéro', en: 'Number', ar: 'الرقم', wo: 'Numero', bm: 'Numero', ff: 'Ɗemngal', sw: 'Nambari', pt: 'Número' },
+
+  // ── Bonus fournisseurs ────────────────────────────────────────────────────────
+  nouveau_bonus: { fr: 'Nouveau bonus', en: 'New bonus', ar: 'مكافأة جديدة', wo: 'Bonus bu bees', bm: 'Bonus kura', ff: 'Bonus keso', sw: 'Bonasi mpya', pt: 'Novo bônus' },
+  fournisseur:   { fr: 'Fournisseur', en: 'Supplier', ar: 'المورد', wo: 'Joxkat', bm: 'Jawulɔ', ff: 'Yoɓɓoowo', sw: 'Msambazaji', pt: 'Fornecedor' },
+
+  // ── Facture design ────────────────────────────────────────────────────────────
+  classique:     { fr: 'Classique', en: 'Classic', ar: 'كلاسيكي', wo: 'Classique', bm: 'Kɔrɔ', ff: 'Klassik', sw: 'Kawaida', pt: 'Clássico' },
+  moderne:       { fr: 'Moderne', en: 'Modern', ar: 'عصري', wo: 'Bu jooju', bm: 'Kura', ff: 'Modern', sw: 'Ya kisasa', pt: 'Moderno' },
+  minimaliste:   { fr: 'Minimaliste', en: 'Minimalist', ar: 'بسيط', wo: 'Seddeel', bm: 'Dɔgɔ', ff: 'Doltiiɗo', sw: 'Rahisi', pt: 'Minimalista' },
+  apercu:        { fr: 'Aperçu', en: 'Preview', ar: 'معاينة', wo: 'Jël ak xool', bm: 'Jeli', ff: 'Yiilaade', sw: 'Onyesho la awali', pt: 'Pré-visualisation' },
+
+  // ── Assistant IA ──────────────────────────────────────────────────────────────
+  assistant_ia:  { fr: 'Assistant IA', en: 'AI Assistant', ar: 'المساعد الذكي', wo: 'Ndimbal IA', bm: 'IA dɛmɛkɛla', ff: 'Ballal IA', sw: 'Msaidizi wa AI', pt: 'Assistente IA' },
+  ecrire_message: { fr: 'Écrire un message...', en: 'Write a message...', ar: 'اكتب رسالة...', wo: 'Sëbëlu xbaar...', bm: 'Sëbɛn kɔrɔ...', ff: 'Winndude haala...', sw: 'Andika ujumbe...', pt: 'Escrever uma mensagem...' },
+  envoyer:       { fr: 'Envoyer', en: 'Send', ar: 'إرسال', wo: 'Yónn', bm: 'Ci', ff: 'Jaɓɓir', sw: 'Tuma', pt: 'Enviar' },
+
+  // ── Ressources ────────────────────────────────────────────────────────────────
+  aide:          { fr: 'Aide', en: 'Help', ar: 'المساعدة', wo: 'Ndimbal', bm: 'Dɛmɛ', ff: 'Ballal', sw: 'Msaada', pt: 'Ajuda' },
+  contact_support: { fr: 'Contacter le support', en: 'Contact support', ar: 'تواصل مع الدعم', wo: 'Jox support bi', bm: 'Support ci', ff: 'Naatdir support', sw: 'Wasiliana na usaidizi', pt: 'Contactar suporte' },
+
+  // ── Commandes statuts ────────────────────────────────────────────────────────
+  validee:           { fr: 'Validée', en: 'Validated', ar: 'مؤكدة', wo: 'Dëkk na', bm: 'Dafalen', ff: 'Jaɓɓaama', sw: 'Imethibitishwa', pt: 'Validado' },
+  annulee:           { fr: 'Annulée', en: 'Cancelled', ar: 'ملغاة', wo: 'Soppiku na', bm: 'Bɔlen', ff: 'Haɗaama', sw: 'Imeghairiwa', pt: 'Cancelado' },
+  brouillon:         { fr: 'Brouillon', en: 'Draft', ar: 'مسودة', wo: 'Brouillon', bm: 'Fɔɲɔ', ff: 'Kaɓɓugal', sw: 'Rasimu', pt: 'Rascunho' },
+  nouvelle_commande: { fr: 'Nouvelle commande', en: 'New order', ar: 'طلب جديد', wo: 'Commande bu bees', bm: 'Baara kura', ff: 'Jaaɓirde keso', sw: 'Agizo jipya', pt: 'Novo pedido' },
+  recherche_commande:{ fr: 'Rechercher commande, client...', en: 'Search order, client...', ar: 'ابحث عن طلب، عميل...', wo: 'Seet commande, jëkël...', bm: 'Baara, ciden ɲini...', ff: 'Yiylo jaaɓirde, kiliyel...', sw: 'Tafuta agizo, mteja...', pt: 'Procurar pedido, cliente...' },
+  valider:           { fr: 'Valider', en: 'Validate', ar: 'تأكيد', wo: 'Dëkk', bm: 'Dafali', ff: 'Jaɓɓir', sw: 'Thibitisha', pt: 'Validar' },
+  regler:            { fr: 'Régler', en: 'Settle', ar: 'تسوية', wo: 'Dëkk', bm: 'Fali', ff: 'Jaɓɓir', sw: 'Lipa', pt: 'Liquidar' },
+  reglement_groupe:  { fr: 'Règlement groupé crédits', en: 'Grouped credit settlement', ar: 'تسوية جماعية للائتمان', wo: 'Dëkk nanu yi', bm: 'Nanu fali wɛrɛw', ff: 'Ɓolɗe faleede', sw: 'Malipo ya mkopo ya pamoja', pt: 'Liquidação agrupada de créditos' },
+  reglement_credit:  { fr: 'Régler le crédit', en: 'Settle credit', ar: 'تسوية الائتمان', wo: 'Dëkk nanu bi', bm: 'Nanu fali', ff: 'Ɓolɗe jaɓɓir', sw: 'Lipa mkopo', pt: 'Liquidar crédito' },
+  tout_selectionner: { fr: 'Tout sélectionner', en: 'Select all', ar: 'تحديد الكل', wo: 'Tanu yépp', bm: 'Yépp sugandi', ff: 'Suɓ fof', sw: 'Chagua zote', pt: 'Selecionar tudo' },
+  paiement_credit:   { fr: 'Paiement à crédit', en: 'Credit payment', ar: 'دفع بالآجل', wo: 'Pey ak yar', bm: 'Fali nanu', ff: 'Jaɓɓorgol ɓolɗe', sw: 'Malipo ya mkopo', pt: 'Pagamento a crédito' },
+  montant_verse:     { fr: 'Montant versé maintenant', en: 'Amount paid now', ar: 'المبلغ المدفوع الآن', wo: 'Xaalis bu pey ci kanam', bm: 'Wari fali sisan', ff: 'Wari jaɓɓetenooɗo hannde', sw: 'Kiasi kilicholipwa sasa', pt: 'Valor pago agora' },
+  date_echeance:     { fr: 'Date échéance (YYYY-MM-DD)', en: 'Due date (YYYY-MM-DD)', ar: 'تاريخ الاستحقاق (YYYY-MM-DD)', wo: 'Date xàt (YYYY-MM-DD)', bm: 'Laban date (YYYY-MM-DD)', ff: 'Date haaɗtaare (YYYY-MM-DD)', sw: 'Tarehe ya malipo (YYYY-MM-DD)', pt: 'Data de vencimento (YYYY-MM-DD)' },
+  reste_du:          { fr: 'Reste dû', en: 'Amount due', ar: 'المتبقي المستحق', wo: 'Bu tollu', bm: 'Tɔɔ', ff: 'Haɗɗe', sw: 'Kilichobaki', pt: 'Restante devido' },
+  verse:             { fr: 'Versé', en: 'Paid', ar: 'مدفوع', wo: 'Pay na', bm: 'Falen', ff: 'Jaɓɓaama', sw: 'Imelipwa', pt: 'Pago' },
+  reste:             { fr: 'Reste', en: 'Rest', ar: 'المتبقي', wo: 'Tollu', bm: 'Tɔɔ', ff: 'Haɗɗo', sw: 'Kilichobaki', pt: 'Resto' },
+  aucune_commande:   { fr: 'Aucune commande', en: 'No order', ar: 'لا توجد طلبات', wo: 'Amul commande', bm: 'Baara ma sɔrɔ', ff: 'Alaa jaaɓirɗe', sw: 'Hakuna agizo', pt: 'Nenhum pedido' },
+  ca_valide:         { fr: 'CA validé', en: 'Validated revenue', ar: 'رقم الأعمال المؤكد', wo: 'CA dëkk na', bm: 'Jaara dafalen', ff: 'CA jaɓɓaaɗo', sw: 'Mapato yaliyothibitishwa', pt: 'Faturamento validado' },
+  moitie:            { fr: 'Moitié', en: 'Half', ar: 'نصف', wo: 'Dëkkante', bm: 'Filanan', ff: 'Badoore', sw: 'Nusu', pt: 'Metade' },
+  tout_regler:       { fr: 'Tout régler', en: 'Settle all', ar: 'تسوية الكل', wo: 'Dëkk yépp', bm: 'Yépp fali', ff: 'Fof jaɓɓir', sw: 'Lipa yote', pt: 'Liquidar tudo' },
+  notes:             { fr: 'Notes...', en: 'Notes...', ar: 'ملاحظات...', wo: 'Notes...', bm: 'Sëbɛn...', ff: 'Winndannde...', sw: 'Maelezo...', pt: 'Notas...' },
+  nom:               { fr: 'Nom', en: 'Name', ar: 'الاسم', wo: 'Turu', bm: 'Tɔgɔ', ff: 'Innde', sw: 'Jina', pt: 'Nome' },
+  prenom:            { fr: 'Prénom', en: 'First name', ar: 'الاسم الأول', wo: 'Tur gannaaw', bm: 'Tɔgɔ fɔlɔ', ff: 'Innde addi', sw: 'Jina la kwanza', pt: 'Primeiro nome' },
+  ajouter_produit:   { fr: 'Ajouter au moins un produit', en: 'Add at least one product', ar: 'أضف منتجاً واحداً على الأقل', wo: 'Yokk ab benn-benn', bm: 'Joli kelen fara', ff: 'Ɗaɓɓir dewe gooto', sw: 'Ongeza bidhaa angalau moja', pt: 'Adicione pelo menos um produto' },
+
+  // ── Historique ventes ────────────────────────────────────────────────────────
+  historique:        { fr: 'Historique', en: 'History', ar: 'السجل', wo: 'Bu jiitu', bm: 'Kɔrɔw', ff: 'Keddiiɗi', sw: 'Historia', pt: 'Histórico' },
+  recherche_vente:   { fr: 'Rechercher une vente...', en: 'Search sale...', ar: 'ابحث عن مبيعة...', wo: 'Seet jaay...', bm: 'Jaara ɲini...', ff: 'Yiylo mbelgaaji...', sw: 'Tafuta mauzo...', pt: 'Procurar venda...' },
+  annuler_vente:     { fr: 'Annuler la vente', en: 'Cancel sale', ar: 'إلغاء البيع', wo: 'Soppiku jaay bi', bm: 'Jaara bɔ', ff: 'Haɗ mbelgaaji', sw: 'Ghairi mauzo', pt: 'Cancelar venda' },
+  vente_annulee:     { fr: 'Vente annulée', en: 'Sale cancelled', ar: 'تم إلغاء البيع', wo: 'Jaay bi soppiku na', bm: 'Jaara bɔlen', ff: 'Mbelgaaji haɗaama', sw: 'Mauzo yameghairiwa', pt: 'Venda cancelada' },
+  periode:           { fr: 'Période', en: 'Period', ar: 'الفترة', wo: 'Période', bm: 'Waati', ff: 'Sahaa', sw: 'Kipindi', pt: 'Período' },
+  debut:             { fr: 'Début', en: 'Start', ar: 'البداية', wo: 'Jël jàkk', bm: 'Daminɛ', ff: 'Fuɗɗorde', sw: 'Mwanzo', pt: 'Início' },
+  fin:               { fr: 'Fin', en: 'End', ar: 'النهاية', wo: 'Xàt', bm: 'Laban', ff: 'Haaɗtaare', sw: 'Mwisho', pt: 'Fim' },
+  filtrer:           { fr: 'Filtrer', en: 'Filter', ar: 'تصفية', wo: 'Filtrer', bm: 'Siɲɛ', ff: 'Siifindirde', sw: 'Chuja', pt: 'Filtrar' },
+  exporter:          { fr: 'Exporter PDF', en: 'Export PDF', ar: 'تصدير PDF', wo: 'Export PDF', bm: 'PDF bɔ', ff: 'PDF yaltinde', sw: 'Hamisha PDF', pt: 'Exportar PDF' },
+  aucune_vente:      { fr: 'Aucune vente trouvée', en: 'No sales found', ar: 'لا توجد مبيعات', wo: 'Amul jaay', bm: 'Jaara ma sɔrɔ', ff: 'Alaa mbelgaaji', sw: 'Hakuna mauzo', pt: 'Nenhuma venda encontrada' },
+  credit_restant:    { fr: 'Crédit restant', en: 'Remaining credit', ar: 'الائتمان المتبقي', wo: 'Nanu tollu', bm: 'Nanu tɔɔ', ff: 'Ɓolɗe haɗɗo', sw: 'Mkopo uliobaki', pt: 'Crédito restante' },
+  client_anonyme:    { fr: 'Client anonyme', en: 'Anonymous client', ar: 'عميل مجهول', wo: 'Jëkël bu amul turu', bm: 'Ciden tɔgɔ dɔn', ff: 'Kiliyel innde alaa', sw: 'Mteja asiyejulikana', pt: 'Cliente anónimo' },
+  detail_vente:      { fr: 'Détail vente', en: 'Sale detail', ar: 'تفاصيل البيع', wo: 'Xam-xam jaay bi', bm: 'Jaara kunnafoni', ff: 'Siifannde mbelgaaji', sw: 'Maelezo ya mauzo', pt: 'Detalhe da venda' },
+  informations:      { fr: 'Informations', en: 'Information', ar: 'المعلومات', wo: 'Xam-xam', bm: 'Kunnafoni', ff: 'Humpito', sw: 'Maelezo', pt: 'Informações' },
+  paiement:          { fr: 'Paiement', en: 'Payment', ar: 'الدفع', wo: 'Pey', bm: 'Fali', ff: 'Jaɓɓorgol', sw: 'Malipo', pt: 'Pagamento' },
+  mode:              { fr: 'Mode', en: 'Mode', ar: 'الطريقة', wo: 'Xam-xam', bm: 'Joli', ff: 'Nde', sw: 'Njia', pt: 'Modo' },
+
+  // ── Inventaire ────────────────────────────────────────────────────────────────
+  ajuster_stock:     { fr: 'Ajuster le stock', en: 'Adjust stock', ar: 'تعديل المخزون', wo: 'Wér njëkk weur', bm: 'Joli yɛlɛma', ff: 'Seerndirde ndeewoore', sw: 'Rekebisha hisa', pt: 'Ajustar estoque' },
+  nouveau_stock:     { fr: 'Nouveau stock', en: 'New stock', ar: 'مخزون جديد', wo: 'Njëkk weur bees', bm: 'Joli kura', ff: 'Ndeewoore keso', sw: 'Hisa mpya', pt: 'Novo estoque' },
+  en_rupture:        { fr: 'En rupture', en: 'Out of stock', ar: 'نفد', wo: 'Bees na', bm: 'Bɔlen', ff: 'Wayni', sw: 'Imekwisha', pt: 'Esgotado' },
+  stock_faible:      { fr: 'Stock faible', en: 'Low stock', ar: 'مخزون منخفض', wo: 'Njëkk weur dafa famm', bm: 'Joli dɔgɔ', ff: 'Ndeewoore famɗi', sw: 'Hisa ndogo', pt: 'Estoque baixo' },
+  mouvements:        { fr: 'Mouvements', en: 'Movements', ar: 'الحركات', wo: 'Yëbëlal', bm: 'Yiriw', ff: 'Yiylaade', sw: 'Mwendo', pt: 'Movimentos' },
+  entree_stock:      { fr: 'Entrée stock', en: 'Stock in', ar: 'دخول مخزون', wo: 'Dëkk njëkk weur', bm: 'Joli naani', ff: 'Ndeewoore naatde', sw: 'Bidhaa zinazoingia', pt: 'Entrada estoque' },
+  sortie_stock:      { fr: 'Sortie stock', en: 'Stock out', ar: 'خروج مخزون', wo: 'Génn njëkk weur', bm: 'Joli bɔra', ff: 'Ndeewoore yaltude', sw: 'Bidhaa zinazotoka', pt: 'Saída estoque' },
+  raison:            { fr: 'Raison', en: 'Reason', ar: 'السبب', wo: 'Raison', bm: 'Dalili', ff: 'Saabe', sw: 'Sababu', pt: 'Razão' },
+  quantite:          { fr: 'Quantité', en: 'Quantity', ar: 'الكمية', wo: 'Yënn', bm: 'Hakɛ', ff: 'Keeriindi', sw: 'Kiasi', pt: 'Quantidade' },
+  nouveau_mouvement: { fr: 'Nouveau mouvement', en: 'New movement', ar: 'حركة جديدة', wo: 'Yëbëlal bu bees', bm: 'Yiriw kura', ff: 'Yiylaade keso', sw: 'Mwendo mpya', pt: 'Novo movimento' },
+  valeur_stock:      { fr: 'Valeur stock', en: 'Stock value', ar: 'قيمة المخزون', wo: 'Njëkk weur njëg', bm: 'Joli nafa', ff: 'Ndeewoore njuɓɓudi', sw: 'Thamani ya hisa', pt: 'Valor do estoque' },
+  type_mouvement:    { fr: 'Type de mouvement *', en: 'Movement type *', ar: 'نوع الحركة *', wo: 'Xam-xam yëbëlal *', bm: 'Yiriw jɔli *', ff: 'Lenyol yiylaade *', sw: 'Aina ya mwendo *', pt: 'Tipo de movimento *' },
+  aucun_mouvement:   { fr: 'Aucun mouvement', en: 'No movement', ar: 'لا توجد حركات', wo: 'Amul yëbëlal', bm: 'Yiriw ma sɔrɔ', ff: 'Alaa yiylaade', sw: 'Hakuna mwendo', pt: 'Nenhum movimento' },
+  selectionner_produit: { fr: 'Sélectionner un produit *', en: 'Select a product *', ar: 'اختر منتجاً *', wo: 'Tanu benn-benn *', bm: 'Joli sugandi *', ff: 'Suɓ dewe *', sw: 'Chagua bidhaa *', pt: 'Selecionar produto *' },
+  niveaux:           { fr: 'Niveaux', en: 'Levels', ar: 'المستويات', wo: 'Niveaux', bm: 'Ɲɛsin', ff: 'Daraje', sw: 'Viwango', pt: 'Níveis' },
+  ruptures:          { fr: 'Ruptures', en: 'Out of stock', ar: 'نفاد المخزون', wo: 'Ruptures', bm: 'Joli bɔlen', ff: 'Waɗaaɗe', sw: 'Bidhaa zilizokwisha', pt: 'Rupturas' },
+  stock_bas:         { fr: 'Stock bas', en: 'Low stock', ar: 'مخزون منخفض', wo: 'Stock famm', bm: 'Joli dɔgɔ', ff: 'Ndeewoore famɗi', sw: 'Hisa ndogo', pt: 'Estoque baixo' },
+
+  // ── Dépôts garde ─────────────────────────────────────────────────────────────
+  nouveau_depot:     { fr: 'Nouveau dépôt', en: 'New deposit', ar: 'وديعة جديدة', wo: 'Santaane bu bees', bm: 'Dɔnni kura', ff: 'Ndemmugal keso', sw: 'Amana mpya', pt: 'Novo depósito' },
+  retrait:           { fr: 'Retrait', en: 'Withdrawal', ar: 'سحب', wo: 'Jël', bm: 'Bɔ', ff: 'Yaltirde', sw: 'Kutoa', pt: 'Retirada' },
+  cloturer:          { fr: 'Clôturer', en: 'Close', ar: 'إغلاق', wo: 'Dëkk', bm: 'Dafali', ff: 'Timminde', sw: 'Funga', pt: 'Encerrar' },
+  montant_depot:     { fr: 'Montant déposé', en: 'Deposited amount', ar: 'المبلغ المودع', wo: 'Xaalis bu dëkk', bm: 'Dɔnni wari', ff: 'Wari mboɗɗitaaɗo', sw: 'Kiasi kilichowekwa', pt: 'Valor depositado' },
+  montant_retrait:   { fr: 'Montant du retrait', en: 'Withdrawal amount', ar: 'مبلغ السحب', wo: 'Xaalis bu jël', bm: 'Bɔ wari', ff: 'Wari yaltirteeɗo', sw: 'Kiasi cha kutoa', pt: 'Valor da retirada' },
+  actif:             { fr: 'Actif', en: 'Active', ar: 'نشط', wo: 'Aktif', bm: 'Di baara la', ff: 'Goongɗinaaɗo', sw: 'Amilifu', pt: 'Ativo' },
+  cloture:           { fr: 'Clôturé', en: 'Closed', ar: 'مغلق', wo: 'Dëkk na', bm: 'Dafalen', ff: 'Timminaama', sw: 'Umefungwa', pt: 'Encerrado' },
+  aucun_depot:       { fr: 'Aucun dépôt enregistré', en: 'No deposit recorded', ar: 'لا توجد ودائع', wo: 'Amul santaane', bm: 'Dɔnni ma sɔrɔ', ff: 'Alaa ndemmugal', sw: 'Hakuna amana', pt: 'Nenhum depósito registado' },
+  nom_deposant:      { fr: 'Nom du déposant', en: 'Depositor name', ar: 'اسم المودِع', wo: 'Turu bu santaane bi', bm: 'Dɔnni mɔgɔ tɔgɔ', ff: 'Innde mboɗɗoowo', sw: 'Jina la mweka amana', pt: 'Nome do depositante' },
+  personne_existante:{ fr: 'Sélectionner une personne existante', en: 'Select existing person', ar: 'اختر شخصاً موجوداً', wo: 'Tanu ab nit ku am', bm: 'Mɔgɔ sɔrɔlen sugandi', ff: 'Suɓ neɗɗo gonɗo', sw: 'Chagua mtu aliyepo', pt: 'Selecionar pessoa existente' },
+  effectuer_retrait: { fr: 'Effectuer un retrait', en: 'Make a withdrawal', ar: 'إجراء سحب', wo: 'Def ab jël', bm: 'Bɔ dɛsɛ', ff: 'Yaltirde wari', sw: 'Fanya uondoaji', pt: 'Efectuar levantamento' },
+  historique_retraits:{ fr: 'Historique des retraits', en: 'Withdrawal history', ar: 'سجل السحوبات', wo: 'Jiitu jël yi', bm: 'Bɔ kɔrɔw', ff: 'Keddiiɗi yaltirɗe', sw: 'Historia ya kutoa', pt: 'Histórico de levantamentos' },
+  disponible:        { fr: 'Disponible', en: 'Available', ar: 'متاح', wo: 'Am na', bm: 'Sɔrɔlen', ff: 'Sikkitiima', sw: 'Inapatikana', pt: 'Disponível' },
+  restant:           { fr: 'Restant', en: 'Remaining', ar: 'المتبقي', wo: 'Tollu', bm: 'Tɔɔ', ff: 'Haɗɗo', sw: 'Kilichobaki', pt: 'Restante' },
+  initial:           { fr: 'Initial', en: 'Initial', ar: 'الأولي', wo: 'Bu tànn', bm: 'Daminɛ', ff: 'Kawtal', sw: 'Ya awali', pt: 'Inicial' },
+  retire:            { fr: 'Retiré', en: 'Withdrawn', ar: 'مسحوب', wo: 'Jël na', bm: 'Bɔlen', ff: 'Yaltiraama', sw: 'Imeondolewa', pt: 'Retirado' },
+  en_garde:          { fr: 'En garde', en: 'In custody', ar: 'في الحراسة', wo: 'Ci dikkeleen', bm: 'Di dogoni', ff: 'E keeri', sw: 'Kwa ulinzi', pt: 'Em custódia' },
+  actifs:            { fr: 'Actifs', en: 'Active', ar: 'نشطة', wo: 'Aktifs', bm: 'Di baara la', ff: 'Goongɗinaaɗe', sw: 'Amilifu', pt: 'Ativos' },
+  clotures:          { fr: 'Clôturés', en: 'Closed', ar: 'مغلقة', wo: 'Dëkk nañu', bm: 'Dafalenw', ff: 'Timminaama', sw: 'Imefungwa', pt: 'Encerrados' },
+
+  // ── Promotions ────────────────────────────────────────────────────────────────
+  nouvelle_promo:    { fr: 'Nouvelle promotion', en: 'New promotion', ar: 'عرض جديد', wo: 'Promotion bu bees', bm: 'Promotion kura', ff: 'Promotion keso', sw: 'Ofa mpya', pt: 'Nova promoção' },
+  type_promo:        { fr: 'Type', en: 'Type', ar: 'النوع', wo: 'Xam-xam', bm: 'Joli', ff: 'Lenyol', sw: 'Aina', pt: 'Tipo' },
+  remise:            { fr: 'Remise (%)', en: 'Discount (%)', ar: 'خصم (%)', wo: 'Remise (%)', bm: 'Dɔgɔ (%)', ff: 'Ceerngal (%)', sw: 'Punguzo (%)', pt: 'Desconto (%)' },
+  active:            { fr: 'Active', en: 'Active', ar: 'نشطة', wo: 'Aktif', bm: 'Di baara la', ff: 'Goongɗinaaɗe', sw: 'Amilifu', pt: 'Ativa' },
+  inactive:          { fr: 'Inactive', en: 'Inactive', ar: 'غير نشطة', wo: 'Aktif woo', bm: 'Baara woo', ff: 'Goongɗinaaka', sw: 'Haifanyi kazi', pt: 'Inativa' },
+  globale:           { fr: 'Globale', en: 'Global', ar: 'عامة', wo: 'Bu dëkk', bm: 'Bɛɛ la', ff: 'Koyɗe fof', sw: 'Jumla', pt: 'Global' },
+  sur_produit:       { fr: 'Sur produit', en: 'On product', ar: 'على المنتج', wo: 'Ci benn-benn', bm: 'Joli kan', ff: 'E dewe', sw: 'Kwenye bidhaa', pt: 'Em produto' },
+  modifier_promo:    { fr: 'Modifier la promo', en: 'Edit promotion', ar: 'تعديل العرض', wo: 'Seet promotion bi', bm: 'Promotion yɛlɛma', ff: 'Waylude promotion', sw: 'Hariri ofa', pt: 'Editar promoção' },
+  total_promos:      { fr: 'Total promos', en: 'Total promos', ar: 'إجمالي العروض', wo: 'Total promotions', bm: 'Promotions bɛɛ', ff: 'Promotions fof', sw: 'Jumla ya ofa', pt: 'Total de promoções' },
+  par_produit:       { fr: 'Par produit', en: 'Per product', ar: 'حسب المنتج', wo: 'Bu benn-benn', bm: 'Joli bɛɛ', ff: 'Ko dewe', sw: 'Kwa bidhaa', pt: 'Por produto' },
+  pourcentage:       { fr: 'Pourcentage', en: 'Percentage', ar: 'نسبة مئوية', wo: 'Pourcentage', bm: 'Cɛman', ff: 'Ceedol', sw: 'Asilimia', pt: 'Percentagem' },
+  montant_fixe:      { fr: 'Montant fixe', en: 'Fixed amount', ar: 'مبلغ ثابت', wo: 'Xaalis bu dëkk', bm: 'Wari dɔgɔ', ff: 'Njuɓɓudi deeɗunde', sw: 'Kiasi kisichobadilika', pt: 'Valor fixo' },
+  aucune_promo:      { fr: 'Aucune promotion', en: 'No promotion', ar: 'لا توجد عروض', wo: 'Amul promotion', bm: 'Promotion ma sɔrɔ', ff: 'Alaa promotions', sw: 'Hakuna ofa', pt: 'Nenhuma promoção' },
+  titre_promo:       { fr: 'Titre *', en: 'Title *', ar: 'العنوان *', wo: 'Titu *', bm: 'Tɔgɔ *', ff: 'Tinndi *', sw: 'Kichwa *', pt: 'Título *' },
+  type_reduction:    { fr: 'Type de réduction', en: 'Discount type', ar: 'نوع الخصم', wo: 'Xam-xam réduction', bm: 'Dɔgɔ jɔli', ff: 'Lenyol ceerngal', sw: 'Aina ya punguzo', pt: 'Tipo de desconto' },
+  valeur:            { fr: 'Valeur', en: 'Value', ar: 'القيمة', wo: 'Njëg', bm: 'Nafa', ff: 'Njuɓɓudi', sw: 'Thamani', pt: 'Valor' },
+  promo_globale:     { fr: 'Promotion globale', en: 'Global promotion', ar: 'عرض شامل', wo: 'Promotion bu dëkk', bm: 'Promotion bɛɛ la', ff: 'Promotion koyɗe fof', sw: 'Ofa la jumla', pt: 'Promoção global' },
+  applique_tous:     { fr: "S'applique à tous les produits", en: 'Applies to all products', ar: 'ينطبق على جميع المنتجات', wo: 'Dafa am ci benn-benn yépp', bm: 'Joli bɛɛ la', ff: 'Ko dewe fof', sw: 'Inatumika kwa bidhaa zote', pt: 'Aplica-se a todos os produtos' },
+  creer:             { fr: 'Créer', en: 'Create', ar: 'إنشاء', wo: 'Sos', bm: 'Sɔrɔ', ff: 'Fuɗɗirde', sw: 'Unda', pt: 'Criar' },
 };
 
 export function tr(key: string, lang: string): string {

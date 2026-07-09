@@ -10,6 +10,8 @@ import {
   getVentes, getVentesJour, getVentesParPeriode,
   getVenteDetail, annulerVente,
 } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
 const money = (v: number) => (v || 0).toLocaleString('fr-FR') + ' FCFA';
@@ -27,6 +29,7 @@ type ActivePeriod = 'today' | 'week' | 'month' | 'all';
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function HistoriqueVentesScreen() {
+  const { lang } = useLang();
   const [ventes, setVentes] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
   const [search, setSearch] = useState('');
@@ -164,12 +167,12 @@ export default function HistoriqueVentesScreen() {
 
   const handleAnnuler = (vente: any) => {
     Alert.alert(
-      'Annuler la vente',
-      `Confirmer l'annulation de la vente ${vente.numeroVente || '#' + vente.id} ?`,
+      tr('annuler_vente', lang),
+      `${vente.numeroVente || '#' + vente.id} ?`,
       [
-        { text: 'Non', style: 'cancel' },
+        { text: tr('annuler', lang), style: 'cancel' },
         {
-          text: 'Oui, annuler', style: 'destructive',
+          text: tr('oui', lang) + ', ' + tr('annuler', lang).toLowerCase(), style: 'destructive',
           onPress: async () => {
             setAnnulationEnCours(true);
             try {
@@ -178,7 +181,7 @@ export default function HistoriqueVentesScreen() {
               setLoading(true);
               charger(activePeriod);
             } catch (e: any) {
-              Alert.alert('Erreur', e.response?.data?.message || 'Impossible d\'annuler la vente');
+              Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
             }
             setAnnulationEnCours(false);
           },
@@ -205,7 +208,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
     try {
       await Print.printAsync({ html });
     } catch {
-      Alert.alert('Erreur', 'Impossible d\'imprimer');
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
     }
   };
 
@@ -219,22 +222,22 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
       {/* KPI cards */}
       <View style={styles.kpiRow}>
         <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>CA Total</Text>
+          <Text style={styles.kpiLabel}>{tr('chiffre_affaires', lang)}</Text>
           <Text style={styles.kpiVal}>{money(caTotal)}</Text>
         </View>
         <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Ventes</Text>
+          <Text style={styles.kpiLabel}>{tr('vente', lang)}</Text>
           <Text style={styles.kpiVal}>{nbVentes}</Text>
         </View>
         <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Crédit restant</Text>
+          <Text style={styles.kpiLabel}>{tr('credit_restant', lang)}</Text>
           <Text style={styles.kpiVal}>{money(totalCreditRestant)}</Text>
         </View>
       </View>
 
       {/* Filtres période */}
       <View style={styles.periodRow}>
-        {([ ['today', 'Aujourd\'hui'], ['week', 'Semaine'], ['month', 'Mois'], ['all', 'Tout'] ] as [ActivePeriod, string][]).map(([p, label]) => (
+        {([ ['today', tr('rapport_journalier', lang)], ['week', tr('rapport_semaine', lang)], ['month', tr('rapport_mois', lang)], ['all', tr('historique', lang)] ] as [ActivePeriod, string][]).map(([p, label]) => (
           <TouchableOpacity
             key={p}
             style={[styles.periodBtn, activePeriod === p && styles.periodBtnActive]}
@@ -249,7 +252,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
 
       {/* Chips type */}
       <View style={styles.chipRow}>
-        {([ ['', 'Tous'], ['COMPTANT', 'Comptant'], ['CREDIT', 'Crédit'], ['EN_RETARD', 'En retard'] ] as [TypeFilter, string][]).map(([t, label]) => (
+        {([ ['', 'Tous'], ['COMPTANT', 'Comptant'], ['CREDIT', tr('credits', lang)], ['EN_RETARD', tr('non_regle', lang)] ] as [TypeFilter, string][]).map(([t, label]) => (
           <Chip
             key={t}
             compact
@@ -264,7 +267,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
 
       {/* Barre de recherche */}
       <Searchbar
-        placeholder="Rechercher client, N° vente..."
+        placeholder={tr('recherche_vente', lang)}
         value={search}
         onChangeText={onSearch}
         style={styles.search}
@@ -283,7 +286,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>Aucune vente pour cette période</Text>
+          <Text style={styles.empty}>{tr('aucune_vente', lang)}</Text>
         }
         renderItem={({ item }) => {
           const isAnnulee = item.annulee || item.statut === 'ANNULEE';
@@ -299,7 +302,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                   {/* Ligne 1 : client + montant */}
                   <View style={styles.row}>
                     <Text variant="titleMedium" style={styles.clientNom} numberOfLines={1}>
-                      {item.clientNom || 'Client anonyme'}
+                      {item.clientNom || tr('client_anonyme', lang)}
                     </Text>
                     <Text style={styles.montant}>{money(montantTotal)}</Text>
                   </View>
@@ -324,7 +327,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                           <Text style={styles.badgeCreditText}>CREDIT</Text>
                         </View>
                         <Text style={styles.creditInfo}>
-                          Versé {money(montantVerse)} / {money(montantTotal)}
+                          {tr('verse', lang)} {money(montantVerse)} / {money(montantTotal)}
                         </Text>
                       </View>
                       <ProgressBar
@@ -363,7 +366,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
             <View style={styles.modalHead}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitle} numberOfLines={1}>
-                  {selectedVente ? (selectedVente.numeroVente || 'Détail vente') : 'Détail vente'}
+                  {selectedVente ? (selectedVente.numeroVente || tr('detail_vente', lang)) : tr('detail_vente', lang)}
                 </Text>
                 {selectedVente && (
                   <Text style={styles.modalSub}>
@@ -383,11 +386,11 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                 <>
                   {/* Infos client */}
                   <View style={styles.infoCard}>
-                    <Text style={styles.sectionTitle}>Informations</Text>
+                    <Text style={styles.sectionTitle}>{tr('informations', lang)}</Text>
                     {[
-                      ['Client', selectedVente.clientNom || 'Client anonyme'],
-                      selectedVente.clientTelephone ? ['Téléphone', selectedVente.clientTelephone] : null,
-                      ['N° vente', selectedVente.numeroVente || '—'],
+                      [tr('clients', lang), selectedVente.clientNom || tr('client_anonyme', lang)],
+                      selectedVente.clientTelephone ? [tr('telephone', lang), selectedVente.clientTelephone] : null,
+                      ['N°', selectedVente.numeroVente || '—'],
                     ].filter((r): r is [string, string] => r !== null).map(([label, val]) => (
                       <View key={label} style={styles.infoRow}>
                         <Text style={styles.infoLabel}>{label}</Text>
@@ -397,13 +400,13 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                   </View>
 
                   {/* Produits */}
-                  <Text style={styles.sectionTitle}>Produits</Text>
+                  <Text style={styles.sectionTitle}>{tr('produits', lang)}</Text>
                   {loadingDetail ? (
                     <ActivityIndicator size="small" color="#1a56db" style={{ margin: 12 }} />
                   ) : venteDetail ? (
                     (() => {
                       const lignes: any[] = venteDetail.lignes || venteDetail.produits || [];
-                      if (!lignes.length) return <Text style={styles.emptyText}>Aucun produit</Text>;
+                      if (!lignes.length) return <Text style={styles.emptyText}>{tr('aucun_resultat', lang)}</Text>;
                       return lignes.map((l: any, i: number) => (
                         <View key={i} style={styles.ligneRow}>
                           <Text style={styles.ligneName} numberOfLines={2}>{l.produitNom}</Text>
@@ -413,20 +416,20 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                       ));
                     })()
                   ) : (
-                    <Text style={styles.emptyText}>Impossible de charger les produits</Text>
+                    <Text style={styles.emptyText}>{tr('erreur', lang)}</Text>
                   )}
 
                   {/* Paiement */}
                   <View style={[styles.infoCard, { marginTop: 14 }]}>
-                    <Text style={styles.sectionTitle}>Paiement</Text>
+                    <Text style={styles.sectionTitle}>{tr('paiement', lang)}</Text>
                     <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Mode</Text>
+                      <Text style={styles.infoLabel}>{tr('mode', lang)}</Text>
                       <Text style={styles.infoVal}>
                         {(selectedVente.modePaiement || 'COMPTANT').replace('_', ' ')}
                       </Text>
                     </View>
                     <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Total</Text>
+                      <Text style={styles.infoLabel}>{tr('total', lang)}</Text>
                       <Text style={[styles.infoVal, { fontWeight: 'bold', color: '#1a56db' }]}>
                         {money(selectedVente.montantTotal)}
                       </Text>
@@ -434,13 +437,13 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                     {selectedVente.estCredit && (
                       <>
                         <View style={styles.infoRow}>
-                          <Text style={styles.infoLabel}>Versé</Text>
+                          <Text style={styles.infoLabel}>{tr('verse', lang)}</Text>
                           <Text style={[styles.infoVal, { color: '#16a34a' }]}>
                             {money(selectedVente.montantVerse || 0)}
                           </Text>
                         </View>
                         <View style={styles.infoRow}>
-                          <Text style={styles.infoLabel}>Reste dû</Text>
+                          <Text style={styles.infoLabel}>{tr('reste_du', lang)}</Text>
                           <Text style={[styles.infoVal, { color: '#dc2626', fontWeight: 'bold' }]}>
                             {money(selectedVente.montantRestant ?? Math.max(0, selectedVente.montantTotal - (selectedVente.montantVerse || 0)))}
                           </Text>
@@ -455,7 +458,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
             {/* Boutons footer */}
             <View style={styles.modalFoot}>
               <TouchableOpacity style={styles.btnClose} onPress={() => setShowModal(false)}>
-                <Text style={styles.btnCloseText}>Fermer</Text>
+                <Text style={styles.btnCloseText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
 
               {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
@@ -463,7 +466,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                   style={styles.btnPrint}
                   onPress={() => handleImprimer(selectedVente, venteDetail)}
                 >
-                  <Text style={styles.btnPrintText}>Imprimer</Text>
+                  <Text style={styles.btnPrintText}>{tr('imprimer', lang)}</Text>
                 </TouchableOpacity>
               )}
 
@@ -475,7 +478,7 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                 >
                   {annulationEnCours
                     ? <ActivityIndicator size="small" color="#fff" />
-                    : <Text style={styles.btnCancelText}>Annuler vente</Text>
+                    : <Text style={styles.btnCancelText}>{tr('annuler_vente', lang)}</Text>
                   }
                 </TouchableOpacity>
               )}

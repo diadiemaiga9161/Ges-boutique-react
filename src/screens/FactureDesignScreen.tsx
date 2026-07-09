@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, ScrollView, StyleSheet, Linking } from 'react-native';
 import { Text, Card, Button, RadioButton, Divider } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 type Template = 'CLASSIQUE' | 'MODERNE' | 'MINIMALISTE';
 
@@ -12,6 +14,7 @@ const TEMPLATES: { value: Template; label: string; desc: string }[] = [
 ];
 
 export default function FactureDesignScreen() {
+  const { lang } = useLang();
   const [template, setTemplate] = useState<Template>('CLASSIQUE');
 
   React.useEffect(() => {
@@ -60,7 +63,7 @@ export default function FactureDesignScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
-      <Text variant="titleMedium" style={styles.sectionTitle}>Choisir le modèle de facture</Text>
+      <Text variant="titleMedium" style={styles.sectionTitle}>{tr('modele_facture', lang)}</Text>
 
       {TEMPLATES.map(t => (
         <Card
@@ -76,7 +79,7 @@ export default function FactureDesignScreen() {
                 onPress={() => setTemplate(t.value)}
               />
               <View style={{ flex: 1 }}>
-                <Text variant="titleMedium" style={template === t.value ? styles.activeLabel : {}}>{t.label}</Text>
+                <Text variant="titleMedium" style={template === t.value ? styles.activeLabel : {}}>{tr(t.value.toLowerCase(), lang)}</Text>
                 <Text style={styles.desc}>{t.desc}</Text>
               </View>
             </View>
@@ -90,7 +93,7 @@ export default function FactureDesignScreen() {
       ))}
 
       <Button mode="contained" onPress={sauvegarder} style={styles.btn}>
-        Enregistrer le modèle
+        {tr('sauvegarder', lang)}
       </Button>
     </ScrollView>
   );

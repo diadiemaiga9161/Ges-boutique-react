@@ -3,8 +3,11 @@ import { View, ScrollView, StyleSheet } from 'react-native';
 import { Text, Card, ActivityIndicator, Divider } from 'react-native-paper';
 import { getRapportMois } from '../services/api.service';
 import { getDepenses } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function ResultatNetScreen() {
+  const { lang } = useLang();
   const [rapport, setRapport] = useState<any>(null);
   const [depenses, setDepenses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,20 +37,20 @@ export default function ResultatNetScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
       <View style={[styles.hero, { backgroundColor: resultatNet >= 0 ? '#388e3c' : '#c62828' }]}>
-        <Text style={styles.heroLabel}>Résultat net du mois</Text>
+        <Text style={styles.heroLabel}>{tr('resultat_net', lang)}</Text>
         <Text style={styles.heroVal}>{resultatNet.toLocaleString('fr-FR')} FCFA</Text>
       </View>
 
       <Card style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.title}>Calcul du résultat</Text>
-          <View style={styles.row}><Text>Chiffre d'affaires</Text><Text style={styles.green}>{ca.toLocaleString('fr-FR')} FCFA</Text></View>
-          <View style={styles.row}><Text>Bénéfice brut ventes</Text><Text style={styles.green}>{beneficeBrut.toLocaleString('fr-FR')} FCFA</Text></View>
+          <View style={styles.row}><Text>{tr('chiffre_affaires', lang)}</Text><Text style={styles.green}>{ca.toLocaleString('fr-FR')} FCFA</Text></View>
+          <View style={styles.row}><Text>{tr('benefice_brut', lang)}</Text><Text style={styles.green}>{beneficeBrut.toLocaleString('fr-FR')} FCFA</Text></View>
           <Divider style={{ marginVertical: 8 }} />
-          <View style={styles.row}><Text>Total dépenses</Text><Text style={styles.red}>- {totalDepenses.toLocaleString('fr-FR')} FCFA</Text></View>
+          <View style={styles.row}><Text>{tr('total', lang)} {tr('depenses', lang)}</Text><Text style={styles.red}>- {totalDepenses.toLocaleString('fr-FR')} FCFA</Text></View>
           <Divider style={{ marginVertical: 8 }} />
           <View style={styles.row}>
-            <Text variant="titleMedium">Résultat net</Text>
+            <Text variant="titleMedium">{tr('resultat_net', lang)}</Text>
             <Text variant="titleMedium" style={{ color: resultatNet >= 0 ? '#388e3c' : '#f44336' }}>
               {resultatNet.toLocaleString('fr-FR')} FCFA
             </Text>

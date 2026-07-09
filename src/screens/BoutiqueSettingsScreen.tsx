@@ -3,8 +3,11 @@ import { View, ScrollView, StyleSheet, Alert } from 'react-native';
 import { Text, TextInput, Button, ActivityIndicator, Switch } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBoutique, updateBoutique } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function BoutiqueSettingsScreen() {
+  const { lang } = useLang();
   const [form, setForm] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,8 +34,8 @@ export default function BoutiqueSettingsScreen() {
     try {
       await updateBoutique(form);
       await AsyncStorage.setItem('boutique_info', JSON.stringify(form));
-      Alert.alert('Succès', 'Paramètres enregistrés');
-    } catch { Alert.alert('Erreur', 'Impossible de sauvegarder'); }
+      Alert.alert(tr('succes', lang), 'Paramètres enregistrés');
+    } catch { Alert.alert(tr('erreur', lang), 'Impossible de sauvegarder'); }
     setSaving(false);
   };
 
@@ -45,15 +48,15 @@ export default function BoutiqueSettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
-      <Text variant="titleMedium" style={styles.section}>Informations boutique</Text>
-      <TextInput label="Nom de la boutique *" value={form.nom || ''} onChangeText={t => setForm({ ...form, nom: t })} mode="outlined" style={styles.input} />
-      <TextInput label="Téléphone" value={form.telephone || ''} onChangeText={t => setForm({ ...form, telephone: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
-      <TextInput label="Téléphone 2 (rapport)" value={form.telephone2 || ''} onChangeText={t => setForm({ ...form, telephone2: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
-      <TextInput label="Téléphone 3 (rapport)" value={form.telephone3 || ''} onChangeText={t => setForm({ ...form, telephone3: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
-      <TextInput label="Email" value={form.email || ''} onChangeText={t => setForm({ ...form, email: t })} mode="outlined" style={styles.input} />
-      <TextInput label="Adresse" value={form.adresse || ''} onChangeText={t => setForm({ ...form, adresse: t })} mode="outlined" style={styles.input} />
-      <TextInput label="Ville" value={form.ville || ''} onChangeText={t => setForm({ ...form, ville: t })} mode="outlined" style={styles.input} />
-      <TextInput label="Devise" value={form.devise || 'FCFA'} onChangeText={t => setForm({ ...form, devise: t })} mode="outlined" style={styles.input} />
+      <Text variant="titleMedium" style={styles.section}>{tr('infos_boutique', lang)}</Text>
+      <TextInput label={tr('nom_boutique', lang) + ' *'} value={form.nom || ''} onChangeText={t => setForm({ ...form, nom: t })} mode="outlined" style={styles.input} />
+      <TextInput label={tr('telephone', lang)} value={form.telephone || ''} onChangeText={t => setForm({ ...form, telephone: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
+      <TextInput label={tr('telephone', lang) + ' 2 (rapport)'} value={form.telephone2 || ''} onChangeText={t => setForm({ ...form, telephone2: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
+      <TextInput label={tr('telephone', lang) + ' 3 (rapport)'} value={form.telephone3 || ''} onChangeText={t => setForm({ ...form, telephone3: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
+      <TextInput label={tr('email', lang)} value={form.email || ''} onChangeText={t => setForm({ ...form, email: t })} mode="outlined" style={styles.input} />
+      <TextInput label={tr('adresse', lang)} value={form.adresse || ''} onChangeText={t => setForm({ ...form, adresse: t })} mode="outlined" style={styles.input} />
+      <TextInput label={tr('ville', lang)} value={form.ville || ''} onChangeText={t => setForm({ ...form, ville: t })} mode="outlined" style={styles.input} />
+      <TextInput label={tr('devise', lang)} value={form.devise || 'FCFA'} onChangeText={t => setForm({ ...form, devise: t })} mode="outlined" style={styles.input} />
 
       <Text variant="titleMedium" style={styles.section}>Fonctionnalités</Text>
       <View style={styles.switchRow}>
@@ -62,7 +65,7 @@ export default function BoutiqueSettingsScreen() {
       </View>
 
       <Button mode="contained" onPress={sauvegarder} loading={saving} style={styles.btn}>
-        Enregistrer
+        {tr('enregistrer', lang)}
       </Button>
     </ScrollView>
   );

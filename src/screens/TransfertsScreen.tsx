@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
 import { Text, Card, Chip, ActivityIndicator } from 'react-native-paper';
 import api from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function TransfertsScreen() {
+  const { lang } = useLang();
   const [transferts, setTransferts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,7 +51,7 @@ export default function TransfertsScreen() {
             </Card.Content>
           </Card>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucun transfert</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_resultat', lang)}</Text>}
       />
     </View>
   );

@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
 import { Text, Card, ActivityIndicator, Icon } from 'react-native-paper';
 import { getNotifications, marquerLue } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function NotificationsScreen() {
+  const { lang } = useLang();
   const [notifs, setNotifs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -65,7 +68,7 @@ export default function NotificationsScreen() {
             </Card.Content>
           </Card>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucune notification</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{tr('aucune_notif', lang)}</Text>}
       />
     </View>
   );

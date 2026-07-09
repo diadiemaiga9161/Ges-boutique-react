@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import api from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 interface DepotClient {
   id: number;
@@ -51,6 +53,7 @@ const fmt = (d?: string) =>
   d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 
 export default function DepotsScreen() {
+  const { lang } = useLang();
   const [depots, setDepots] = useState<DepotGarde[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,10 +134,10 @@ export default function DepotsScreen() {
   };
 
   const sauvegarder = async () => {
-    if (!form.nom.trim()) { Alert.alert('Erreur', 'Le nom est obligatoire'); return; }
-    if (!form.numero.trim()) { Alert.alert('Erreur', 'Le numéro est obligatoire'); return; }
+    if (!form.nom.trim()) { Alert.alert(tr('erreur', lang), tr('nom', lang) + ' ' + tr('remplir_champs', lang).toLowerCase()); return; }
+    if (!form.numero.trim()) { Alert.alert(tr('erreur', lang), tr('telephone', lang) + ' ' + tr('remplir_champs', lang).toLowerCase()); return; }
     const mt = parseFloat(form.montant);
-    if (!mt || mt <= 0) { Alert.alert('Erreur', 'Le montant doit être supérieur à 0'); return; }
+    if (!mt || mt <= 0) { Alert.alert(tr('erreur', lang), tr('montant_depot', lang)); return; }
     setSaving(true);
     try {
       await api.post('/depots-garde', {
@@ -149,7 +152,7 @@ export default function DepotsScreen() {
       charger();
       chargerClients();
     } catch (e: any) {
-      Alert.alert('Erreur', e?.response?.data?.message || 'Enregistrement impossible');
+      Alert.alert(tr('erreur', lang), e?.response?.data?.message || tr('erreur', lang));
     }
     setSaving(false);
   };
@@ -157,15 +160,15 @@ export default function DepotsScreen() {
   const effectuerRetrait = async () => {
     if (!selected) return;
     const mt = parseFloat(retraitMontant);
-    if (!mt || mt <= 0) { Alert.alert('Erreur', 'Montant invalide'); return; }
-    if (mt > selected.montantRestant) { Alert.alert('Erreur', `Max : ${money(selected.montantRestant)}`); return; }
+    if (!mt || mt <= 0) { Alert.alert(tr('erreur', lang), tr('montant_retrait', lang)); return; }
+    if (mt > selected.montantRestant) { Alert.alert(tr('erreur', lang), `Max : ${money(selected.montantRestant)}`); return; }
     try {
       await api.post(`/depots-garde/${selected.id}/retrait`, { montant: mt, observation: retraitObs });
       setShowRetrait(false);
       setShowDetail(false);
       charger();
     } catch (e: any) {
-      Alert.alert('Erreur', e?.response?.data?.message || 'Retrait impossible');
+      Alert.alert(tr('erreur', lang), e?.response?.data?.message || tr('erreur', lang));
     }
   };
 
@@ -185,15 +188,15 @@ export default function DepotsScreen() {
         <View style={s.statsRow}>
           <View style={[s.statCard, { backgroundColor: '#1a56db' }]}>
             <Text style={s.statNum}>{stats.totalActifs}</Text>
-            <Text style={s.statLbl}>Actifs</Text>
+            <Text style={s.statLbl}>{tr('actifs', lang)}</Text>
           </View>
           <View style={[s.statCard, { backgroundColor: '#0e9f6e' }]}>
             <Text style={s.statNum}>{money(stats.totalMontantGarde)}</Text>
-            <Text style={s.statLbl}>En garde</Text>
+            <Text style={s.statLbl}>{tr('en_garde', lang)}</Text>
           </View>
           <View style={[s.statCard, { backgroundColor: '#6b7280' }]}>
             <Text style={s.statNum}>{stats.totalClotures}</Text>
-            <Text style={s.statLbl}>Clôturés</Text>
+            <Text style={s.statLbl}>{tr('clotures', lang)}</Text>
           </View>
         </View>
       )}
@@ -202,18 +205,18 @@ export default function DepotsScreen() {
       <View style={s.filtreRow}>
         {(['TOUS', 'ACTIF', 'CLOTURE'] as const).map(f => (
           <TouchableOpacity key={f} style={[s.filtreBtn, filtre === f && s.filtreBtnActive]} onPress={() => setFiltre(f)}>
-            <Text style={[s.filtreTxt, filtre === f && s.filtreTxtActive]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? 'Actifs' : 'Clôturés'}</Text>
+            <Text style={[s.filtreTxt, filtre === f && s.filtreTxtActive]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? tr('actifs', lang) : tr('clotures', lang)}</Text>
           </TouchableOpacity>
         ))}
         <TouchableOpacity style={s.addBtn} onPress={openCreate}>
-          <Text style={s.addBtnTxt}>+ Nouveau</Text>
+          <Text style={s.addBtnTxt}>+ {tr('nouveau_depot', lang)}</Text>
         </TouchableOpacity>
       </View>
 
       {/* Recherche */}
       <TextInput
         style={s.searchInput}
-        placeholder="Rechercher par nom ou numéro..."
+        placeholder={tr('recherche_client', lang)}
         value={search}
         onChangeText={setSearch}
         placeholderTextColor="#94a3b8"
@@ -224,7 +227,7 @@ export default function DepotsScreen() {
         keyExtractor={d => String(d.id)}
         contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
-        ListEmptyComponent={<Text style={s.empty}>Aucun dépôt enregistré</Text>}
+        ListEmptyComponent={<Text style={s.empty}>{tr('aucun_depot', lang)}</Text>}
         renderItem={({ item: d }) => {
           const pct = d.montantInitial > 0 ? (d.montantRetire / d.montantInitial) * 100 : 0;
           return (
@@ -242,9 +245,9 @@ export default function DepotsScreen() {
                 </View>
               </View>
               <View style={s.montantRow}>
-                <Text style={s.montantLabel}>Restant</Text>
+                <Text style={s.montantLabel}>{tr('restant', lang)}</Text>
                 <Text style={s.montantVal}>{money(d.montantRestant)}</Text>
-                <Text style={s.montantLabel}>Initial</Text>
+                <Text style={s.montantLabel}>{tr('initial', lang)}</Text>
                 <Text style={s.montantSub}>{money(d.montantInitial)}</Text>
               </View>
               <View style={s.progressBg}>
@@ -258,7 +261,7 @@ export default function DepotsScreen() {
       {/* ── Modal Création ── */}
       <Modal visible={showCreate} animationType="slide" onRequestClose={() => setShowCreate(false)}>
         <View style={s.modalHeader}>
-          <Text style={s.modalTitle}>Nouveau dépôt</Text>
+          <Text style={s.modalTitle}>{tr('nouveau_depot', lang)}</Text>
           <TouchableOpacity onPress={() => setShowCreate(false)}>
             <Text style={s.modalClose}>✕</Text>
           </TouchableOpacity>
@@ -266,7 +269,7 @@ export default function DepotsScreen() {
         <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
           {/* Recherche personne existante */}
           <View style={s.clientSearchBox}>
-            <Text style={s.clientSearchLabel}>Sélectionner une personne existante</Text>
+            <Text style={s.clientSearchLabel}>{tr('personne_existante', lang)}</Text>
             {selectedClient ? (
               <View style={s.clientChip}>
                 <Text style={s.clientChipTxt}>{selectedClient.nomComplet} — {selectedClient.numero}</Text>
@@ -278,7 +281,7 @@ export default function DepotsScreen() {
               <>
                 <TextInput
                   style={s.clientSearchInput}
-                  placeholder="Rechercher par nom ou téléphone..."
+                  placeholder={tr('recherche_client', lang)}
                   value={clientSearch}
                   onChangeText={rechercherClients}
                   placeholderTextColor="#94a3b8"
@@ -302,19 +305,19 @@ export default function DepotsScreen() {
             <View style={s.divider}><View style={s.dividerLine} /><Text style={s.dividerTxt}>ou manuellement</Text><View style={s.dividerLine} /></View>
           </View>
 
-          <Text style={s.fieldLabel}>Nom *</Text>
-          <TextInput style={s.input} value={form.nom} onChangeText={v => setForm(f => ({ ...f, nom: v }))} placeholder="Nom du déposant" />
-          <Text style={s.fieldLabel}>Prénom</Text>
-          <TextInput style={s.input} value={form.prenom} onChangeText={v => setForm(f => ({ ...f, prenom: v }))} placeholder="Prénom (optionnel)" />
-          <Text style={s.fieldLabel}>Numéro (téléphone) *</Text>
+          <Text style={s.fieldLabel}>{tr('nom', lang)} *</Text>
+          <TextInput style={s.input} value={form.nom} onChangeText={v => setForm(f => ({ ...f, nom: v }))} placeholder={tr('nom_deposant', lang)} />
+          <Text style={s.fieldLabel}>{tr('prenom', lang)}</Text>
+          <TextInput style={s.input} value={form.prenom} onChangeText={v => setForm(f => ({ ...f, prenom: v }))} placeholder={tr('prenom', lang)} />
+          <Text style={s.fieldLabel}>{tr('telephone', lang)} *</Text>
           <TextInput style={s.input} value={form.numero} onChangeText={v => setForm(f => ({ ...f, numero: v }))} placeholder="Ex: 77 000 00 00" keyboardType="phone-pad" />
-          <Text style={s.fieldLabel}>Montant déposé *</Text>
+          <Text style={s.fieldLabel}>{tr('montant_depot', lang)} *</Text>
           <TextInput style={s.input} value={form.montant} onChangeText={v => setForm(f => ({ ...f, montant: v }))} placeholder="0" keyboardType="numeric" />
-          <Text style={s.fieldLabel}>Observation</Text>
-          <TextInput style={[s.input, { height: 70 }]} value={form.observation} onChangeText={v => setForm(f => ({ ...f, observation: v }))} placeholder="Remarque..." multiline />
+          <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
+          <TextInput style={[s.input, { height: 70 }]} value={form.observation} onChangeText={v => setForm(f => ({ ...f, observation: v }))} placeholder={tr('description', lang)} multiline />
 
           <TouchableOpacity style={s.saveBtn} onPress={sauvegarder} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>Enregistrer</Text>}
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>{tr('enregistrer', lang)}</Text>}
           </TouchableOpacity>
         </ScrollView>
       </Modal>
@@ -330,17 +333,17 @@ export default function DepotsScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody}>
-              <View style={s.detailRow}><Text style={s.detailLbl}>Téléphone</Text><Text style={s.detailVal}>{selected.numero}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>Statut</Text><Text style={[s.detailVal, selected.statut === 'ACTIF' ? { color: '#0e9f6e' } : { color: '#6b7280' }]}>{selected.statut}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>Date dépôt</Text><Text style={s.detailVal}>{fmt(selected.dateDepot)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>Montant initial</Text><Text style={s.detailVal}>{money(selected.montantInitial)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>Montant restant</Text><Text style={[s.detailVal, { color: '#1a56db', fontWeight: '700' }]}>{money(selected.montantRestant)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>Retiré</Text><Text style={[s.detailVal, { color: '#dc2626' }]}>{money(selected.montantRetire)}</Text></View>
-              {selected.observation && <View style={s.detailRow}><Text style={s.detailLbl}>Observation</Text><Text style={s.detailVal}>{selected.observation}</Text></View>}
+              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('telephone', lang)}</Text><Text style={s.detailVal}>{selected.numero}</Text></View>
+              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('actif', lang)}</Text><Text style={[s.detailVal, selected.statut === 'ACTIF' ? { color: '#0e9f6e' } : { color: '#6b7280' }]}>{selected.statut === 'ACTIF' ? tr('actif', lang) : tr('cloture', lang)}</Text></View>
+              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('date', lang)}</Text><Text style={s.detailVal}>{fmt(selected.dateDepot)}</Text></View>
+              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('montant_depot', lang)}</Text><Text style={s.detailVal}>{money(selected.montantInitial)}</Text></View>
+              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('restant', lang)}</Text><Text style={[s.detailVal, { color: '#1a56db', fontWeight: '700' }]}>{money(selected.montantRestant)}</Text></View>
+              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('retire', lang)}</Text><Text style={[s.detailVal, { color: '#dc2626' }]}>{money(selected.montantRetire)}</Text></View>
+              {selected.observation && <View style={s.detailRow}><Text style={s.detailLbl}>{tr('description', lang)}</Text><Text style={s.detailVal}>{selected.observation}</Text></View>}
 
               {selected.retraits?.length > 0 && (
                 <View style={{ marginTop: 16 }}>
-                  <Text style={s.sectionTitle}>Historique des retraits</Text>
+                  <Text style={s.sectionTitle}>{tr('historique_retraits', lang)}</Text>
                   {selected.retraits.map(r => (
                     <View key={r.id} style={s.retraitRow}>
                       <Text style={s.retraitDate}>{fmt(r.dateRetrait)}</Text>
@@ -356,7 +359,7 @@ export default function DepotsScreen() {
                   setRetraitObs('');
                   setShowRetrait(true);
                 }}>
-                  <Text style={s.saveBtnTxt}>Effectuer un retrait</Text>
+                  <Text style={s.saveBtnTxt}>{tr('effectuer_retrait', lang)}</Text>
                 </TouchableOpacity>
               )}
             </ScrollView>
@@ -368,18 +371,18 @@ export default function DepotsScreen() {
       <Modal visible={showRetrait} animationType="slide" transparent onRequestClose={() => setShowRetrait(false)}>
         <View style={s.retraitOverlay}>
           <View style={s.retraitCard}>
-            <Text style={s.modalTitle}>Retrait</Text>
-            <Text style={s.retraitInfo}>Disponible : {selected ? money(selected.montantRestant) : ''}</Text>
-            <Text style={s.fieldLabel}>Montant *</Text>
+            <Text style={s.modalTitle}>{tr('retrait', lang)}</Text>
+            <Text style={s.retraitInfo}>{tr('disponible', lang)} : {selected ? money(selected.montantRestant) : ''}</Text>
+            <Text style={s.fieldLabel}>{tr('montant_retrait', lang)} *</Text>
             <TextInput style={s.input} value={retraitMontant} onChangeText={setRetraitMontant} keyboardType="numeric" placeholder="0" />
-            <Text style={s.fieldLabel}>Observation</Text>
-            <TextInput style={s.input} value={retraitObs} onChangeText={setRetraitObs} placeholder="Remarque..." />
+            <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
+            <TextInput style={s.input} value={retraitObs} onChangeText={setRetraitObs} placeholder={tr('description', lang)} />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
               <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#6b7280' }]} onPress={() => setShowRetrait(false)}>
-                <Text style={s.saveBtnTxt}>Annuler</Text>
+                <Text style={s.saveBtnTxt}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#dc2626' }]} onPress={effectuerRetrait}>
-                <Text style={s.saveBtnTxt}>Confirmer</Text>
+                <Text style={s.saveBtnTxt}>{tr('confirmer', lang)}</Text>
               </TouchableOpacity>
             </View>
           </View>

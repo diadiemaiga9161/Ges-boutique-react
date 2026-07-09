@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { Text, Card, FAB, ActivityIndicator, Modal, Portal, TextInput, Button } from 'react-native-paper';
 import api from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function BonusFournisseursScreen() {
+  const { lang } = useLang();
   const [bonus, setBonus] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -28,7 +31,7 @@ export default function BonusFournisseursScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.banner}>
-        <Text style={styles.bannerLabel}>Total bonus fournisseurs</Text>
+        <Text style={styles.bannerLabel}>{tr('total', lang)} {tr('bonus_fournisseurs', lang)}</Text>
         <Text style={styles.bannerVal}>{total.toLocaleString('fr-FR')} FCFA</Text>
       </View>
       <FlatList
@@ -40,7 +43,7 @@ export default function BonusFournisseursScreen() {
           <Card style={styles.card}>
             <Card.Content>
               <View style={styles.row}>
-                <Text variant="titleMedium">{item.fournisseurNom || `Fournisseur #${item.fournisseurId}`}</Text>
+                <Text variant="titleMedium">{item.fournisseurNom || `${tr('fournisseur', lang)} #${item.fournisseurId}`}</Text>
                 <Text style={styles.montant}>{item.montant?.toLocaleString('fr-FR')} FCFA</Text>
               </View>
               {item.description && <Text style={styles.sub}>{item.description}</Text>}
@@ -53,17 +56,17 @@ export default function BonusFournisseursScreen() {
       <FAB icon="plus" style={styles.fab} onPress={() => setShowModal(true)} />
       <Portal>
         <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={styles.modal}>
-          <Text variant="titleLarge" style={{ marginBottom: 16 }}>Nouveau bonus</Text>
-          <TextInput label="Montant *" value={form.montant} onChangeText={t => setForm({ ...form, montant: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
-          <TextInput label="Description" value={form.description} onChangeText={t => setForm({ ...form, description: t })} mode="outlined" style={styles.input} />
+          <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('nouveau_bonus', lang)}</Text>
+          <TextInput label={tr('montant', lang) + ' *'} value={form.montant} onChangeText={t => setForm({ ...form, montant: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
+          <TextInput label={tr('description', lang)} value={form.description} onChangeText={t => setForm({ ...form, description: t })} mode="outlined" style={styles.input} />
           <Button mode="contained" onPress={async () => {
             try {
               await api.post('/bonus-fournisseurs', { ...form, montant: parseFloat(form.montant) });
               setShowModal(false);
               setForm({ fournisseurId: '', montant: '', description: '', date: '' });
               charger();
-            } catch { Alert.alert('Erreur', 'Impossible d\'enregistrer'); }
-          }}>Enregistrer</Button>
+            } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer'); }
+          }}>{tr('enregistrer', lang)}</Button>
         </Modal>
       </Portal>
     </View>

@@ -3,6 +3,8 @@ import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput, FlatL
 import { Text, Button, ActivityIndicator, Modal, Portal, Divider, Checkbox } from 'react-native-paper';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 import {
   getCommandes, createCommande, updateCommande, validerCommande, deleteCommande,
   annulerCommande, payerCreditCommande, payerCreditsGroupesCommandes,
@@ -82,6 +84,7 @@ function buildBonCommande(c: Commande): string {
 }
 
 export default function CommandesScreen() {
+  const { lang } = useLang();
   const [commandes, setCommandes] = useState<Commande[]>([]);
   const [loading, setLoading] = useState(true);
   const [boutique, setBoutique] = useState<any>({});
@@ -247,7 +250,7 @@ export default function CommandesScreen() {
   };
 
   const enregistrer = async () => {
-    if (lignesForm.length === 0) { Alert.alert('Erreur', 'Ajoutez au moins un produit'); return; }
+    if (lignesForm.length === 0) { Alert.alert(tr('erreur', lang), tr('ajouter_produit', lang)); return; }
     setSubmitting(true);
     const request = {
       vendeurId: userId,
@@ -269,7 +272,7 @@ export default function CommandesScreen() {
       setShowModal(false);
       charger();
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Erreur lors de l\'enregistrement');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
     }
     setSubmitting(false);
   };
@@ -277,11 +280,11 @@ export default function CommandesScreen() {
   // ─── Actions commande ───────────────────────────────────────────────────────
 
   const handleValider = (c: Commande) => {
-    Alert.alert('Valider ?', `${c.numeroCommande} → vente créée, stock décrémenté.`, [
-      { text: 'Non', style: 'cancel' },
-      { text: 'Valider', onPress: async () => {
+    Alert.alert(tr('valider', lang) + ' ?', `${c.numeroCommande} → vente créée, stock décrémenté.`, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: tr('valider', lang), onPress: async () => {
         try { await validerCommande(c.id); charger(); }
-        catch (e: any) { Alert.alert('Erreur', e.response?.data?.message || 'Erreur'); }
+        catch (e: any) { Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang)); }
       }}
     ]);
   };
@@ -289,27 +292,27 @@ export default function CommandesScreen() {
   const handleAnnuler = (c: Commande) => {
     const msg = c.statut === 'VALIDEE'
       ? `${c.numeroCommande} est validée — la vente sera annulée et le stock restauré.`
-      : `Annuler la commande ${c.numeroCommande} ?`;
-    Alert.alert('Annuler la commande ?', msg, [
-      { text: 'Non', style: 'cancel' },
-      { text: 'Oui, annuler', style: 'destructive', onPress: async () => {
+      : `${tr('annuler_vente', lang)} ${c.numeroCommande} ?`;
+    Alert.alert(tr('annuler_vente', lang) + ' ?', msg, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: tr('oui', lang) + ', ' + tr('annuler', lang).toLowerCase(), style: 'destructive', onPress: async () => {
         try {
           await annulerCommande(c.id, userId);
           setStatutFilter('');
           charger();
-          Alert.alert('Succès', `${c.numeroCommande} a été annulée`);
+          Alert.alert(tr('succes', lang), `${c.numeroCommande} ${tr('vente_annulee', lang).toLowerCase()}`);
         }
-        catch (e: any) { Alert.alert('Erreur', e.response?.data?.message || 'Erreur lors de l\'annulation'); }
+        catch (e: any) { Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang)); }
       }}
     ]);
   };
 
   const handleSupprimer = (c: Commande) => {
-    Alert.alert('Supprimer ?', `Supprimer définitivement ${c.numeroCommande} ?`, [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Supprimer', style: 'destructive', onPress: async () => {
+    Alert.alert(tr('supprimer', lang) + ' ?', `${tr('supprimer', lang)} ${c.numeroCommande} ?`, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: tr('supprimer', lang), style: 'destructive', onPress: async () => {
         try { await deleteCommande(c.id); charger(); }
-        catch (e: any) { Alert.alert('Erreur', e.response?.data?.message || 'Impossible'); }
+        catch (e: any) { Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang)); }
       }}
     ]);
   };
@@ -357,7 +360,7 @@ export default function CommandesScreen() {
       setCommandeRegl(null);
       charger();
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Erreur règlement');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
     }
   };
 
@@ -384,7 +387,7 @@ export default function CommandesScreen() {
       setShowReglGroupeModal(false);
       charger();
     } catch (e: any) {
-      Alert.alert('Erreur', e.response?.data?.message || 'Erreur règlement groupé');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
     }
   };
 
@@ -418,21 +421,21 @@ export default function CommandesScreen() {
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { borderLeftColor: '#3b82f6' }]}>
           <Text style={styles.statVal}>{nbBrouillons}</Text>
-          <Text style={styles.statLbl}>Brouillons</Text>
+          <Text style={styles.statLbl}>{tr('brouillon', lang)}</Text>
         </View>
         <View style={[styles.statCard, { borderLeftColor: '#10b981' }]}>
           <Text style={styles.statVal}>{nbValidees}</Text>
-          <Text style={styles.statLbl}>Validées</Text>
+          <Text style={styles.statLbl}>{tr('validee', lang)}</Text>
         </View>
         <View style={[styles.statCard, { borderLeftColor: '#8b5cf6', flex: 1.5 }]}>
           <Text style={[styles.statVal, { fontSize: 11 }]}>{formatMontant(totalValidees)}</Text>
-          <Text style={styles.statLbl}>CA validé</Text>
+          <Text style={styles.statLbl}>{tr('ca_valide', lang)}</Text>
         </View>
         <TouchableOpacity
           style={[styles.statCard, { borderLeftColor: '#f59e0b' }]}
           onPress={nbCreditsEnCours > 0 ? ouvrirReglementGroupe : undefined}>
           <Text style={[styles.statVal, { color: '#d97706' }]}>{nbCreditsEnCours}</Text>
-          <Text style={styles.statLbl}>Crédits</Text>
+          <Text style={styles.statLbl}>{tr('credits', lang)}</Text>
         </TouchableOpacity>
       </View>
 
@@ -442,7 +445,7 @@ export default function CommandesScreen() {
           style={styles.searchInput}
           value={searchTerm}
           onChangeText={setSearchTerm}
-          placeholder="Rechercher commande, client..."
+          placeholder={tr('recherche_commande', lang)}
           placeholderTextColor="#9ca3af"
         />
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -453,7 +456,7 @@ export default function CommandesScreen() {
                 style={[styles.chip, chipColor(s)]}
                 onPress={() => setStatutFilter(s)}>
                 <Text style={[styles.chipText, chipTextColor(s)]}>
-                  {s === '' ? `Toutes (${commandes.length})` : s === 'BROUILLON' ? 'Brouillons' : s === 'VALIDEE' ? 'Validées' : s === 'CREDIT' ? 'Crédits' : 'Annulées'}
+                  {s === '' ? `${tr('commandes', lang)} (${commandes.length})` : s === 'BROUILLON' ? tr('brouillon', lang) : s === 'VALIDEE' ? tr('validee', lang) : s === 'CREDIT' ? tr('credits', lang) : tr('annulee', lang)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -464,7 +467,7 @@ export default function CommandesScreen() {
       {/* ── Bouton créer ── */}
       <View style={{ paddingHorizontal: 12, marginBottom: 8 }}>
         <Button mode="contained" onPress={ouvrirCreer} icon="plus" buttonColor="#1a56db">
-          Nouvelle commande
+          {tr('nouvelle_commande', lang)}
         </Button>
       </View>
 
@@ -478,7 +481,7 @@ export default function CommandesScreen() {
           contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>Aucune commande</Text>
+              <Text style={styles.emptyText}>{tr('aucune_commande', lang)}</Text>
             </View>
           }
           renderItem={({ item: c }) => (
@@ -492,12 +495,12 @@ export default function CommandesScreen() {
                 <View style={styles.badgesRow}>
                   <View style={[styles.badge, badgeColor(c.statut)]}>
                     <Text style={styles.badgeText}>
-                      {c.statut === 'VALIDEE' ? 'Validée' : c.statut === 'ANNULEE' ? 'Annulée' : 'Brouillon'}
+                      {c.statut === 'VALIDEE' ? tr('validee', lang) : c.statut === 'ANNULEE' ? tr('annulee', lang) : tr('brouillon', lang)}
                     </Text>
                   </View>
                   {c.estCredit && c.montantRestant > 0 && (
                     <View style={[styles.badge, { backgroundColor: '#fef3c7' }]}>
-                      <Text style={[styles.badgeText, { color: '#92400e' }]}>Crédit</Text>
+                      <Text style={[styles.badgeText, { color: '#92400e' }]}>{tr('credits', lang)}</Text>
                     </View>
                   )}
                 </View>
@@ -516,10 +519,10 @@ export default function CommandesScreen() {
               {/* Crédit détail */}
               {c.estCredit && (
                 <View style={styles.creditInfo}>
-                  <Text style={styles.creditText}>Versé : {formatMontant(c.montantVerse)}</Text>
+                  <Text style={styles.creditText}>{tr('verse', lang)} : {formatMontant(c.montantVerse)}</Text>
                   {c.montantRestant > 0 && (
                     <Text style={[styles.creditText, { color: '#dc2626', fontWeight: '600' }]}>
-                      Reste : {formatMontant(c.montantRestant)}
+                      {tr('reste', lang)} : {formatMontant(c.montantRestant)}
                     </Text>
                   )}
                 </View>
@@ -541,41 +544,41 @@ export default function CommandesScreen() {
               <View style={styles.cardActions}>
                 {/* Partager bon de commande */}
                 <TouchableOpacity style={styles.actionBtn} onPress={() => handlePartager(c)}>
-                  <Text style={styles.actionBtnText}>Imprimer</Text>
+                  <Text style={styles.actionBtnText}>{tr('imprimer', lang)}</Text>
                 </TouchableOpacity>
 
                 {/* Modifier (brouillon) */}
                 {c.statut === 'BROUILLON' && (
                   <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBlue]} onPress={() => ouvrirModifier(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#1d4ed8' }]}>Modifier</Text>
+                    <Text style={[styles.actionBtnText, { color: '#1d4ed8' }]}>{tr('modifier', lang)}</Text>
                   </TouchableOpacity>
                 )}
 
                 {/* Valider (brouillon) */}
                 {c.statut === 'BROUILLON' && (
                   <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGreen]} onPress={() => handleValider(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#16a34a' }]}>Valider</Text>
+                    <Text style={[styles.actionBtnText, { color: '#16a34a' }]}>{tr('valider', lang)}</Text>
                   </TouchableOpacity>
                 )}
 
                 {/* Régler crédit */}
                 {c.estCredit && c.montantRestant > 0 && (
                   <TouchableOpacity style={[styles.actionBtn, styles.actionBtnOrange]} onPress={() => ouvrirReglementIndividuel(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#b45309' }]}>Régler</Text>
+                    <Text style={[styles.actionBtnText, { color: '#b45309' }]}>{tr('regler', lang)}</Text>
                   </TouchableOpacity>
                 )}
 
                 {/* Annuler */}
                 {c.statut !== 'ANNULEE' && (
                   <TouchableOpacity style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleAnnuler(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#dc2626' }]}>Annuler</Text>
+                    <Text style={[styles.actionBtnText, { color: '#dc2626' }]}>{tr('annuler', lang)}</Text>
                   </TouchableOpacity>
                 )}
 
                 {/* Supprimer (brouillon) */}
                 {c.statut === 'BROUILLON' && (
                   <TouchableOpacity style={[styles.actionBtn, { flex: 0, paddingHorizontal: 10 }]} onPress={() => handleSupprimer(c)}>
-                    <Text style={styles.actionBtnText}>Suppr.</Text>
+                    <Text style={styles.actionBtnText}>{tr('supprimer', lang)}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -588,9 +591,9 @@ export default function CommandesScreen() {
       <Portal>
         <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={styles.modal}>
           <ScrollView keyboardShouldPersistTaps="handled">
-            <Text style={styles.modalTitle}>{editingId ? 'Modifier commande' : 'Nouvelle commande'}</Text>
+            <Text style={styles.modalTitle}>{editingId ? tr('modifier', lang) + ' ' + tr('commandes', lang).toLowerCase() : tr('nouvelle_commande', lang)}</Text>
 
-            <Text style={styles.sectionTitle}>Client</Text>
+            <Text style={styles.sectionTitle}>{tr('clients', lang)}</Text>
             {form.clientId ? (
               <View style={styles.selectedClient}>
                 <Text style={{ flex: 1, fontSize: 13 }}>{form.clientNom} {form.clientPrenom} · {form.clientTelephone}</Text>
@@ -604,7 +607,7 @@ export default function CommandesScreen() {
                   style={styles.input}
                   value={searchClient}
                   onChangeText={v => { setSearchClient(v); setShowClientDrop(true); }}
-                  placeholder="Rechercher un client..."
+                  placeholder={tr('recherche_client', lang)}
                   placeholderTextColor="#9ca3af"
                 />
                 {showClientDrop && clientsFiltres.length > 0 && (
@@ -616,18 +619,18 @@ export default function CommandesScreen() {
                     ))}
                   </View>
                 )}
-                <TextInput style={styles.input} value={form.clientNom} onChangeText={v => setForm(f => ({ ...f, clientNom: v }))} placeholder="Nom" placeholderTextColor="#9ca3af" />
-                <TextInput style={styles.input} value={form.clientPrenom} onChangeText={v => setForm(f => ({ ...f, clientPrenom: v }))} placeholder="Prénom" placeholderTextColor="#9ca3af" />
-                <TextInput style={styles.input} value={form.clientTelephone} onChangeText={v => setForm(f => ({ ...f, clientTelephone: v }))} placeholder="Téléphone" placeholderTextColor="#9ca3af" keyboardType="phone-pad" />
+                <TextInput style={styles.input} value={form.clientNom} onChangeText={v => setForm(f => ({ ...f, clientNom: v }))} placeholder={tr('nom', lang)} placeholderTextColor="#9ca3af" />
+                <TextInput style={styles.input} value={form.clientPrenom} onChangeText={v => setForm(f => ({ ...f, clientPrenom: v }))} placeholder={tr('prenom', lang)} placeholderTextColor="#9ca3af" />
+                <TextInput style={styles.input} value={form.clientTelephone} onChangeText={v => setForm(f => ({ ...f, clientTelephone: v }))} placeholder={tr('telephone', lang)} placeholderTextColor="#9ca3af" keyboardType="phone-pad" />
               </View>
             )}
 
-            <Text style={styles.sectionTitle}>Produits</Text>
+            <Text style={styles.sectionTitle}>{tr('produits', lang)}</Text>
             <TextInput
               style={styles.input}
               value={searchProduit}
               onChangeText={v => { setSearchProduit(v); setShowProduitDrop(true); }}
-              placeholder="Rechercher un produit..."
+              placeholder={tr('recherche_produit', lang)}
               placeholderTextColor="#9ca3af"
             />
             {showProduitDrop && produitsFiltres.length > 0 && (
@@ -662,12 +665,12 @@ export default function CommandesScreen() {
 
             {lignesForm.length > 0 && (
               <View style={styles.totalBar}>
-                <Text>Total</Text>
+                <Text>{tr('total', lang)}</Text>
                 <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{formatMontant(totalCommande)}</Text>
               </View>
             )}
 
-            <Text style={styles.sectionTitle}>Paiement</Text>
+            <Text style={styles.sectionTitle}>{tr('paiement', lang)}</Text>
             <View style={styles.modePaiRow}>
               {MODES.map(m => (
                 <TouchableOpacity
@@ -680,7 +683,7 @@ export default function CommandesScreen() {
             </View>
 
             <View style={styles.creditToggleRow}>
-              <Text style={{ fontSize: 14 }}>Paiement à crédit</Text>
+              <Text style={{ fontSize: 14 }}>{tr('paiement_credit', lang)}</Text>
               <TouchableOpacity
                 style={[styles.toggleBtn, form.estCredit && styles.toggleBtnActive]}
                 onPress={() => setForm(f => ({ ...f, estCredit: !f.estCredit }))}>
@@ -690,20 +693,20 @@ export default function CommandesScreen() {
 
             {form.estCredit && (
               <>
-                <TextInput style={styles.input} value={form.montantVerse} onChangeText={v => setForm(f => ({ ...f, montantVerse: v }))} placeholder="Montant versé maintenant" placeholderTextColor="#9ca3af" keyboardType="numeric" />
+                <TextInput style={styles.input} value={form.montantVerse} onChangeText={v => setForm(f => ({ ...f, montantVerse: v }))} placeholder={tr('montant_verse', lang)} placeholderTextColor="#9ca3af" keyboardType="numeric" />
                 {totalCommande > 0 && (
-                  <Text style={styles.resteInfo}>Reste à payer : {formatMontant(resteAPayer)}</Text>
+                  <Text style={styles.resteInfo}>{tr('reste_a_payer', lang)} : {formatMontant(resteAPayer)}</Text>
                 )}
-                <TextInput style={styles.input} value={form.dateEcheance} onChangeText={v => setForm(f => ({ ...f, dateEcheance: v }))} placeholder="Date échéance (YYYY-MM-DD)" placeholderTextColor="#9ca3af" />
+                <TextInput style={styles.input} value={form.dateEcheance} onChangeText={v => setForm(f => ({ ...f, dateEcheance: v }))} placeholder={tr('date_echeance', lang)} placeholderTextColor="#9ca3af" />
               </>
             )}
 
-            <TextInput style={[styles.input, { height: 60 }]} value={form.notes} onChangeText={v => setForm(f => ({ ...f, notes: v }))} placeholder="Notes..." placeholderTextColor="#9ca3af" multiline />
+            <TextInput style={[styles.input, { height: 60 }]} value={form.notes} onChangeText={v => setForm(f => ({ ...f, notes: v }))} placeholder={tr('notes', lang)} placeholderTextColor="#9ca3af" multiline />
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, marginBottom: 8 }}>
-              <Button mode="outlined" onPress={() => setShowModal(false)} style={{ flex: 1 }}>Annuler</Button>
+              <Button mode="outlined" onPress={() => setShowModal(false)} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
               <Button mode="contained" onPress={enregistrer} loading={submitting} style={{ flex: 1 }} buttonColor="#1a56db">
-                {editingId ? 'Modifier' : 'Enregistrer'}
+                {editingId ? tr('modifier', lang) : tr('enregistrer', lang)}
               </Button>
             </View>
           </ScrollView>
@@ -713,15 +716,15 @@ export default function CommandesScreen() {
       {/* ─── MODAL RÈGLEMENT INDIVIDUEL ─────────────────────────────────────── */}
       <Portal>
         <Modal visible={showReglModal} onDismiss={() => setShowReglModal(false)} contentContainerStyle={styles.modal}>
-          <Text style={styles.modalTitle}>Régler le crédit</Text>
+          <Text style={styles.modalTitle}>{tr('reglement_credit', lang)}</Text>
           {commandeRegl && (
             <>
               <View style={styles.reglInfoBox}>
                 <Text style={{ fontSize: 13 }}>N° <Text style={{ fontWeight: '700' }}>{commandeRegl.numeroCommande}</Text></Text>
-                <Text style={{ fontSize: 13 }}>Total : {formatMontant(commandeRegl.montantTotal)}</Text>
-                <Text style={{ fontSize: 13 }}>Versé : {formatMontant(commandeRegl.montantVerse)}</Text>
+                <Text style={{ fontSize: 13 }}>{tr('total', lang)} : {formatMontant(commandeRegl.montantTotal)}</Text>
+                <Text style={{ fontSize: 13 }}>{tr('verse', lang)} : {formatMontant(commandeRegl.montantVerse)}</Text>
                 <Text style={{ fontSize: 14, fontWeight: '700', color: '#dc2626', marginTop: 4 }}>
-                  Reste dû : {formatMontant(commandeRegl.montantRestant)}
+                  {tr('reste_du', lang)} : {formatMontant(commandeRegl.montantRestant)}
                 </Text>
               </View>
               <TextInput
@@ -729,23 +732,23 @@ export default function CommandesScreen() {
                 value={montantRegl}
                 onChangeText={setMontantRegl}
                 keyboardType="numeric"
-                placeholder="Montant à régler"
+                placeholder={tr('montant_payer', lang)}
                 placeholderTextColor="#9ca3af"
               />
               <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                 <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(String(commandeRegl.montantRestant / 2))}>
-                  <Text style={styles.shortcutText}>Moitié</Text>
+                  <Text style={styles.shortcutText}>{tr('moitie', lang)}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(String(commandeRegl.montantRestant))}>
-                  <Text style={styles.shortcutText}>Tout régler</Text>
+                  <Text style={styles.shortcutText}>{tr('tout_regler', lang)}</Text>
                 </TouchableOpacity>
               </View>
             </>
           )}
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Button mode="outlined" onPress={() => setShowReglModal(false)} style={{ flex: 1 }}>Annuler</Button>
+            <Button mode="outlined" onPress={() => setShowReglModal(false)} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
             <Button mode="contained" onPress={confirmerReglementIndividuel} style={{ flex: 1 }} buttonColor="#f59e0b">
-              Confirmer
+              {tr('confirmer', lang)}
             </Button>
           </View>
         </Modal>
@@ -754,7 +757,7 @@ export default function CommandesScreen() {
       {/* ─── MODAL RÈGLEMENT GROUPÉ ──────────────────────────────────────────── */}
       <Portal>
         <Modal visible={showReglGroupeModal} onDismiss={() => setShowReglGroupeModal(false)} contentContainerStyle={styles.modal}>
-          <Text style={styles.modalTitle}>Règlement groupé crédits</Text>
+          <Text style={styles.modalTitle}>{tr('reglement_groupe', lang)}</Text>
           <ScrollView style={{ maxHeight: 300 }}>
             <TouchableOpacity
               style={styles.checkRow}
@@ -762,14 +765,14 @@ export default function CommandesScreen() {
                 idsSelectionnes.length === commandesCredit.length ? [] : commandesCredit.map(c => c.id)
               )}>
               <Checkbox status={idsSelectionnes.length === commandesCredit.length ? 'checked' : 'unchecked'} />
-              <Text style={{ fontSize: 13, fontWeight: '600' }}>Tout sélectionner ({commandesCredit.length})</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600' }}>{tr('tout_selectionner', lang)} ({commandesCredit.length})</Text>
             </TouchableOpacity>
             {commandesCredit.map(c => (
               <TouchableOpacity key={c.id} style={styles.checkRow} onPress={() => toggleSelection(c.id)}>
                 <Checkbox status={idsSelectionnes.includes(c.id) ? 'checked' : 'unchecked'} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 13 }}>{c.numeroCommande} — {getClientNom(c)}</Text>
-                  <Text style={{ fontSize: 11, color: '#dc2626' }}>Reste : {formatMontant(c.montantRestant)}</Text>
+                  <Text style={{ fontSize: 11, color: '#dc2626' }}>{tr('reste', lang)} : {formatMontant(c.montantRestant)}</Text>
                 </View>
               </TouchableOpacity>
             ))}
@@ -779,18 +782,18 @@ export default function CommandesScreen() {
             value={montantReglGroupe}
             onChangeText={setMontantReglGroupe}
             keyboardType="numeric"
-            placeholder="Montant total à répartir"
+            placeholder={tr('montant_payer', lang)}
             placeholderTextColor="#9ca3af"
           />
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-            <Button mode="outlined" onPress={() => setShowReglGroupeModal(false)} style={{ flex: 1 }}>Annuler</Button>
+            <Button mode="outlined" onPress={() => setShowReglGroupeModal(false)} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
             <Button
               mode="contained"
               onPress={confirmerReglementGroupe}
               style={{ flex: 1 }}
               buttonColor="#f59e0b"
               disabled={idsSelectionnes.length === 0 || !montantReglGroupe || Number(montantReglGroupe) <= 0}>
-              Régler {idsSelectionnes.length} cmd
+              {tr('regler', lang)} {idsSelectionnes.length}
             </Button>
           </View>
         </Modal>

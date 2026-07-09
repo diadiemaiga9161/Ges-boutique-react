@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { Text, Card, FAB, ActivityIndicator, Modal, Portal, TextInput, Button, Switch } from 'react-native-paper';
 import api from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 export default function ConfigTransfertsScreen() {
+  const { lang } = useLang();
   const [configs, setConfigs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -54,8 +57,8 @@ export default function ConfigTransfertsScreen() {
               await api.post('/config-transferts', form);
               setShowModal(false);
               charger();
-            } catch { Alert.alert('Erreur', 'Impossible d\'enregistrer'); }
-          }}>Enregistrer</Button>
+            } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer'); }
+          }}>{tr('enregistrer', lang)}</Button>
         </Modal>
       </Portal>
     </View>

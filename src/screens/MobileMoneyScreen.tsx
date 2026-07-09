@@ -2,10 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
 import { Text, Card, Chip, ActivityIndicator } from 'react-native-paper';
 import { getVentes } from '../services/api.service';
+import { useLang } from '../i18n/LangContext';
+import { tr } from '../i18n';
 
 const MOBILE_MONEY_MODES = ['ORANGE_MONEY', 'MOOV_MONEY', 'WAVE', 'MTN_MONEY'];
 
 export default function MobileMoneyScreen() {
+  const { lang } = useLang();
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -36,7 +39,7 @@ export default function MobileMoneyScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.totalBanner}>
-        <Text style={styles.totalLabel}>Total Mobile Money</Text>
+        <Text style={styles.totalLabel}>{tr('total', lang)} {tr('mobile_money', lang)}</Text>
         <Text style={styles.totalVal}>{total.toLocaleString('fr-FR')} FCFA</Text>
         <Text style={styles.totalSub}>{transactions.length} transaction(s)</Text>
       </View>
