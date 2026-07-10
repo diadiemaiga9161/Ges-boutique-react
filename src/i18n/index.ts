@@ -321,6 +321,59 @@ const T: Record<string, Partial<Record<L, string>>> = {
   promo_globale:     { fr: 'Promotion globale', en: 'Global promotion', ar: 'عرض شامل', wo: 'Promotion bu dëkk', bm: 'Promotion bɛɛ la', ff: 'Promotion koyɗe fof', sw: 'Ofa la jumla', pt: 'Promoção global' },
   applique_tous:     { fr: "S'applique à tous les produits", en: 'Applies to all products', ar: 'ينطبق على جميع المنتجات', wo: 'Dafa am ci benn-benn yépp', bm: 'Joli bɛɛ la', ff: 'Ko dewe fof', sw: 'Inatumika kwa bidhaa zote', pt: 'Aplica-se a todos os produtos' },
   creer:             { fr: 'Créer', en: 'Create', ar: 'إنشاء', wo: 'Sos', bm: 'Sɔrɔ', ff: 'Fuɗɗirde', sw: 'Unda', pt: 'Criar' },
+
+  // ── Employés ─────────────────────────────────────────────────────────────────
+  employes:          { fr: 'Employés',                en: 'Employees',           ar: 'الموظفون',              wo: 'Liggéeykat yi',        bm: 'Baarakɛlaw',          ff: 'Gollorɓe',            sw: 'Wafanyakazi',             pt: 'Funcionários' },
+  ajouter_employe:   { fr: 'Ajouter un employé',      en: 'Add employee',        ar: 'إضافة موظف',            wo: 'Yokk liggéeykat',      bm: 'Baarakɛla fara',      ff: 'Ɓeydu gollo',         sw: 'Ongeza mfanyakazi',       pt: 'Adicionar funcionário' },
+  poste:             { fr: 'Poste',                    en: 'Position',            ar: 'المنصب',                wo: 'Liggéey',              bm: 'Sariya',              ff: 'Golle',               sw: 'Cheo',                    pt: 'Cargo' },
+  salaire:           { fr: 'Salaire',                  en: 'Salary',              ar: 'الراتب',                wo: 'Jabar',                bm: 'Sariyabɔli',          ff: 'Lifaaji',             sw: 'Mshahara',                pt: 'Salário' },
+  salaire_mensuel:   { fr: 'Salaire mensuel',          en: 'Monthly salary',      ar: 'الراتب الشهري',         wo: 'Jabar bu weer',        bm: 'Kalo sariyabɔli',     ff: 'Lifaaji lawn',        sw: 'Mshahara wa kila mwezi',  pt: 'Salário mensal' },
+  paiement_salaire:  { fr: 'Paiement salaire',         en: 'Salary payment',      ar: 'دفع الراتب',            wo: 'Fey jabar',            bm: 'Sariyabɔli sara',     ff: 'Faɗɗude lifaaji',     sw: 'Malipo ya mshahara',      pt: 'Pagamento de salário' },
+  mois_concerne:     { fr: 'Mois concerné',            en: 'Concerned month',     ar: 'الشهر المعني',          wo: 'Weer bi',              bm: 'Kaloba',              ff: 'Lewru ngol',          sw: 'Mwezi unaohusika',        pt: 'Mês referente' },
+  inactif:           { fr: 'Inactif',                  en: 'Inactive',            ar: 'غير نشط',               wo: 'Defu dem',             bm: 'Kɛnɛmakɔ',           ff: 'Dañɓe',               sw: 'Amefungwa',               pt: 'Inativo' },
+  activer:           { fr: 'Activer',                  en: 'Activate',            ar: 'تفعيل',                 wo: 'Daldi',                bm: 'Dali',                ff: 'Hɓitta',              sw: 'Wezesha',                 pt: 'Ativar' },
+  desactiver:        { fr: 'Désactiver',               en: 'Deactivate',          ar: 'تعطيل',                 wo: 'Taxaw',                bm: 'Dabɔ',                ff: 'Haɓɓita',             sw: 'Lemaza',                  pt: 'Desativar' },
+
+  // ── Dettes anciennes ──────────────────────────────────────────────────────────
+  dettes_anciennes:  { fr: 'Dettes anciennes',         en: 'Old debts',           ar: 'الديون القديمة',        wo: 'Njaay yi',             bm: 'Jatigɛya kɔrɔw',     ff: 'Jimre kuuɓe',         sw: 'Madeni ya zamani',        pt: 'Dívidas antigas' },
+  creancier:         { fr: 'Créancier',                 en: 'Creditor',            ar: 'الدائن',                wo: 'Jëgën bi',             bm: 'Dajalan',             ff: 'Lamparaajo',          sw: 'Mdai',                    pt: 'Credor' },
+  montant_total:     { fr: 'Montant total',             en: 'Total amount',        ar: 'المبلغ الإجمالي',       wo: 'Xaalis bu dëkk',       bm: 'Jatebɔli ye bɛɛ',    ff: 'Hakke fof',           sw: 'Jumla',                   pt: 'Valor total' },
+  montant_regle:     { fr: 'Montant réglé',             en: 'Paid amount',         ar: 'المبلغ المدفوع',        wo: 'Xaalis fey',           bm: 'Jatebɔli sara',       ff: 'Hakke halfinangal',   sw: 'Kilicholipwa',            pt: 'Valor pago' },
+  reglement:         { fr: 'Règlement',                 en: 'Settlement',          ar: 'تسوية',                 wo: 'Fey bi',               bm: 'Jatebɔli sara',       ff: 'Halfinangal',         sw: 'Makubaliano',             pt: 'Liquidação' },
+  ajouter_reglement: { fr: 'Ajouter un règlement',     en: 'Add settlement',      ar: 'إضافة تسوية',           wo: 'Yokk fey',             bm: 'Jatebɔli sara fara',  ff: 'Ɓeydu halfinangal',   sw: 'Ongeza makubaliano',      pt: 'Adicionar pagamento' },
+  solde:             { fr: 'Soldé',                     en: 'Settled',             ar: 'مسوَّى',                wo: 'Fey',                  bm: 'Sara',                ff: 'Halfini',             sw: 'Imelipwa',                pt: 'Saldado' },
+  en_retard:         { fr: 'En retard',                 en: 'Late',                ar: 'متأخر',                 wo: 'Yem ci kanam',         bm: 'Kɔnɔ yɛn',           ff: 'Ɓolɗo',               sw: 'Imechelewa',              pt: 'Atrasado' },
+
+  // ── Comptes bancaires ─────────────────────────────────────────────────────────
+  comptes_bancaires: { fr: 'Comptes bancaires',         en: 'Bank accounts',       ar: 'الحسابات البنكية',      wo: 'Konte yiy jaŋ xaalis', bm: 'Banki kunto w',       ff: 'Kontooji banki',      sw: 'Akaunti za benki',        pt: 'Contas bancárias' },
+  compte:            { fr: 'Compte',                    en: 'Account',             ar: 'حساب',                  wo: 'Konte',                bm: 'Kunto',               ff: 'Konto',               sw: 'Akaunti',                 pt: 'Conta' },
+  solde_compte:      { fr: 'Solde',                     en: 'Balance',             ar: 'الرصيد',                wo: 'Xaalis bu am',         bm: 'Kuntobɔli',           ff: 'Reste',               sw: 'Salio',                   pt: 'Saldo' },
+  depot_compte:      { fr: 'Dépôt',                     en: 'Deposit',             ar: 'إيداع',                 wo: 'Dëkk xaalis',          bm: 'Dɔnitali',            ff: 'Hollitde',            sw: 'Amana',                   pt: 'Depósito' },
+  retrait_compte:    { fr: 'Retrait',                   en: 'Withdrawal',          ar: 'سحب',                   wo: 'Jël xaalis',           bm: 'Bɔlili',              ff: 'Waɗɗude',             sw: 'Kutoa',                   pt: 'Saque' },
+  operations:        { fr: 'Opérations',                en: 'Operations',          ar: 'العمليات',              wo: 'Liggéeyu wàllu',       bm: 'Kɛtaw',               ff: 'Golɗe',               sw: 'Shughuli',                pt: 'Operações' },
+
+  // ── Objectifs fournisseurs ────────────────────────────────────────────────────
+  objectifs_fournisseur: { fr: 'Objectifs fournisseurs', en: 'Supplier goals',    ar: 'أهداف الموردين',        wo: 'Bind yiy naan',        bm: 'Jagomafili batɔw',    ff: 'Haajuuji jowtiɗe',   sw: 'Malengo ya wasambazaji',  pt: 'Metas de fornecedores' },
+  objectif:          { fr: 'Objectif',                  en: 'Goal',                ar: 'الهدف',                 wo: 'Bind',                 bm: 'Batɔ',                ff: 'Haaju',               sw: 'Lengo',                   pt: 'Meta' },
+  progression:       { fr: 'Progression',               en: 'Progress',            ar: 'التقدم',                wo: 'Yéeg',                 bm: 'Taamali',             ff: 'Ɓeydugol',            sw: 'Maendeleo',               pt: 'Progresso' },
+  bonus_attendu:     { fr: 'Bonus prévu',               en: 'Expected bonus',      ar: 'المكافأة المتوقعة',     wo: 'Ñëlar ñëppi',          bm: 'Niyɔrɔli',            ff: 'Nafaare jokki',       sw: 'Bonasi inayotarajiwa',    pt: 'Bônus esperado' },
+  objectif_atteint:  { fr: 'Objectif atteint',          en: 'Goal reached',        ar: 'تم تحقيق الهدف',        wo: 'Bind am',              bm: 'Batɔ sɔrɔ',           ff: 'Haaju heɓaa',         sw: 'Lengo limefikiwa',        pt: 'Meta atingida' },
+
+  // ── Vendeurs ──────────────────────────────────────────────────────────────────
+  vendeurs:          { fr: 'Vendeurs',                  en: 'Sellers',             ar: 'البائعون',              wo: 'Jënd yi',              bm: 'Jagatɔw',             ff: 'Jiyɓe',               sw: 'Wauzaji',                 pt: 'Vendedores' },
+  ajouter_vendeur:   { fr: 'Ajouter vendeur',           en: 'Add seller',          ar: 'إضافة بائع',            wo: 'Yokk jënd',            bm: 'Jagatɔ fara',         ff: 'Ɓeydu jiyɗo',         sw: 'Ongeza muuzaji',          pt: 'Adicionar vendedor' },
+  nom_utilisateur:   { fr: 'Nom utilisateur',           en: 'Username',            ar: 'اسم المستخدم',          wo: 'Tur ci internet',       bm: 'Tɔgɔ',               ff: 'Innde jiyɗo',         sw: 'Jina la mtumiaji',        pt: 'Nome de usuário' },
+  reinitialiser_mdp: { fr: 'Réinitialiser MDP',         en: 'Reset password',      ar: 'إعادة تعيين كلمة المرور', wo: 'Daldi xam-xam',      bm: 'Gundo kura',          ff: 'Gundo keɓal',         sw: 'Weka upya nenosiri',      pt: 'Redefinir senha' },
+
+  // ── Tableau de bord ───────────────────────────────────────────────────────────
+  tableau_de_bord:   { fr: 'Tableau de bord',           en: 'Dashboard',           ar: 'لوحة القيادة',          wo: 'Ndigël yi',            bm: 'Latigɛ segin',        ff: 'Binndi dow',          sw: 'Dashibodi',               pt: 'Painel' },
+  bonjour:           { fr: 'Bonjour',                   en: 'Hello',               ar: 'مرحباً',                wo: 'Salaam',               bm: 'I ni tile',           ff: 'Jam waali',           sw: 'Habari',                  pt: 'Olá' },
+  bonne_journee:     { fr: 'Bonne journée',             en: 'Good day',            ar: 'يوم سعيد',              wo: 'Yéegal jàmm',          bm: 'Tile ka di',          ff: 'Ñalawma jam',         sw: 'Siku njema',              pt: 'Boa tarde' },
+  ventes_du_jour:    { fr: 'Ventes du jour',            en: "Today's sales",       ar: 'مبيعات اليوم',          wo: 'Jënd bu tey',          bm: 'Tile jagatɔliw',      ff: 'Yiyaaɓe hannde',      sw: 'Mauzo ya leo',            pt: 'Vendas do dia' },
+  ca_du_jour:        { fr: 'CA du jour',                en: "Today's revenue",     ar: 'إيرادات اليوم',         wo: 'Xaalis bu tey',        bm: 'Tile marila',         ff: 'Kiseeki hannde',      sw: 'Mapato ya leo',           pt: 'Faturamento do dia' },
+  alertes_stock:     { fr: 'Alertes stock',             en: 'Stock alerts',        ar: 'تنبيهات المخزون',       wo: 'Dëppoo ay',            bm: 'Tibila',              ff: 'Kawritooje mbaadiiji', sw: 'Tahadhari za hisa',      pt: 'Alertas de estoque' },
+  accueil:           { fr: 'Accueil',                   en: 'Home',                ar: 'الرئيسية',              wo: 'Kër gi',               bm: 'So',                  ff: 'Galle',               sw: 'Nyumbani',                pt: 'Início' },
+  voir_tout:         { fr: 'Voir tout',                 en: 'See all',             ar: 'عرض الكل',              wo: 'Xool yëp',             bm: 'Bɛɛ ye yeli',         ff: 'Yiy fof',             sw: 'Ona yote',                pt: 'Ver tudo' },
 };
 
 export function tr(key: string, lang: string): string {

@@ -146,7 +146,7 @@ export default function LoginScreen({ onLogin }: any) {
                   placeholder={tr('placeholder_id', lang)}
                   placeholderTextColor="#cbd5e1"
                   autoCapitalize="none"
-                  keyboardType="email-address"
+                  keyboardType="default"
                   returnKeyType="next"
                 />
               </View>
@@ -164,7 +164,6 @@ export default function LoginScreen({ onLogin }: any) {
                   secureTextEntry={!showPwd}
                   returnKeyType="done"
                   onSubmitEditing={handleLogin}
-                  // Scroll vers le bas quand le champ mot de passe est focus (Android)
                   onFocus={() => {
                     if (Platform.OS === 'android') {
                       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
@@ -177,6 +176,11 @@ export default function LoginScreen({ onLogin }: any) {
               </View>
             </View>
 
+            {/* Lien mot de passe oublié — visible, AVANT le bouton connexion */}
+            <TouchableOpacity style={s.forgotRow} onPress={() => navigation.navigate('ForgotPassword')}>
+              <Text style={s.forgotText}>{tr('mdp_oublie', lang)}</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[s.btn, loading && s.btnDis]}
               onPress={handleLogin}
@@ -186,10 +190,6 @@ export default function LoginScreen({ onLogin }: any) {
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={s.btnText}>{tr('se_connecter', lang)}</Text>
               }
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => navigation?.navigate('ForgotPassword')}>
-              <Text style={s.forgot}>{tr('mdp_oublie', lang)}</Text>
             </TouchableOpacity>
 
             <Text style={s.version}>Ges Lafia · v1.0 · Maïga Consulting</Text>
@@ -248,6 +248,7 @@ const s = StyleSheet.create({
   btnDis:  { opacity: 0.65 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
 
-  forgot:  { textAlign: 'center', fontSize: 13, color: '#94a3b8', textDecorationLine: 'underline', marginVertical: 8 },
+  forgotRow:  { alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 4, marginBottom: 12 },
+  forgotText: { fontSize: 13, color: BLUE, fontWeight: '600', textDecorationLine: 'underline' },
   version: { textAlign: 'center', fontSize: 11, color: '#cbd5e1', marginTop: 16, letterSpacing: 0.3 },
 });

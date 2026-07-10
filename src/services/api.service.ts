@@ -192,3 +192,61 @@ export const getTypesDepense = () => api.get('/types-depense');
 export const createTypeDepense = (nom: string) => api.post('/types-depense', { nom });
 export const updateTypeDepense = (id: number, nom: string) => api.put(`/types-depense/${id}`, { nom });
 export const deleteTypeDepense = (id: number) => api.delete(`/types-depense/${id}`);
+
+// ─── Employés ──────────────────────────────────────────────────────────────
+export const getEmployes = (params?: any) => api.get('/employes', { params });
+export const createEmploye = (data: any) => api.post('/employes', data);
+export const updateEmploye = (id: number, data: any) => api.put(`/employes/${id}`, data);
+export const deleteEmploye = (id: number) => api.delete(`/employes/${id}`);
+export const toggleStatutEmploye = (id: number, actif: boolean) => api.patch(`/employes/${id}/statut`, { actif });
+export const getPaiementsEmployeById = (id: number) => api.get(`/employes/${id}/paiements`);
+export const createPaiementEmploye = (id: number, data: any) => api.post(`/employes/${id}/paiements`, data);
+
+// ─── Dettes anciennes ──────────────────────────────────────────────────────
+export const getDettesAnciennes = (params?: any) => api.get('/dettes-anciennes', { params });
+export const createDetteAncienne = (data: any) => api.post('/dettes-anciennes', data);
+export const updateDetteAncienne = (id: number, data: any) => api.put(`/dettes-anciennes/${id}`, data);
+export const deleteDetteAncienne = (id: number) => api.delete(`/dettes-anciennes/${id}`);
+export const getReglementsDetteAncienne = (id: number) => api.get(`/dettes-anciennes/${id}/reglements`);
+export const ajouterReglementDetteAncienne = (id: number, data: any) => api.post(`/dettes-anciennes/${id}/reglements`, data);
+export const getStatsDettesAnciennes = () => api.get('/dettes-anciennes/statistiques').catch(() => ({ data: {} }));
+
+// ─── Comptes bancaires ──────────────────────────────────────────────────────
+export const getComptes = () => api.get('/comptes');
+export const createCompte = (data: any) => api.post('/comptes', data);
+export const updateCompte = (id: number, data: any) => api.put(`/comptes/${id}`, data);
+export const deleteCompte = (id: number) => api.delete(`/comptes/${id}`);
+export const getOperationsCompte = (id: number) => api.get(`/comptes/${id}/operations`);
+export const versementCompte = (id: number, data: any) => api.post(`/comptes/${id}/versement`, data);
+export const retraitCompte = (id: number, data: any) => api.post(`/comptes/${id}/retrait`, data);
+
+// ─── Objectifs fournisseurs ─────────────────────────────────────────────────
+export const getObjectifsFournisseur = () => api.get('/objectifs-fournisseur');
+export const createObjectifFournisseur = (data: any) => api.post('/objectifs-fournisseur', data);
+export const updateObjectifFournisseur = (id: number, data: any) => api.put(`/objectifs-fournisseur/${id}`, data);
+export const deleteObjectifFournisseur = (id: number) => api.delete(`/objectifs-fournisseur/${id}`);
+export const getAvancementObjectif = (id: number) => api.get(`/objectifs-fournisseur/${id}/avancement`).catch(() => ({ data: null }));
+
+// ─── Vendeurs / Utilisateurs ────────────────────────────────────────────────
+export const getVendeurs = () => api.get('/users');
+export const createVendeur = (data: any) => api.post('/users', data);
+export const updateVendeur = (id: number, data: any) => api.put(`/users/${id}`, data);
+export const toggleStatutVendeur = (id: number, actif: boolean) => api.patch(`/users/${id}/statut`, { actif });
+export const resetPasswordVendeur = (id: number, newPassword: string) => api.post(`/users/${id}/reset-password`, { newPassword });
+
+// ─── Statistiques ventes ────────────────────────────────────────────────────
+export const getStatsVentes = (params?: { dateDebut?: string; dateFin?: string }) =>
+  api.get('/ventes/statistiques', { params }).catch(() => ({ data: {} }));
+export const getVentesParType = (params?: any) =>
+  api.get('/ventes/par-type', { params }).catch(() => ({ data: [] }));
+
+// ─── Avances clients ────────────────────────────────────────────────────────
+export const getSoldeAvanceClient = (clientId: number) =>
+  api.get('/clients/avances/solde', { params: { clientId } }).catch(() => ({ data: { solde: 0 } }));
+export const createAvanceClient = (data: any) => api.post('/clients/avances', data);
+export const getAvancesClient = (clientId: number) =>
+  api.get(`/clients/avances/${clientId}`).catch(() => ({ data: [] }));
+
+// ─── Retours vente ──────────────────────────────────────────────────────────
+export const retourVente = (id: number, data: any) => api.post(`/ventes/${id}/retour`, data);
+export const modifierLignesVente = (id: number, data: any) => api.put(`/ventes/${id}/lignes`, data);

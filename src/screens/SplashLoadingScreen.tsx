@@ -23,13 +23,13 @@ export default function SplashLoadingScreen() {
       Animated.timing(textOpacity, { toValue: 1, duration: 400, useNativeDriver: true }).start();
     });
 
-    // Dots pulse en boucle — décalés comme CSS animation-delay
+    // Dots pulse — useNativeDriver: false car backgroundColor ne supporte pas le native driver
     const animDot = (dot: Animated.Value, delay: number) =>
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(dot, { toValue: 1, duration: 280, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.4, duration: 560, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 1, duration: 280, useNativeDriver: false }),
+          Animated.timing(dot, { toValue: 0.4, duration: 560, useNativeDriver: false }),
           Animated.delay(1400 - 280 - 560 - delay),
         ])
       );

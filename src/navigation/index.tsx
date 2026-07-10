@@ -38,6 +38,13 @@ import FactureDesignScreen from '../screens/FactureDesignScreen';
 import ResourcesScreen from '../screens/ResourcesScreen';
 import PromotionsScreen from '../screens/PromotionsScreen';
 import CommandesScreen from '../screens/CommandesScreen';
+import EmployesScreen from '../screens/EmployesScreen';
+import PaiementsEmployeScreen from '../screens/PaiementsEmployeScreen';
+import DettesAnciennesScreen from '../screens/DettesAnciennesScreen';
+import ComptesScreen from '../screens/ComptesScreen';
+import ObjectifsFournisseurScreen from '../screens/ObjectifsFournisseurScreen';
+import VendeursScreen from '../screens/VendeursScreen';
+import HomeScreen from '../screens/HomeScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -60,6 +67,8 @@ function MainTabs({ onLogout }: { onLogout: () => void }) {
         ...HEADER,
       }}
     >
+      <Tab.Screen name="Home" component={HomeScreen}
+        options={{ title: 'Accueil', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="home" color={color} size={size} /> }} />
       <Tab.Screen name="Produits" component={ProduitsScreen}
         options={{ title: 'Produits', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="package-variant" color={color} size={size} /> }} />
       <Tab.Screen name="Vente" component={VenteScreen}
@@ -106,7 +115,14 @@ function MainStack({ onLogout }: { onLogout: () => void }) {
         {() => <BoutiqueSelectScreen onSelect={() => {}} />}
       </Stack.Screen>
       <Stack.Screen name="Promotions"       component={PromotionsScreen}         options={{ title: 'Promotions' }} />
-      <Stack.Screen name="Commandes"        component={CommandesScreen}           options={{ title: 'Commandes' }} />
+      <Stack.Screen name="Commandes"           component={CommandesScreen}             options={{ title: 'Commandes' }} />
+      <Stack.Screen name="Employes"           component={EmployesScreen}              options={{ title: 'Employés' }} />
+      <Stack.Screen name="PaiementsEmploye"   component={PaiementsEmployeScreen}      options={{ title: 'Paiements employé' }} />
+      <Stack.Screen name="DettesAnciennes"    component={DettesAnciennesScreen}       options={{ title: 'Dettes anciennes' }} />
+      <Stack.Screen name="Comptes"            component={ComptesScreen}               options={{ title: 'Comptes bancaires' }} />
+      <Stack.Screen name="ObjectifsFournisseur" component={ObjectifsFournisseurScreen} options={{ title: 'Objectifs fournisseurs' }} />
+      <Stack.Screen name="Vendeurs"           component={VendeursScreen}              options={{ title: 'Vendeurs' }} />
+      <Stack.Screen name="Home"               component={HomeScreen}                  options={{ title: 'Accueil' }} />
     </Stack.Navigator>
   );
 }
