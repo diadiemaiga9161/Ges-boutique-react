@@ -46,7 +46,8 @@ export default function LoginScreen({ onLogin, navigation }: any) {
     try {
       const res  = await login(identifier, password);
       const data = res.data?.data || res.data;
-      const user = { ...data.utilisateur, token: data.token };
+      // Le backend renvoie { token, username, role, nomComplet, ... } à la racine
+      const user = { ...data };
       await AsyncStorage.setItem('user', JSON.stringify(user));
       await AsyncStorage.setItem('token', data.token);
       onLogin(user);

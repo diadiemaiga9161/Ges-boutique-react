@@ -29,7 +29,7 @@ export default api;
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
 export const login = (identifier: string, password: string) =>
-  api.post('/auth/login', { identifier, password });
+  api.post('/auth/login', { username: identifier, password });
 export const forgotPassword = (email: string) =>
   api.post('/auth/forgot-password', { email });
 export const resetPassword = (token: string, newPassword: string) =>
