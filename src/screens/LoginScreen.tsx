@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
 import { login } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -21,7 +22,8 @@ const LANGUAGES = [
   { code: 'pt', flag: '🇵🇹', name: 'Português' },
 ];
 
-export default function LoginScreen({ onLogin, navigation }: any) {
+export default function LoginScreen({ onLogin }: any) {
+  const navigation = useNavigation<any>();
   const { lang, setLang } = useLang();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword]     = useState('');
