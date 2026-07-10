@@ -31,9 +31,9 @@ export default api;
 export const login = (identifier: string, password: string) =>
   api.post('/auth/login', { username: identifier, password });
 export const forgotPassword = (email: string) =>
-  api.post('/auth/forgot-password', { email });
+  api.post('/auth/mot-de-passe-oublie', { email });
 export const resetPassword = (token: string, newPassword: string) =>
-  api.post('/auth/reset-password', { token, newPassword });
+  api.post('/auth/reinitialiser-password', { token, nouveauPassword: newPassword });
 
 // ─── Boutique ──────────────────────────────────────────────────────────────
 export const getBoutique = () => api.get('/boutique');

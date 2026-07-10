@@ -11,7 +11,7 @@ export default function ForgotPasswordScreen({ navigation }: any) {
     if (!email) { Alert.alert('Erreur', 'Entrez votre email'); return; }
     setLoading(true);
     try {
-      await api.post('/auth/forgot-password', { email });
+      await api.post('/auth/mot-de-passe-oublie', { email });
       Alert.alert('Succès', 'Un lien de réinitialisation a été envoyé à votre email', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);

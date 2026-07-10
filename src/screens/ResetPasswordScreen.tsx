@@ -16,7 +16,7 @@ export default function ResetPasswordScreen({ navigation, route }: any) {
     }
     setLoading(true);
     try {
-      await api.post('/auth/reset-password', { token, newPassword: password });
+      await api.post('/auth/reinitialiser-password', { token, nouveauPassword: password });
       Alert.alert('Succès', 'Mot de passe modifié avec succès', [
         { text: 'OK', onPress: () => navigation.navigate('Login') }
       ]);
