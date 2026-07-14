@@ -10,6 +10,7 @@ const getMenuItems = (lang: string) => [
   { icon: 'file-document-edit-outline', label: tr('commandes', lang), screen: 'Commandes' },
   { icon: 'account-group', label: tr('clients', lang), screen: 'Clients' },
   { icon: 'warehouse', label: tr('stock_inventaire', lang), screen: 'Inventaire' },
+  { icon: 'arrow-up-circle-outline', label: 'Sorties stock', screen: 'Sorties' },
   { icon: 'cash-minus', label: tr('depenses', lang), screen: 'Depenses' },
   { icon: 'credit-card-clock', label: tr('credits', lang), screen: 'Credits' },
   { icon: 'truck', label: tr('fournisseurs', lang), screen: 'Fournisseurs' },

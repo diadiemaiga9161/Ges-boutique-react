@@ -47,6 +47,7 @@ import ObjectifsFournisseurScreen from '../screens/ObjectifsFournisseurScreen';
 import VendeursScreen from '../screens/VendeursScreen';
 import HomeScreen from '../screens/HomeScreen';
 import AnnulationPaiementsScreen from '../screens/AnnulationPaiementsScreen';
+import SortiesScreen from '../screens/SortiesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -126,6 +127,7 @@ function MainStack({ onLogout }: { onLogout: () => void }) {
       <Stack.Screen name="ObjectifsFournisseur" component={ObjectifsFournisseurScreen} options={{ title: 'Objectifs fournisseurs' }} />
       <Stack.Screen name="Vendeurs"           component={VendeursScreen}              options={{ title: 'Vendeurs' }} />
       <Stack.Screen name="AnnulationPaiements" component={AnnulationPaiementsScreen}  options={{ title: 'Annulation paiements' }} />
+      <Stack.Screen name="Sorties"             component={SortiesScreen}              options={{ title: 'Sorties stock' }} />
     </Stack.Navigator>
   );
 }

@@ -19,7 +19,7 @@ import { tr } from '../i18n';
 
 type FiltrePrincipal = 'tous' | 'faible' | 'rupture' | 'niveaux' | 'mouvements';
 type TypeMouvement = 'TOUS' | 'ENTREE' | 'SORTIE' | 'AJUSTEMENT';
-type FiltrePeriode = 'tout' | 'aujourd_hui' | 'semaine' | 'mois';
+type FiltrePeriode = 'tout' | 'aujourd_hui' | 'semaine' | 'mois' | 'annee';
 
 function getPeriodeDates(p: FiltrePeriode): { dateDebut?: string; dateFin?: string } {
   const now = new Date();
@@ -36,7 +36,11 @@ function getPeriodeDates(p: FiltrePeriode): { dateDebut?: string; dateFin?: stri
     const debut = new Date(now.getFullYear(), now.getMonth(), 1);
     return { dateDebut: fmt(debut), dateFin: fmt(now) };
   }
-  return {};
+  if (p === 'annee') {
+    const debut = new Date(now.getFullYear(), 0, 1);
+    return { dateDebut: fmt(debut), dateFin: fmt(now) };
+  }
+  return {}; // 'tout'
 }
 
 export default function InventaireScreen() {
@@ -375,6 +379,7 @@ export default function InventaireScreen() {
               { val: 'aujourd_hui' as FiltrePeriode, label: "Aujourd'hui" },
               { val: 'semaine' as FiltrePeriode, label: 'Semaine' },
               { val: 'mois' as FiltrePeriode, label: 'Mois' },
+              { val: 'annee' as FiltrePeriode, label: 'Année' },
             ]).map(({ val, label }) => (
               <Chip
                 key={val}

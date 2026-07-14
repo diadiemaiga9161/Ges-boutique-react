@@ -54,6 +54,7 @@ interface LigneForm {
   prixOriginal: number;
   prixUnitaire: string;
   quantite: number;
+  remise: string;
 }
 
 const MODES = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'];
@@ -192,7 +193,8 @@ export default function CommandesScreen() {
     return true;
   });
 
-  const totalCommande = lignesForm.reduce((s, l) => s + Number(l.prixUnitaire || 0) * l.quantite, 0);
+  const prixLigne = (l: LigneForm) => Number(l.prixUnitaire || 0) * l.quantite * (1 - (Number(l.remise) || 0) / 100);
+  const totalCommande = lignesForm.reduce((s, l) => s + prixLigne(l), 0);
   const resteAPayer = Math.max(0, totalCommande - Number(form.montantVerse || 0));
 
   const nbEnAttente = commandes.filter(c => c.statut === 'BROUILLON').length;
@@ -210,7 +212,7 @@ export default function CommandesScreen() {
     setLignesForm(prev => {
       const ex = prev.find(l => l.produitId === p.id);
       if (ex) return prev.map(l => l.produitId === p.id ? { ...l, quantite: l.quantite + 1 } : l);
-      return [...prev, { produitId: p.id, produitNom: p.nom, prixOriginal: p.prixVente, prixUnitaire: String(p.prixVente), quantite: 1 }];
+      return [...prev, { produitId: p.id, produitNom: p.nom, prixOriginal: p.prixVente, prixUnitaire: String(p.prixVente), quantite: 1, remise: '0' }];
     });
     setSearchProduit('');
     setShowProduitDrop(false);
@@ -262,7 +264,8 @@ export default function CommandesScreen() {
       produitNom: l.produit?.nom || l.produitNom || '',
       prixOriginal: l.produit?.prixVente || l.prixUnitaire,
       prixUnitaire: String(l.prixUnitaire),
-      quantite: l.quantite
+      quantite: l.quantite,
+      remise: String((l as any).remise || 0)
     })));
     setShowModal(true);
   };
@@ -276,7 +279,7 @@ export default function CommandesScreen() {
       clientNom: form.clientNom || undefined,
       clientPrenom: form.clientPrenom || undefined,
       clientTelephone: form.clientTelephone || undefined,
-      lignes: lignesForm.map(l => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: Number(l.prixUnitaire) })),
+      lignes: lignesForm.map(l => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: Number(l.prixUnitaire), remise: Number(l.remise) || 0 })),
       modePaiement: form.modePaiement,
       referencePaiement: form.referencePaiement || undefined,
       estCredit: form.estCredit,
@@ -691,21 +694,44 @@ export default function CommandesScreen() {
 
             {lignesForm.map((l, i) => (
               <View key={i} style={styles.ligneRow}>
-                <Text style={{ flex: 1, fontSize: 12, fontWeight: '600' }}>{l.produitNom}</Text>
-                <View style={styles.qtyCtrl}>
-                  <TouchableOpacity style={styles.qtyBtn} onPress={() => changerQty(i, -1)}><Text style={styles.qtyBtnText}>−</Text></TouchableOpacity>
-                  <Text style={styles.qtyVal}>{l.quantite}</Text>
-                  <TouchableOpacity style={styles.qtyBtn} onPress={() => changerQty(i, 1)}><Text style={styles.qtyBtnText}>+</Text></TouchableOpacity>
+                {/* Nom + supprimer */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#1e293b' }}>{l.produitNom}</Text>
+                  <TouchableOpacity onPress={() => supprimerLigne(i)} style={{ padding: 4 }}>
+                    <Text style={{ color: '#dc2626', fontSize: 16, fontWeight: '700' }}>×</Text>
+                  </TouchableOpacity>
                 </View>
-                <TextInput
-                  style={styles.prixInput}
-                  value={l.prixUnitaire}
-                  onChangeText={v => setLignesForm(prev => prev.map((x, idx) => idx === i ? { ...x, prixUnitaire: v } : x))}
-                  keyboardType="numeric"
-                />
-                <TouchableOpacity onPress={() => supprimerLigne(i)} style={{ padding: 4 }}>
-                  <Text style={{ color: '#dc2626', fontSize: 16, fontWeight: '700' }}>×</Text>
-                </TouchableOpacity>
+                {/* Qté + Prix + Remise */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <View style={styles.qtyCtrl}>
+                    <TouchableOpacity style={styles.qtyBtn} onPress={() => changerQty(i, -1)}><Text style={styles.qtyBtnText}>−</Text></TouchableOpacity>
+                    <Text style={styles.qtyVal}>{l.quantite}</Text>
+                    <TouchableOpacity style={styles.qtyBtn} onPress={() => changerQty(i, 1)}><Text style={styles.qtyBtnText}>+</Text></TouchableOpacity>
+                  </View>
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>Prix unit.</Text>
+                    <TextInput
+                      style={styles.prixInput}
+                      value={l.prixUnitaire}
+                      onChangeText={v => setLignesForm(prev => prev.map((x, idx) => idx === i ? { ...x, prixUnitaire: v } : x))}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>Remise %</Text>
+                    <TextInput
+                      style={[styles.prixInput, { width: 60 }]}
+                      value={l.remise}
+                      onChangeText={v => setLignesForm(prev => prev.map((x, idx) => idx === i ? { ...x, remise: v } : x))}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      placeholderTextColor="#9ca3af"
+                    />
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#1a56db', fontWeight: '700' }}>
+                    = {formatMontant(prixLigne(l))}
+                  </Text>
+                </View>
               </View>
             ))}
 
