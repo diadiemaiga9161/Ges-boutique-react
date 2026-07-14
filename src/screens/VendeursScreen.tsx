@@ -20,7 +20,9 @@ import {
   IconButton,
   RadioButton,
 } from 'react-native-paper';
+import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -51,6 +53,7 @@ export default function VendeursScreen() {
   const [vendeurs, setVendeurs] = useState<Vendeur[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   // Modal ajout
   const [showAdd, setShowAdd] = useState(false);
@@ -85,9 +88,18 @@ export default function VendeursScreen() {
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/users');
-      setVendeurs(res.data?.data || res.data || []);
-    } catch { }
+      const liste = res.data?.data || res.data || [];
+      setVendeurs(liste);
+      setFromCache(false);
+      sauvegarderCache('vendeurs', liste).catch(() => {});
+    } catch {
+      const cached = await lireCache<Vendeur>('vendeurs');
+      if (cached.length > 0) { setVendeurs(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -127,7 +139,7 @@ export default function VendeursScreen() {
           text: tr('confirmer', lang),
           onPress: async () => {
             try {
-              await api.patch(`/users/${v.id}/statut`, { actif: !v.actif });
+              await executerOuMettreEnFile('vendeur_toggle', { id: v.id, actif: !v.actif }, () => api.patch(`/users/${v.id}/statut`, { actif: !v.actif }));
               charger();
             } catch {
               Alert.alert(tr('erreur', lang), 'Impossible de modifier le statut');
@@ -144,16 +156,9 @@ export default function VendeursScreen() {
       return;
     }
     setSavingAdd(true);
+    const payloadAdd = { nom: formAdd.nom.trim(), prenom: formAdd.prenom.trim(), username: formAdd.username.trim(), email: formAdd.email.trim(), telephone: formAdd.telephone.trim() || null, role: formAdd.role, motDePasse: formAdd.motDePasse };
     try {
-      await api.post('/users', {
-        nom: formAdd.nom.trim(),
-        prenom: formAdd.prenom.trim(),
-        username: formAdd.username.trim(),
-        email: formAdd.email.trim(),
-        telephone: formAdd.telephone.trim() || null,
-        role: formAdd.role,
-        motDePasse: formAdd.motDePasse,
-      });
+      await executerOuMettreEnFile('vendeur_create', payloadAdd, () => api.post('/users', payloadAdd));
       setShowAdd(false);
       setFormAdd({ nom: '', prenom: '', username: '', email: '', telephone: '', role: 'VENDEUR', motDePasse: '' });
       charger();
@@ -170,15 +175,9 @@ export default function VendeursScreen() {
       return;
     }
     setSavingEdit(true);
+    const payloadEdit = { nom: formEdit.nom.trim(), prenom: formEdit.prenom.trim(), username: formEdit.username.trim(), email: formEdit.email.trim(), telephone: formEdit.telephone.trim() || null, role: formEdit.role };
     try {
-      await api.put(`/users/${selected.id}`, {
-        nom: formEdit.nom.trim(),
-        prenom: formEdit.prenom.trim(),
-        username: formEdit.username.trim(),
-        email: formEdit.email.trim(),
-        telephone: formEdit.telephone.trim() || null,
-        role: formEdit.role,
-      });
+      await executerOuMettreEnFile('vendeur_update', { id: selected.id, data: payloadEdit }, () => api.put(`/users/${selected.id}`, payloadEdit));
       setShowEdit(false);
       setSelected(null);
       charger();
@@ -211,6 +210,11 @@ export default function VendeursScreen() {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
+        </View>
+      )}
       {/* Bannière stats */}
       <View style={styles.banner}>
         <View style={styles.bannerItem}>

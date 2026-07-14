@@ -19,7 +19,9 @@ import {
   Divider,
   IconButton,
 } from 'react-native-paper';
+import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -59,6 +61,7 @@ export default function ObjectifsFournisseurScreen() {
   const [objectifs, setObjectifs] = useState<ObjectifFournisseur[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   // Modal ajout
   const [showModal, setShowModal] = useState(false);
@@ -79,9 +82,18 @@ export default function ObjectifsFournisseurScreen() {
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/objectifs-fournisseur');
-      setObjectifs(res.data?.data || res.data || []);
-    } catch { }
+      const liste = res.data?.data || res.data || [];
+      setObjectifs(liste);
+      setFromCache(false);
+      sauvegarderCache('objectifs_fournisseur', liste).catch(() => {});
+    } catch {
+      const cached = await lireCache<ObjectifFournisseur>('objectifs_fournisseur');
+      if (cached.length > 0) { setObjectifs(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -117,7 +129,7 @@ export default function ObjectifsFournisseurScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await api.delete(`/objectifs-fournisseur/${id}`);
+              await executerOuMettreEnFile('objectif_delete', { id }, () => api.delete(`/objectifs-fournisseur/${id}`));
               charger();
             } catch {
               Alert.alert(tr('erreur', lang), 'Impossible de supprimer');
@@ -134,14 +146,9 @@ export default function ObjectifsFournisseurScreen() {
       return;
     }
     setSaving(true);
+    const payloadObj = { fournisseurNom: form.fournisseurNom.trim(), description: form.description.trim(), montantCible: parseFloat(form.montantCible), dateLimite: form.dateLimite.trim() || null, bonusPrevu: form.bonusPrevu ? parseFloat(form.bonusPrevu) : null };
     try {
-      await api.post('/objectifs-fournisseur', {
-        fournisseurNom: form.fournisseurNom.trim(),
-        description: form.description.trim(),
-        montantCible: parseFloat(form.montantCible),
-        dateLimite: form.dateLimite.trim() || null,
-        bonusPrevu: form.bonusPrevu ? parseFloat(form.bonusPrevu) : null,
-      });
+      await executerOuMettreEnFile('objectif_create', payloadObj, () => api.post('/objectifs-fournisseur', payloadObj));
       setShowModal(false);
       setForm({ fournisseurNom: '', description: '', montantCible: '', dateLimite: '', bonusPrevu: '' });
       charger();
@@ -155,6 +162,11 @@ export default function ObjectifsFournisseurScreen() {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
+        </View>
+      )}
       {/* Bannière stats */}
       <View style={styles.banner}>
         <View style={styles.bannerItem}>

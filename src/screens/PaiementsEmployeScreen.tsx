@@ -3,7 +3,10 @@ import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
   Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -53,16 +56,27 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
   const [paiements, setPaiements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ ...FORM_INITIAL });
   const [showMoisPicker, setShowMoisPicker] = useState(false);
 
+  const cacheKey = `paiements_employe_${employe.id}`;
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get(`/employes/${employe.id}/paiements`);
       const data = res.data?.paiements || res.data?.data || res.data || [];
-      setPaiements(Array.isArray(data) ? data : []);
-    } catch {}
+      const liste = Array.isArray(data) ? data : [];
+      setPaiements(liste);
+      setFromCache(false);
+      sauvegarderCache(cacheKey, liste).catch(() => {});
+    } catch {
+      const cached = await lireCache<any>(cacheKey);
+      if (cached.length > 0) { setPaiements(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -98,14 +112,9 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
       Alert.alert(tr('erreur', lang), 'Montant invalide');
       return;
     }
+    const data = { montant: montantNum, moisConcerne: form.moisConcerne, modePaiement: form.modePaiement, note: form.note, referencePaiement: form.referencePaiement };
     try {
-      await api.post(`/employes/${employe.id}/paiements`, {
-        montant: montantNum,
-        moisConcerne: form.moisConcerne,
-        modePaiement: form.modePaiement,
-        note: form.note,
-        referencePaiement: form.referencePaiement,
-      });
+      await executerOuMettreEnFile('paiement_employe', { employeId: employe.id, data }, () => api.post(`/employes/${employe.id}/paiements`, data));
       setShowModal(false);
       charger();
     } catch (err: any) {
@@ -117,6 +126,12 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>

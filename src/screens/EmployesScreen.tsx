@@ -3,7 +3,10 @@ import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
   Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -30,18 +33,27 @@ export default function EmployesScreen({ navigation }: any) {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState({ ...FORM_INITIAL });
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/employes');
       const data = res.data?.data || res.data || [];
       const liste = Array.isArray(data) ? data : [];
       setEmployes(liste);
       setFiltered(liste);
-    } catch {}
+      setFromCache(false);
+      sauvegarderCache('employes', liste).catch(() => {});
+    } catch {
+      const cached = await lireCache<any>('employes');
+      if (cached.length > 0) { setEmployes(cached); setFiltered(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -95,9 +107,9 @@ export default function EmployesScreen({ navigation }: any) {
     };
     try {
       if (editing) {
-        await api.put(`/employes/${editing.id}`, payload);
+        await executerOuMettreEnFile('employe_update', { id: editing.id, data: payload }, () => api.put(`/employes/${editing.id}`, payload));
       } else {
-        await api.post('/employes', payload);
+        await executerOuMettreEnFile('employe_create', payload, () => api.post('/employes', payload));
       }
       setShowModal(false);
       charger();
@@ -109,7 +121,7 @@ export default function EmployesScreen({ navigation }: any) {
   const toggleStatut = async (emp: any) => {
     const actif = emp.statut !== 'ACTIF';
     try {
-      await api.patch(`/employes/${emp.id}/statut`, { actif });
+      await executerOuMettreEnFile('employe_toggle', { id: emp.id, actif }, () => api.patch(`/employes/${emp.id}/statut`, { actif }));
       charger();
     } catch (err: any) {
       Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Erreur serveur');
@@ -128,7 +140,7 @@ export default function EmployesScreen({ navigation }: any) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await api.delete(`/employes/${emp.id}`);
+              await executerOuMettreEnFile('employe_delete', { id: emp.id }, () => api.delete(`/employes/${emp.id}`));
               charger();
             } catch (err: any) {
               Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Erreur serveur');
@@ -145,6 +157,12 @@ export default function EmployesScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
       {/* ── Header ── */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>

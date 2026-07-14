@@ -5,7 +5,9 @@ import {
 } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -57,6 +59,7 @@ export default function DettesAnciennesScreen() {
   const [dettes, setDettes] = useState<DetteAncienne[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [search, setSearch] = useState('');
 
   // Modals
@@ -100,10 +103,17 @@ export default function DettesAnciennesScreen() {
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/dettes-anciennes');
-      setDettes(Array.isArray(res.data) ? res.data : (res.data?.data || []));
+      const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setDettes(liste);
+      setFromCache(false);
+      sauvegarderCache('dettes_anciennes', liste).catch(() => {});
     } catch {
-      Alert.alert(tr('erreur', lang), 'Impossible de charger les dettes');
+      const cached = await lireCache<DetteAncienne>('dettes_anciennes');
+      if (cached.length > 0) { setDettes(cached); setFromCache(true); }
+      else setFromCache(false);
     }
     setLoading(false);
     setRefreshing(false);
@@ -139,7 +149,7 @@ export default function DettesAnciennesScreen() {
         text: tr('supprimer', lang), style: 'destructive',
         onPress: async () => {
           try {
-            await api.delete(`/dettes-anciennes/${dette.id}`);
+            await executerOuMettreEnFile('dette_delete', { id: dette.id }, () => api.delete(`/dettes-anciennes/${dette.id}`));
             charger();
           } catch {
             Alert.alert(tr('erreur', lang), 'Suppression impossible');
@@ -168,14 +178,9 @@ export default function DettesAnciennesScreen() {
       return;
     }
     setSaving(true);
+    const payload = { creancier: formCreancier.trim(), description: formDescription.trim(), montantTotal: montant, dateEcheance: formEcheance.trim() || undefined, notes: formNotes.trim() || undefined };
     try {
-      await api.post('/dettes-anciennes', {
-        creancier: formCreancier.trim(),
-        description: formDescription.trim(),
-        montantTotal: montant,
-        dateEcheance: formEcheance.trim() || undefined,
-        notes: formNotes.trim() || undefined,
-      });
+      await executerOuMettreEnFile('dette_create', payload, () => api.post('/dettes-anciennes', payload));
       setShowNouvelle(false);
       resetForm();
       charger();
@@ -197,13 +202,9 @@ export default function DettesAnciennesScreen() {
       return;
     }
     setSavingRegl(true);
+    const dataRegl = { montant, date: reglDate, modePaiement: reglMode, reference: reglRef.trim() || undefined };
     try {
-      await api.post(`/dettes-anciennes/${selectedDette.id}/reglements`, {
-        montant,
-        date: reglDate,
-        modePaiement: reglMode,
-        reference: reglRef.trim() || undefined,
-      });
+      await executerOuMettreEnFile('dette_reglement', { detteId: selectedDette.id, data: dataRegl }, () => api.post(`/dettes-anciennes/${selectedDette.id}/reglements`, dataRegl));
       setShowReglement(false);
       charger();
     } catch {
@@ -242,6 +243,12 @@ export default function DettesAnciennesScreen() {
 
   return (
     <View style={s.container}>
+      {fromCache && (
+        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
 
       {/* ── Hero stats ─────────────────────────────────────────────────────── */}
       <View style={s.hero}>

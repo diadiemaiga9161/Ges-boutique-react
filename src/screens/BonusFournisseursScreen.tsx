@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { Text, Card, FAB, ActivityIndicator, Modal, Portal, TextInput, Button } from 'react-native-paper';
+import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -10,14 +12,24 @@ export default function BonusFournisseursScreen() {
   const [bonus, setBonus] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ fournisseurId: '', montant: '', description: '', date: '' });
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/bonus-fournisseurs');
-      setBonus(res.data?.data || res.data || []);
-    } catch { }
+      const liste = res.data?.data || res.data || [];
+      setBonus(liste);
+      setFromCache(false);
+      sauvegarderCache('bonus_fournisseurs', liste).catch(() => {});
+    } catch {
+      const cached = await lireCache<any>('bonus_fournisseurs');
+      if (cached.length > 0) { setBonus(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -30,6 +42,11 @@ export default function BonusFournisseursScreen() {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
+        </View>
+      )}
       <View style={styles.banner}>
         <Text style={styles.bannerLabel}>{tr('total', lang)} {tr('bonus_fournisseurs', lang)}</Text>
         <Text style={styles.bannerVal}>{total.toLocaleString('fr-FR')} FCFA</Text>
@@ -60,8 +77,9 @@ export default function BonusFournisseursScreen() {
           <TextInput label={tr('montant', lang) + ' *'} value={form.montant} onChangeText={t => setForm({ ...form, montant: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
           <TextInput label={tr('description', lang)} value={form.description} onChangeText={t => setForm({ ...form, description: t })} mode="outlined" style={styles.input} />
           <Button mode="contained" onPress={async () => {
+            const payload = { ...form, montant: parseFloat(form.montant) };
             try {
-              await api.post('/bonus-fournisseurs', { ...form, montant: parseFloat(form.montant) });
+              await executerOuMettreEnFile('bonus_fournisseur', payload, () => api.post('/bonus-fournisseurs', payload));
               setShowModal(false);
               setForm({ fournisseurId: '', montant: '', description: '', date: '' });
               charger();

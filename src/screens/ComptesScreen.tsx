@@ -5,7 +5,9 @@ import {
 } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
+import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -57,6 +59,7 @@ export default function ComptesScreen() {
   const [comptes, setComptes] = useState<Compte[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   // Modals
   const [showOperation, setShowOperation] = useState(false);
@@ -92,10 +95,17 @@ export default function ComptesScreen() {
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/comptes');
-      setComptes(Array.isArray(res.data) ? res.data : (res.data?.data || []));
+      const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setComptes(liste);
+      setFromCache(false);
+      sauvegarderCache('comptes', liste).catch(() => {});
     } catch {
-      Alert.alert(tr('erreur', lang), 'Impossible de charger les comptes');
+      const cached = await lireCache<Compte>('comptes');
+      if (cached.length > 0) { setComptes(cached); setFromCache(true); }
+      else setFromCache(false);
     }
     setLoading(false);
     setRefreshing(false);
@@ -152,7 +162,7 @@ export default function ComptesScreen() {
         text: tr('supprimer', lang), style: 'destructive',
         onPress: async () => {
           try {
-            await api.delete(`/comptes/${compte.id}`);
+            await executerOuMettreEnFile('compte_delete', { id: compte.id }, () => api.delete(`/comptes/${compte.id}`));
             charger();
           } catch {
             Alert.alert(tr('erreur', lang), 'Suppression impossible');
@@ -174,12 +184,11 @@ export default function ComptesScreen() {
       return;
     }
     setSavingOp(true);
+    const opType = operationType === 'depot' ? 'compte_versement' : 'compte_retrait';
+    const opData = { montant, description: opDescription.trim() || (operationType === 'depot' ? 'Dépôt' : 'Retrait') };
+    const endpoint = operationType === 'depot' ? 'versement' : 'retrait';
     try {
-      const endpoint = operationType === 'depot' ? 'versement' : 'retrait';
-      await api.post(`/comptes/${selectedCompte.id}/${endpoint}`, {
-        montant,
-        description: opDescription.trim() || (operationType === 'depot' ? 'Dépôt' : 'Retrait'),
-      });
+      await executerOuMettreEnFile(opType, { id: selectedCompte.id, data: opData }, () => api.post(`/comptes/${selectedCompte.id}/${endpoint}`, opData));
       setShowOperation(false);
       charger();
     } catch {
@@ -205,9 +214,9 @@ export default function ComptesScreen() {
     }
     try {
       if (isEditing && selectedCompte) {
-        await api.put(`/comptes/${selectedCompte.id}`, data);
+        await executerOuMettreEnFile('compte_update', { id: selectedCompte.id, data }, () => api.put(`/comptes/${selectedCompte.id}`, data));
       } else {
-        await api.post('/comptes', data);
+        await executerOuMettreEnFile('compte_create', data, () => api.post('/comptes', data));
       }
       setShowForm(false);
       charger();
@@ -222,6 +231,12 @@ export default function ComptesScreen() {
 
   return (
     <View style={s.container}>
+      {fromCache && (
+        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
 
       {/* ── Hero stats ─────────────────────────────────────────────────────── */}
       <View style={s.hero}>

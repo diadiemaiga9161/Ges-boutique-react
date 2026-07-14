@@ -1,12 +1,17 @@
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
+import api, {
   createVente, createProduit, updateProduit, createDepense, createClient, createCommande,
   createFournisseur, updateFournisseur, creerAchatFournisseur, payerFournisseur,
   ajouterMouvement, ouvrirCaisse, fermerCaisse, ajouterEntreeCaisse, ajouterSortieCaisse,
   reglerCreditCaisse, createDepot, effectuerRetraitDepot, createTransfert,
   createPromotion, updatePromotion, validerCommande, annulerCommande,
   payerCreditCommande, createBonusFournisseur,
+  createEmploye, updateEmploye, deleteEmploye, toggleStatutEmploye, createPaiementEmploye,
+  createDetteAncienne, deleteDetteAncienne, ajouterReglementDetteAncienne,
+  createCompte, deleteCompte, versementCompte, retraitCompte,
+  createObjectifFournisseur, deleteObjectifFournisseur,
+  createVendeur, updateVendeur, toggleStatutVendeur,
 } from './api.service';
 import {
   getVentesPending, marquerVenteSynced, saveVentePending, countVentesPending,
@@ -310,6 +315,29 @@ async function executerOperation(type: string, payload: any): Promise<void> {
     // Commandes
     case 'commande_valider': await validerCommande(payload.id); break;
     case 'commande_annuler': await annulerCommande(payload.id, payload.utilisateurId); break;
+    // Employés
+    case 'employe_create': await createEmploye(payload); break;
+    case 'employe_update': await updateEmploye(payload.id, payload.data); break;
+    case 'employe_toggle': await toggleStatutEmploye(payload.id, payload.actif); break;
+    case 'employe_delete': await deleteEmploye(payload.id); break;
+    case 'paiement_employe': await createPaiementEmploye(payload.employeId, payload.data); break;
+    // Dettes anciennes
+    case 'dette_create': await createDetteAncienne(payload); break;
+    case 'dette_delete': await deleteDetteAncienne(payload.id); break;
+    case 'dette_reglement': await ajouterReglementDetteAncienne(payload.detteId, payload.data); break;
+    // Comptes bancaires
+    case 'compte_create': await createCompte(payload); break;
+    case 'compte_update': await api.put(`/comptes/${payload.id}`, payload.data); break;
+    case 'compte_delete': await deleteCompte(payload.id); break;
+    case 'compte_versement': await versementCompte(payload.id, payload.data); break;
+    case 'compte_retrait': await retraitCompte(payload.id, payload.data); break;
+    // Objectifs fournisseurs
+    case 'objectif_create': await createObjectifFournisseur(payload); break;
+    case 'objectif_delete': await deleteObjectifFournisseur(payload.id); break;
+    // Vendeurs
+    case 'vendeur_create': await createVendeur(payload); break;
+    case 'vendeur_update': await updateVendeur(payload.id, payload.data); break;
+    case 'vendeur_toggle': await toggleStatutVendeur(payload.id, payload.actif); break;
     default: throw new Error(`Type opération inconnu: ${type}`);
   }
 }
