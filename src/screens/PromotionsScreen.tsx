@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl, TouchableOpacity, ScrollView, Modal, TextInput } from 'react-native';
-import { Text, FAB, ActivityIndicator, Switch } from 'react-native-paper';
+import { Text, FAB, ActivityIndicator, Switch, Card } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import api from '../services/api.service';
+import NetInfo from '@react-native-community/netinfo';
+import api, { createPromotion, updatePromotion } from '../services/api.service';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -26,6 +28,7 @@ export default function PromotionsScreen() {
   const [promos, setPromos] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Promotion | null>(null);
   const [form, setForm] = useState({
@@ -37,13 +40,24 @@ export default function PromotionsScreen() {
   });
   const [saving, setSaving] = useState(false);
 
-  const charger = async () => {
+  const charger = async (event?: any) => {
+    setLoading(true);
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/promotions');
-      setPromos(res.data?.data || res.data || []);
-    } catch { }
+      const data = res.data?.data || res.data || [];
+      setPromos(data);
+      setFromCache(false);
+      sauvegarderCache('promotions', data).catch(() => {});
+    } catch {
+      const cached = await lireCache<Promotion>('promotions');
+      if (cached.length > 0) { setPromos(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
     setRefreshing(false);
+    if (event?.target?.complete) event.target.complete();
   };
 
   useEffect(() => { charger(); }, []);
@@ -75,13 +89,34 @@ export default function PromotionsScreen() {
     setSaving(true);
     try {
       const payload = { ...form, valeurReduction: valeur };
+      let offline = false;
       if (editing) {
-        await api.put(`/promotions/${editing.id}`, payload);
+        const editingId = editing.id;
+        const res = await executerOuMettreEnFile(
+          'promotion_update',
+          { id: editingId, data: payload },
+          () => updatePromotion(editingId, payload)
+        );
+        offline = res.offline;
+        if (offline) {
+          setPromos(prev => prev.map(x => x.id === editingId ? { ...x, ...payload } : x));
+        }
       } else {
-        await api.post('/promotions', payload);
+        const res = await executerOuMettreEnFile(
+          'promotion_create',
+          payload,
+          () => createPromotion(payload)
+        );
+        offline = res.offline;
       }
       setShowModal(false);
-      charger();
+      if (offline) {
+        Alert.alert('Sauvegardé', editing
+          ? 'Modification sauvegardée hors ligne — sync au retour connexion'
+          : 'Promotion sauvegardée hors ligne — sync au retour connexion');
+      } else {
+        charger();
+      }
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
     }
@@ -90,8 +125,16 @@ export default function PromotionsScreen() {
 
   const toggleActive = async (p: Promotion) => {
     try {
-      await api.put(`/promotions/${p.id}`, { ...p, active: !p.active });
+      const newData = { ...p, active: !p.active };
+      const res = await executerOuMettreEnFile(
+        'promotion_update',
+        { id: p.id, data: newData },
+        () => updatePromotion(p.id, newData)
+      );
       setPromos(prev => prev.map(x => x.id === p.id ? { ...x, active: !x.active } : x));
+      if (res.offline) {
+        Alert.alert('Sauvegardé', 'Changement sauvegardé hors ligne — sync au retour connexion');
+      }
     } catch { Alert.alert(tr('erreur', lang), tr('erreur', lang)); }
   };
 
@@ -108,100 +151,121 @@ export default function PromotionsScreen() {
   };
 
   const activeCount = promos.filter(p => p.active).length;
+  const pctPromos = promos.filter(p => p.typeReduction === 'POURCENTAGE');
+  const discountMoyen = pctPromos.length > 0
+    ? Math.round(pctPromos.reduce((s, p) => s + p.valeurReduction, 0) / pctPromos.length)
+    : 0;
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#e91e63" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
     <View style={s.container}>
-      {/* Hero */}
+      {/* Hero banner */}
       <View style={s.hero}>
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>{tr('total_promos', lang)}</Text>
           <Text style={s.heroVal}>{promos.length}</Text>
+          <Text style={s.heroLbl}>{tr('total_promos', lang)}</Text>
         </View>
-        <View style={s.heroDivider} />
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>{tr('active', lang)}</Text>
-          <Text style={[s.heroVal, { color: '#a5f3a5' }]}>{activeCount}</Text>
+          <Text style={s.heroVal}>{activeCount}</Text>
+          <Text style={s.heroLbl}>{tr('active', lang)}</Text>
         </View>
-        <View style={s.heroDivider} />
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>{tr('inactive', lang)}</Text>
-          <Text style={[s.heroVal, { color: '#ffb3b3' }]}>{promos.length - activeCount}</Text>
+          <Text style={s.heroVal}>{discountMoyen > 0 ? `${discountMoyen}%` : promos.length - activeCount}</Text>
+          <Text style={s.heroLbl}>{discountMoyen > 0 ? 'Remise moy.' : tr('inactive', lang)}</Text>
         </View>
       </View>
+
+      {/* Bandeau offline */}
+      {fromCache && (
+        <View style={s.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={s.offlineTxt}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
 
       <FlatList
         data={promos}
         keyExtractor={p => String(p.id)}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
-        contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); charger(); }}
+          />
+        }
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 90, paddingTop: 8 }}
         ListEmptyComponent={
           <View style={s.empty}>
-            <MaterialCommunityIcons name="tag-off-outline" size={48} color="#ccc" />
-            <Text style={s.emptyText}>{tr('aucune_promo', lang)}</Text>
+            <MaterialCommunityIcons name="tag-off-outline" size={64} color="#cbd5e1" />
+            <Text style={s.emptyTitle}>{tr('aucune_promo', lang)}</Text>
+            <Text style={s.emptySub}>Commencez par créer une promotion</Text>
           </View>
         }
         renderItem={({ item: p }) => (
-          <View style={[s.card, !p.active && s.cardInactive]}>
-            <View style={s.cardHeader}>
-              <View style={s.tagIcon}>
-                <MaterialCommunityIcons name="tag-outline" size={22} color="#e91e63" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.cardTitle}>{p.titre}</Text>
-                <View style={s.cardBadges}>
-                  <View style={[s.badge, p.globale ? s.badgeGlobal : s.badgeProduit]}>
-                    <Text style={s.badgeText}>{p.globale ? tr('globale', lang) : tr('par_produit', lang)}</Text>
-                  </View>
-                  <View style={[s.badge, p.active ? s.badgeActive : s.badgeInactive]}>
-                    <Text style={s.badgeText}>{p.active ? '● ' + tr('active', lang) : '○ ' + tr('inactive', lang)}</Text>
+          <Card style={[s.card, !p.active && s.cardInactive]}>
+            <Card.Content>
+              {/* En-tête */}
+              <View style={s.cardHeader}>
+                <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
+                  <MaterialCommunityIcons name="tag" size={22} color="#1a56db" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cardName} numberOfLines={1}>{p.titre}</Text>
+                  <View style={s.cardBadges}>
+                    <View style={[s.badge, p.globale ? s.badgeGlobal : s.badgeProduit]}>
+                      <Text style={s.badgeText}>{p.globale ? tr('globale', lang) : tr('par_produit', lang)}</Text>
+                    </View>
+                    <View style={[s.badge, p.active ? s.badgeActive : s.badgeInactive]}>
+                      <Text style={[s.badgeText, { color: p.active ? '#16a34a' : '#94a3b8' }]}>
+                        {p.active ? '● ' + tr('active', lang) : '○ ' + tr('inactive', lang)}
+                      </Text>
+                    </View>
                   </View>
                 </View>
+                <Switch value={p.active} onValueChange={() => toggleActive(p)} color="#1a56db" />
               </View>
-              <Switch
-                value={p.active}
-                onValueChange={() => toggleActive(p)}
-                color="#e91e63"
-              />
-            </View>
 
-            <View style={s.reductionRow}>
-              <MaterialCommunityIcons
-                name={p.typeReduction === 'POURCENTAGE' ? 'percent' : 'currency-usd-off'}
-                size={16} color="#e91e63"
-              />
-              <Text style={s.reductionText}>
-                {p.typeReduction === 'POURCENTAGE'
-                  ? `${p.valeurReduction}% ${tr('remise', lang).toLowerCase()}`
-                  : `${money(p.valeurReduction)} ${tr('remise', lang).toLowerCase()}`}
-              </Text>
-            </View>
+              {/* Réduction */}
+              <View style={s.reductionRow}>
+                <MaterialCommunityIcons
+                  name={p.typeReduction === 'POURCENTAGE' ? 'percent' : 'currency-usd-off'}
+                  size={16} color="#1a56db"
+                />
+                <Text style={s.reductionText}>
+                  {p.typeReduction === 'POURCENTAGE'
+                    ? `${p.valeurReduction}% ${tr('remise', lang).toLowerCase()}`
+                    : `${money(p.valeurReduction)} ${tr('remise', lang).toLowerCase()}`}
+                </Text>
+              </View>
 
-            {(p.dateDebut || p.dateFin) && (
-              <Text style={s.dates}>
-                <MaterialCommunityIcons name="calendar-range" size={12} />
-                {' '}{dateStr(p.dateDebut)} → {dateStr(p.dateFin)}
-              </Text>
-            )}
+              {/* Dates */}
+              {(p.dateDebut || p.dateFin) && (
+                <Text style={s.dates}>
+                  <MaterialCommunityIcons name="calendar-range" size={12} />
+                  {' '}{dateStr(p.dateDebut)} → {dateStr(p.dateFin)}
+                </Text>
+              )}
 
-            {p.produits && p.produits.length > 0 && (
-              <Text style={s.produitsList}>
-                Produits : {p.produits.map(pr => pr.nom).join(', ')}
-              </Text>
-            )}
+              {/* Produits liés */}
+              {p.produits && p.produits.length > 0 && (
+                <Text style={s.produitsList}>
+                  Produits : {p.produits.map(pr => pr.nom).join(', ')}
+                </Text>
+              )}
 
-            <View style={s.cardActions}>
-              <TouchableOpacity style={s.editBtn} onPress={() => openEdit(p)}>
-                <MaterialCommunityIcons name="pencil-outline" size={15} color="#e91e63" />
-                <Text style={s.editBtnText}>{tr('modifier', lang)}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.deleteBtn} onPress={() => supprimer(p)}>
-                <MaterialCommunityIcons name="trash-can-outline" size={15} color="#f44336" />
-                <Text style={s.deleteBtnText}>{tr('supprimer', lang)}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+              {/* Actions */}
+              <View style={s.cardActions}>
+                <TouchableOpacity style={s.editBtn} onPress={() => openEdit(p)}>
+                  <MaterialCommunityIcons name="pencil-outline" size={15} color="#1a56db" />
+                  <Text style={s.editBtnText}>{tr('modifier', lang)}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.deleteBtn} onPress={() => supprimer(p)}>
+                  <MaterialCommunityIcons name="trash-can-outline" size={15} color="#ef4444" />
+                  <Text style={s.deleteBtnText}>{tr('supprimer', lang)}</Text>
+                </TouchableOpacity>
+              </View>
+            </Card.Content>
+          </Card>
         )}
       />
 
@@ -237,7 +301,7 @@ export default function PromotionsScreen() {
                   >
                     <MaterialCommunityIcons
                       name={t === 'POURCENTAGE' ? 'percent' : 'cash-minus'}
-                      size={16} color={form.typeReduction === t ? '#fff' : '#e91e63'}
+                      size={16} color={form.typeReduction === t ? '#fff' : '#1a56db'}
                     />
                     <Text style={[s.typeBtnText, form.typeReduction === t && { color: '#fff' }]}>
                       {t === 'POURCENTAGE' ? tr('pourcentage', lang) : tr('montant_fixe', lang)}
@@ -265,7 +329,7 @@ export default function PromotionsScreen() {
                 <Switch
                   value={form.globale}
                   onValueChange={v => setForm({ ...form, globale: v })}
-                  color="#e91e63"
+                  color="#1a56db"
                 />
               </View>
 
@@ -274,7 +338,7 @@ export default function PromotionsScreen() {
                 <Switch
                   value={form.active}
                   onValueChange={v => setForm({ ...form, active: v })}
-                  color="#e91e63"
+                  color="#1a56db"
                 />
               </View>
             </ScrollView>
@@ -298,37 +362,43 @@ export default function PromotionsScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
-  hero: { backgroundColor: '#e91e63', flexDirection: 'row', padding: 16 },
-  heroStat: { flex: 1, alignItems: 'center' },
-  heroLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginBottom: 2 },
-  heroVal: { color: '#fff', fontWeight: 'bold', fontSize: 22 },
-  heroDivider: { width: 1, height: 36, backgroundColor: 'rgba(255,255,255,0.3)' },
 
-  card: { backgroundColor: '#fff', borderRadius: 14, marginBottom: 12, padding: 14, elevation: 2 },
-  cardInactive: { opacity: 0.6 },
+  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  heroStat: { flex: 1, alignItems: 'center' },
+  heroVal: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
+  heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
+
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: '#92400e', fontSize: 12 },
+
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  cardInactive: { opacity: 0.55 },
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
-  tagIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#fce4ec', alignItems: 'center', justifyContent: 'center' },
-  cardTitle: { fontWeight: 'bold', fontSize: 15, color: '#1a1a1a', marginBottom: 4 },
-  cardBadges: { flexDirection: 'row', gap: 6 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b', marginBottom: 4 },
+  cardBadges: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   badge: { borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
   badgeGlobal: { backgroundColor: '#e3f2fd' },
   badgeProduit: { backgroundColor: '#f3e5f5' },
-  badgeActive: { backgroundColor: '#e8f5e9' },
-  badgeInactive: { backgroundColor: '#fafafa', borderWidth: 1, borderColor: '#eee' },
-  badgeText: { fontSize: 10, color: '#555', fontWeight: '600' },
-  reductionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  reductionText: { color: '#e91e63', fontWeight: 'bold', fontSize: 14 },
-  dates: { color: '#999', fontSize: 12, marginBottom: 4 },
-  produitsList: { color: '#666', fontSize: 12, fontStyle: 'italic', marginBottom: 6 },
-  cardActions: { flexDirection: 'row', gap: 8, marginTop: 8, borderTopWidth: 1, borderTopColor: '#f5f5f5', paddingTop: 10 },
-  editBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#e91e63', borderRadius: 8, paddingVertical: 7 },
-  editBtnText: { color: '#e91e63', fontSize: 13, fontWeight: '600' },
-  deleteBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#f44336', borderRadius: 8, paddingVertical: 7 },
-  deleteBtnText: { color: '#f44336', fontSize: 13, fontWeight: '600' },
+  badgeActive: { backgroundColor: '#dcfce7' },
+  badgeInactive: { backgroundColor: '#f1f5f9' },
+  badgeText: { fontSize: 10, fontWeight: '600', color: '#555' },
 
-  empty: { alignItems: 'center', marginTop: 60, gap: 12 },
-  emptyText: { color: '#aaa', fontSize: 15 },
-  fab: { position: 'absolute', bottom: 20, right: 20, backgroundColor: '#e91e63' },
+  reductionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  reductionText: { color: '#1a56db', fontWeight: 'bold', fontSize: 14 },
+  dates: { color: '#94a3b8', fontSize: 12, marginBottom: 4 },
+  produitsList: { color: '#64748b', fontSize: 12, fontStyle: 'italic', marginBottom: 6 },
+  cardActions: { flexDirection: 'row', gap: 8, marginTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 10 },
+  editBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#1a56db', borderRadius: 8, paddingVertical: 7 },
+  editBtnText: { color: '#1a56db', fontSize: 13, fontWeight: '600' },
+  deleteBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#ef4444', borderRadius: 8, paddingVertical: 7 },
+  deleteBtnText: { color: '#ef4444', fontSize: 13, fontWeight: '600' },
+
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+
+  fab: { position: 'absolute', bottom: 20, right: 16, backgroundColor: '#1a56db' },
 
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' },
@@ -341,13 +411,13 @@ const s = StyleSheet.create({
   fieldLabel: { color: '#555', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 12 },
   input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa' },
   typeRow: { flexDirection: 'row', gap: 8 },
-  typeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#e91e63', borderRadius: 10, paddingVertical: 10 },
-  typeBtnActive: { backgroundColor: '#e91e63' },
-  typeBtnText: { color: '#e91e63', fontSize: 13, fontWeight: '600' },
+  typeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#1a56db', borderRadius: 10, paddingVertical: 10 },
+  typeBtnActive: { backgroundColor: '#1a56db' },
+  typeBtnText: { color: '#1a56db', fontSize: 13, fontWeight: '600' },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 },
 
   btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
   btnCancelText: { color: '#666', fontWeight: '600' },
-  btnConfirm: { flex: 2, backgroundColor: '#e91e63', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  btnConfirm: { flex: 2, backgroundColor: '#1a56db', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 });

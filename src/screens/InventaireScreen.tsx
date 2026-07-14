@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert, ScrollView,
 } from 'react-native';
@@ -6,6 +6,9 @@ import {
   Text, Card, Searchbar, ActivityIndicator, Chip, Button, FAB, Portal, Modal,
   TextInput, IconButton,
 } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { getProduits, getMouvements, ajouterMouvement } from '../services/api.service';
 import { getNiveaux, decomposer } from '../services/produit-niveau.service';
 import { Produit } from '../types';
@@ -44,6 +47,7 @@ export default function InventaireScreen() {
   const [filtre, setFiltre] = useState<FiltrePrincipal>('tous');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   // Niveaux
   const [niveauxMap, setNiveauxMap] = useState<{ [id: number]: ProduitNiveau[] }>({});
@@ -68,15 +72,29 @@ export default function InventaireScreen() {
     typeMouvement: 'ENTREE' as 'ENTREE' | 'SORTIE' | 'AJUSTEMENT',
     quantite: '',
     motif: '',
+    typeSortie: 'DETAIL',
   });
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await getProduits();
       const data = res.data?.data || res.data || [];
       setProduits(data);
       appliquerFiltres(data, filtre, search);
-    } catch { }
+      setFromCache(false);
+      sauvegarderCache('inventaire_produits', data).catch(() => {});
+    } catch {
+      const cached = await lireCache<Produit>('inventaire_produits');
+      if (cached.length > 0) {
+        setProduits(cached);
+        appliquerFiltres(cached, filtre, search);
+        setFromCache(true);
+      } else {
+        setFromCache(false);
+      }
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -177,21 +195,53 @@ export default function InventaireScreen() {
     return '#d97706';
   };
 
+  const iconTypeMouvement = (type: string) => {
+    if (type === 'ENTREE') return 'arrow-down-circle';
+    if (type === 'SORTIE') return 'arrow-up-circle';
+    return 'swap-horizontal';
+  };
+
   const enregistrerMouvement = async () => {
     if (!mouvForm.produitId) { Alert.alert(tr('erreur', lang), tr('selectionner_produit', lang)); return; }
     if (!mouvForm.quantite || isNaN(Number(mouvForm.quantite)) || Number(mouvForm.quantite) <= 0) {
       Alert.alert(tr('erreur', lang), tr('quantite', lang)); return;
     }
     try {
-      await ajouterMouvement({
-        produitId: mouvForm.produitId,
-        typeMouvement: mouvForm.typeMouvement,
-        quantite: parseFloat(mouvForm.quantite),
-        motif: mouvForm.motif,
-      });
+      const quantite = parseFloat(mouvForm.quantite);
+      const { produitId, typeMouvement, motif, typeSortie } = mouvForm;
+      let res: { success: boolean; offline: boolean; result?: any };
+      if (typeMouvement === 'ENTREE') {
+        const payload = { produitId, quantite, motif };
+        res = await executerOuMettreEnFile(
+          'mouvement_entree',
+          payload,
+          () => ajouterMouvement({ ...payload, typeMouvement: 'ENTREE' })
+        );
+      } else if (typeMouvement === 'SORTIE') {
+        const payload = { produitId, quantite, motif, typeSortie };
+        res = await executerOuMettreEnFile(
+          'mouvement_sortie',
+          payload,
+          () => ajouterMouvement({ ...payload, typeMouvement: 'SORTIE' })
+        );
+      } else {
+        // AJUSTEMENT
+        const payload = { produitId, nouvelleQuantite: quantite, motif };
+        res = await executerOuMettreEnFile(
+          'mouvement_ajustement',
+          payload,
+          () => ajouterMouvement({ produitId, quantite, motif, typeMouvement: 'AJUSTEMENT' })
+        );
+      }
       setShowMouvModal(false);
-      setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '' });
-      chargerMouvements(filtrePeriode);
+      setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '', typeSortie: 'DETAIL' });
+      if (!res.offline) chargerMouvements(filtrePeriode);
+      Alert.alert(
+        tr('succes', lang),
+        res.offline
+          ? 'Mouvement sauvegardé — synchronisation au retour connexion'
+          : tr('enregistrer', lang)
+      );
     } catch {
       Alert.alert(tr('erreur', lang), tr('erreur', lang));
     }
@@ -206,20 +256,30 @@ export default function InventaireScreen() {
 
   return (
     <View style={styles.container}>
+      {/* KPI row — fond #081648 */}
       <View style={styles.kpiRow}>
         <View style={styles.kpi}>
           <Text style={styles.kpiVal}>{produits.length}</Text>
           <Text style={styles.kpiLabel}>{tr('produits', lang)}</Text>
         </View>
-        <View style={[styles.kpi, { backgroundColor: '#fff3e0' }]}>
-          <Text style={[styles.kpiVal, { color: '#ff9800' }]}>{stockFaible}</Text>
+        <View style={styles.kpi}>
+          <Text style={[styles.kpiVal, { color: '#fbbf24' }]}>{stockFaible}</Text>
           <Text style={styles.kpiLabel}>{tr('stock_bas', lang)}</Text>
         </View>
-        <View style={[styles.kpi, { backgroundColor: '#ffebee' }]}>
-          <Text style={[styles.kpiVal, { color: '#f44336' }]}>{ruptures}</Text>
+        <View style={styles.kpi}>
+          <Text style={[styles.kpiVal, { color: '#f87171' }]}>{ruptures}</Text>
           <Text style={styles.kpiLabel}>{tr('ruptures', lang)}</Text>
         </View>
       </View>
+
+      {/* Bandeau offline */}
+      {fromCache && (
+        <View style={styles.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
+
       <Text style={styles.valeur}>{tr('valeur_stock', lang)} : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
 
       <View style={styles.filtreRow}>
@@ -241,6 +301,13 @@ export default function InventaireScreen() {
                        onChangeText={setSearchNiveaux} style={{ margin: 12 }} />
           }
           contentContainerStyle={{ paddingBottom: 20 }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <MaterialCommunityIcons name="package-variant" size={64} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>Aucun produit</Text>
+              <Text style={styles.emptySub}>Aucun produit ne correspond à la recherche</Text>
+            </View>
+          }
           renderItem={({ item }) => (
             <View style={styles.pnCard}>
               <TouchableOpacity style={styles.pnHeader} onPress={() => toggleNiveaux(item)} activeOpacity={0.8}>
@@ -333,27 +400,40 @@ export default function InventaireScreen() {
                 />
               }
               contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
-              ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_mouvement', lang)}</Text>}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <MaterialCommunityIcons name="swap-horizontal-bold" size={64} color="#cbd5e1" />
+                  <Text style={styles.emptyTitle}>{tr('aucun_mouvement', lang)}</Text>
+                  <Text style={styles.emptySub}>Aucun mouvement pour cette période</Text>
+                </View>
+              }
               renderItem={({ item }) => (
                 <Card style={styles.card}>
-                  <Card.Content>
-                    <View style={styles.row}>
-                      <Text variant="titleSmall" style={{ flex: 1 }} numberOfLines={1}>
+                  <Card.Content style={styles.cardRow}>
+                    <View style={[styles.avatar, { backgroundColor: couleurTypeMouvement(item.typeMouvement) + '22' }]}>
+                      <MaterialCommunityIcons
+                        name={iconTypeMouvement(item.typeMouvement) as any}
+                        size={22}
+                        color={couleurTypeMouvement(item.typeMouvement)}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardName} numberOfLines={1}>
                         {item.produit?.nom || item.produitNom || '—'}
                       </Text>
+                      <Text style={styles.cardSub}>
+                        {item.dateMouvement ? new Date(item.dateMouvement).toLocaleDateString('fr-FR') : '—'}
+                        {item.motif ? ` · ${item.motif}` : ''}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
                       <View style={[styles.typeBadge, { backgroundColor: couleurTypeMouvement(item.typeMouvement) }]}>
                         <Text style={styles.typeBadgeText}>{item.typeMouvement}</Text>
                       </View>
-                    </View>
-                    <View style={[styles.row, { marginTop: 6 }]}>
-                      <Text style={styles.sub}>
-                        {item.dateMouvement ? new Date(item.dateMouvement).toLocaleDateString('fr-FR') : '—'}
-                      </Text>
-                      <Text style={{ fontWeight: 'bold', fontSize: 15, color: couleurTypeMouvement(item.typeMouvement) }}>
+                      <Text style={{ fontWeight: 'bold', fontSize: 15, color: couleurTypeMouvement(item.typeMouvement), marginTop: 4 }}>
                         {item.typeMouvement === 'ENTREE' ? '+' : item.typeMouvement === 'SORTIE' ? '-' : ''}{item.quantite}
                       </Text>
                     </View>
-                    {item.motif ? <Text style={[styles.sub, { marginTop: 2 }]}>{item.motif}</Text> : null}
                   </Card.Content>
                 </Card>
               )}
@@ -365,7 +445,7 @@ export default function InventaireScreen() {
             icon="plus"
             style={styles.fab}
             onPress={() => {
-              setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '' });
+              setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '', typeSortie: 'DETAIL' });
               setShowProduitPicker(false);
               setShowMouvModal(true);
             }}
@@ -420,7 +500,7 @@ export default function InventaireScreen() {
                         styles.typeBtn,
                         mouvForm.typeMouvement === t && { backgroundColor: couleurTypeMouvement(t), borderColor: couleurTypeMouvement(t) },
                       ]}
-                      onPress={() => setMouvForm({ ...mouvForm, typeMouvement: t })}
+                      onPress={() => setMouvForm({ ...mouvForm, typeMouvement: t, typeSortie: 'DETAIL' })}
                     >
                       <Text style={[styles.typeBtnText, mouvForm.typeMouvement === t && { color: '#fff' }]}>
                         {t}
@@ -428,6 +508,30 @@ export default function InventaireScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                {/* Type de sortie — visible uniquement pour SORTIE */}
+                {mouvForm.typeMouvement === 'SORTIE' && (
+                  <>
+                    <Text style={styles.inputLabel}>Type de sortie</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                      {([
+                        { val: 'DETAIL', label: 'Détail' },
+                        { val: 'CONSOMMATION', label: 'Consommation' },
+                        { val: 'UTILISATION', label: 'Utilisation' },
+                        { val: 'PERTE', label: 'Perte' },
+                        { val: 'AUTRE', label: 'Autre' },
+                      ] as const).map(({ val, label }) => (
+                        <TouchableOpacity
+                          key={val}
+                          style={[styles.typeBtn, mouvForm.typeSortie === val && { backgroundColor: '#1a56db', borderColor: '#1a56db' }]}
+                          onPress={() => setMouvForm({ ...mouvForm, typeSortie: val })}
+                        >
+                          <Text style={[styles.typeBtnText, mouvForm.typeSortie === val && { color: '#fff' }]}>{label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
 
                 <TextInput
                   label={tr('quantite', lang) + ' *'}
@@ -455,30 +559,56 @@ export default function InventaireScreen() {
         /* ─── Vue stock normale ─── */
         <>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 4 }}>
-            <Searchbar placeholder={tr('recherche_produit', lang)} value={search} onChangeText={setSearch} style={[styles.search, { flex: 1, marginHorizontal: 0, marginBottom: 0 }]} />
+            <Searchbar
+              placeholder={tr('recherche_produit', lang)}
+              value={search}
+              onChangeText={setSearch}
+              style={[styles.searchBar, { flex: 1, marginHorizontal: 0, marginBottom: 0 }]}
+            />
             <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
           </View>
           <FlatList
             data={filtered}
             keyExtractor={p => String(p.id)}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
-            contentContainerStyle={{ padding: 12 }}
+            contentContainerStyle={{ padding: 12, paddingBottom: 20 }}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons
+                  name={filtre === 'rupture' ? 'package-variant-closed-remove' : 'package-variant'}
+                  size={64}
+                  color="#cbd5e1"
+                />
+                <Text style={styles.emptyTitle}>
+                  {filtre === 'rupture' ? 'Aucune rupture' : filtre === 'faible' ? 'Aucun stock faible' : 'Aucun produit'}
+                </Text>
+                <Text style={styles.emptySub}>
+                  {filtre === 'rupture' ? 'Tous les produits ont du stock' : 'Aucun produit disponible'}
+                </Text>
+              </View>
+            }
             renderItem={({ item }) => (
               <Card style={styles.card}>
-                <Card.Content>
-                  <View style={styles.row}>
-                    <Text variant="titleMedium" style={{ flex: 1 }}>{item.nom}</Text>
-                    <View style={[styles.badge, { backgroundColor: couleurStock(item) }]}>
-                      <Text style={styles.badgeText}>{item.quantite}</Text>
-                    </View>
+                <Card.Content style={styles.cardRow}>
+                  <View style={[styles.avatar, { backgroundColor: couleurStock(item) + '22' }]}>
+                    <MaterialCommunityIcons name="package-variant" size={22} color={couleurStock(item)} />
                   </View>
-                  <Text style={styles.sub}>Achat : {item.prixAchat} FCFA | Valeur : {(item.prixAchat * item.quantite).toLocaleString('fr-FR')} FCFA</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardName}>{item.nom}</Text>
+                    <Text style={styles.cardSub}>
+                      Achat : {item.prixAchat.toLocaleString('fr-FR')} FCFA | Valeur : {(item.prixAchat * item.quantite).toLocaleString('fr-FR')} FCFA
+                    </Text>
+                  </View>
+                  <View style={[styles.badge, { backgroundColor: couleurStock(item) }]}>
+                    <Text style={styles.badgeText}>{item.quantite}</Text>
+                  </View>
                 </Card.Content>
               </Card>
             )}
           />
         </>
       )}
+
       <BarcodeScannerModal
         visible={showScanner}
         title="Scanner un produit"
@@ -494,21 +624,38 @@ export default function InventaireScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
-  kpiRow: { flexDirection: 'row', padding: 12, gap: 8 },
-  kpi: { flex: 1, backgroundColor: '#e3f2fd', borderRadius: 12, padding: 12, alignItems: 'center' },
-  kpiVal: { fontSize: 22, fontWeight: 'bold', color: '#1a56db' },
-  kpiLabel: { fontSize: 11, color: '#666', marginTop: 2 },
-  valeur: { textAlign: 'center', color: '#1a56db', fontWeight: '600', marginBottom: 8 },
+
+  // KPI row — fond #081648
+  kpiRow: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  kpi: { flex: 1, alignItems: 'center' },
+  kpiVal: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
+  kpiLabel: { fontSize: 11, color: '#93c5fd', marginTop: 2 },
+
+  // Offline
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: '#92400e', fontSize: 12 },
+
+  valeur: { textAlign: 'center', color: '#1a56db', fontWeight: '600', marginVertical: 8 },
   filtreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4, flexWrap: 'wrap' },
   sousFiltreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 6, flexWrap: 'wrap' },
   filtreChip: { borderRadius: 20 },
-  search: { marginHorizontal: 12, marginBottom: 4 },
-  card: { marginBottom: 8, borderRadius: 12 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  searchBar: { marginHorizontal: 12, marginBottom: 4 },
+
+  // Design system cards
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
+  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+
   badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 },
   badgeText: { color: '#fff', fontWeight: 'bold' },
-  sub: { color: '#666', fontSize: 12, marginTop: 4 },
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+
+  // Empty states
+  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+
   fab: { position: 'absolute', bottom: 20, right: 20, backgroundColor: '#1a56db' },
 
   // Mouvements

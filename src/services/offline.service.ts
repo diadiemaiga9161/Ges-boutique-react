@@ -1,10 +1,22 @@
 import NetInfo from '@react-native-community/netinfo';
-import { createVente, createProduit, updateProduit } from './api.service';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  createVente, createProduit, updateProduit, createDepense, createClient, createCommande,
+  createFournisseur, updateFournisseur, creerAchatFournisseur, payerFournisseur,
+  ajouterMouvement, ouvrirCaisse, fermerCaisse, ajouterEntreeCaisse, ajouterSortieCaisse,
+  reglerCreditCaisse, createDepot, effectuerRetraitDepot, createTransfert,
+  createPromotion, updatePromotion, validerCommande, annulerCommande,
+  payerCreditCommande, createBonusFournisseur,
+} from './api.service';
 import {
   getVentesPending, marquerVenteSynced, saveVentePending, countVentesPending,
   saveProduitPending, getProduitsPending, marquerProduitPendingSynced,
   saveProduitUpdatePending, getProduitsUpdatesPending, marquerProduitUpdateSynced,
   countProduitsPending,
+  saveDepensePending, getDepensesPending, marquerDepenseSynced,
+  saveClientPending, getClientsPending, marquerClientPendingSynced,
+  saveCommandePending, getCommandesPending, marquerCommandePendingSynced,
+  saveOperation, getOperationsPending, markOperationSynced, incrementOperationAttempts, countOperationsPending,
 } from '../db/database';
 
 let syncInProgress = false;
@@ -131,6 +143,212 @@ export async function getNombreProduitsPending(): Promise<number> {
   return countProduitsPending();
 }
 
+// ─── Dépenses offline ────────────────────────────────────────────────────────
+
+export async function creerDepenseOffline(data: any): Promise<{ success: boolean; offline: boolean }> {
+  const state = await NetInfo.fetch();
+  if (state.isConnected) {
+    try {
+      await createDepense(data);
+      return { success: true, offline: false };
+    } catch {
+      const localId = genererLocalId();
+      await saveDepensePending(localId, data);
+      return { success: true, offline: true };
+    }
+  } else {
+    const localId = genererLocalId();
+    await saveDepensePending(localId, data);
+    return { success: true, offline: true };
+  }
+}
+
+export async function syncDepensesPending(): Promise<number> {
+  const state = await NetInfo.fetch();
+  if (!state.isConnected) return 0;
+  let synced = 0;
+  const pending = await getDepensesPending();
+  for (const d of pending) {
+    try {
+      const { localId, ...data } = d;
+      await createDepense(data);
+      await marquerDepenseSynced(localId);
+      synced++;
+    } catch { }
+  }
+  return synced;
+}
+
+// ─── Clients offline ─────────────────────────────────────────────────────────
+
+export async function creerClientOffline(data: any): Promise<{ success: boolean; offline: boolean }> {
+  const state = await NetInfo.fetch();
+  if (state.isConnected) {
+    try {
+      await createClient(data);
+      return { success: true, offline: false };
+    } catch {
+      const localId = genererLocalId();
+      await saveClientPending(localId, data);
+      return { success: true, offline: true };
+    }
+  } else {
+    const localId = genererLocalId();
+    await saveClientPending(localId, data);
+    return { success: true, offline: true };
+  }
+}
+
+export async function syncClientsPending(): Promise<number> {
+  const state = await NetInfo.fetch();
+  if (!state.isConnected) return 0;
+  let synced = 0;
+  const pending = await getClientsPending();
+  for (const c of pending) {
+    try {
+      const { localId, ...data } = c;
+      await createClient(data);
+      await marquerClientPendingSynced(localId);
+      synced++;
+    } catch { }
+  }
+  return synced;
+}
+
+// ─── Commandes offline ───────────────────────────────────────────────────────
+
+export async function creerCommandeOffline(data: any): Promise<{ success: boolean; offline: boolean }> {
+  const state = await NetInfo.fetch();
+  if (state.isConnected) {
+    try {
+      await createCommande(data);
+      return { success: true, offline: false };
+    } catch {
+      const localId = genererLocalId();
+      await saveCommandePending(localId, data);
+      return { success: true, offline: true };
+    }
+  } else {
+    const localId = genererLocalId();
+    await saveCommandePending(localId, data);
+    return { success: true, offline: true };
+  }
+}
+
+export async function syncCommandesPending(): Promise<number> {
+  const state = await NetInfo.fetch();
+  if (!state.isConnected) return 0;
+  let synced = 0;
+  const pending = await getCommandesPending();
+  for (const c of pending) {
+    try {
+      const { localId, ...data } = c;
+      await createCommande(data);
+      await marquerCommandePendingSynced(localId);
+      synced++;
+    } catch { }
+  }
+  return synced;
+}
+
+// ─── File d'attente générique ────────────────────────────────────────────────
+
+export async function mettreEnFile(type: string, payload: any): Promise<string> {
+  const id = genererLocalId();
+  await saveOperation(id, type, payload);
+  return id;
+}
+
+export async function executerOuMettreEnFile<T>(
+  type: string,
+  payload: any,
+  apiFn: () => Promise<T>
+): Promise<{ success: boolean; offline: boolean; result?: T }> {
+  const net = await NetInfo.fetch();
+  if (net.isConnected) {
+    try {
+      const result = await apiFn();
+      return { success: true, offline: false, result };
+    } catch {
+      await mettreEnFile(type, payload);
+      return { success: true, offline: true };
+    }
+  } else {
+    await mettreEnFile(type, payload);
+    return { success: true, offline: true };
+  }
+}
+
+async function executerOperation(type: string, payload: any): Promise<void> {
+  switch (type) {
+    // Fournisseurs
+    case 'fournisseur_create': await createFournisseur(payload); break;
+    case 'fournisseur_update': await updateFournisseur(payload.id, payload.data); break;
+    case 'achat_fournisseur': await creerAchatFournisseur(payload); break;
+    case 'paiement_fournisseur': await payerFournisseur(payload); break;
+    case 'bonus_fournisseur': await createBonusFournisseur(payload); break;
+    // Mouvements stock
+    case 'mouvement_entree': await ajouterMouvement({ ...payload, typeMouvement: 'ENTREE' }); break;
+    case 'mouvement_sortie': await ajouterMouvement({ ...payload, typeMouvement: 'SORTIE' }); break;
+    case 'mouvement_ajustement': await ajouterMouvement({ ...payload, typeMouvement: 'AJUSTEMENT' }); break;
+    // Caisse
+    case 'caisse_ouvrir': await ouvrirCaisse(payload); break;
+    case 'caisse_fermer': await fermerCaisse(payload); break;
+    case 'caisse_entree': await ajouterEntreeCaisse(payload); break;
+    case 'caisse_sortie': await ajouterSortieCaisse(payload); break;
+    // Crédits
+    case 'credit_reglement': await reglerCreditCaisse(payload); break;
+    case 'credit_commande_payer': await payerCreditCommande(payload.id, payload.montant); break;
+    // Dépôts garde
+    case 'depot_create': await createDepot(payload); break;
+    case 'depot_retrait': await effectuerRetraitDepot(payload.id, payload.data); break;
+    // Transferts
+    case 'transfert_create': await createTransfert(payload); break;
+    // Promotions
+    case 'promotion_create': await createPromotion(payload); break;
+    case 'promotion_update': await updatePromotion(payload.id, payload.data); break;
+    // Commandes
+    case 'commande_valider': await validerCommande(payload.id); break;
+    case 'commande_annuler': await annulerCommande(payload.id, payload.utilisateurId); break;
+    default: throw new Error(`Type opération inconnu: ${type}`);
+  }
+}
+
+export async function syncOperationsPending(): Promise<number> {
+  const net = await NetInfo.fetch();
+  if (!net.isConnected) return 0;
+  let synced = 0;
+  const pending = await getOperationsPending();
+  for (const op of pending) {
+    if (op.attempts >= 5) continue; // Abandon après 5 tentatives
+    try {
+      await executerOperation(op.type, op.payload);
+      await markOperationSynced(op.id);
+      synced++;
+    } catch (e) {
+      await incrementOperationAttempts(op.id, String(e));
+    }
+  }
+  return synced;
+}
+
+export async function getNombreOperationsPending(): Promise<number> {
+  return countOperationsPending();
+}
+
+// ─── Cache générique AsyncStorage ───────────────────────────────────────────
+
+export async function sauvegarderCache(key: string, data: any): Promise<void> {
+  try { await AsyncStorage.setItem(`cache_${key}`, JSON.stringify(data)); } catch {}
+}
+
+export async function lireCache<T>(key: string): Promise<T[]> {
+  try {
+    const s = await AsyncStorage.getItem(`cache_${key}`);
+    return s ? JSON.parse(s) : [];
+  } catch { return []; }
+}
+
 // ─── Auto-sync au retour de connexion ───────────────────────────────────────
 
 export function demarrerAutoSync(onSync?: (n: number) => void): () => void {
@@ -138,7 +356,11 @@ export function demarrerAutoSync(onSync?: (n: number) => void): () => void {
     if (state.isConnected) {
       const nVentes = await syncVentesPending();
       const nProduits = await syncProduitsPending();
-      const total = nVentes + nProduits;
+      const nDepenses = await syncDepensesPending();
+      const nClients = await syncClientsPending();
+      const nCommandes = await syncCommandesPending();
+      const nOperations = await syncOperationsPending();
+      const total = nVentes + nProduits + nDepenses + nClients + nCommandes + nOperations;
       if (total > 0 && onSync) onSync(total);
     }
   });

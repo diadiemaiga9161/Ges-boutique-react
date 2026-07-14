@@ -15,8 +15,15 @@ export function getApiUrlForPort(port: number): string {
   return BOUTIQUES_CONFIG[port - 1]?.url || DEFAULT_API_URL;
 }
 
-const api = axios.create({ baseURL: DEFAULT_API_URL, timeout: 10000 });
+// ─── Callback déconnexion automatique (401) ───────────────────────────────
+let _onAuthError: (() => void) | null = null;
+export function setOnAuthError(cb: () => void) {
+  _onAuthError = cb;
+}
 
+const api = axios.create({ baseURL: DEFAULT_API_URL, timeout: 15000 });
+
+// Intercepteur requête : injecte l'URL boutique + le token JWT
 api.interceptors.request.use(async (config) => {
   const savedUrl = await AsyncStorage.getItem('api_url');
   if (savedUrl) config.baseURL = savedUrl;
@@ -25,11 +32,24 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Intercepteur réponse : déconnexion automatique sur 401
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      await AsyncStorage.removeItem('user');
+      await AsyncStorage.removeItem('token');
+      if (_onAuthError) _onAuthError();
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default api;
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
 export const login = (identifier: string, password: string) =>
-  api.post('/auth/login', { username: identifier, password });
+  api.post('/auth/login', { identifier, password });
 export const forgotPassword = (email: string) =>
   api.post('/auth/mot-de-passe-oublie', { email });
 export const resetPassword = (token: string, newPassword: string) =>
@@ -174,7 +194,15 @@ export const getPaiementsEmploye = () => api.get('/paiements-employe');
 // ─── Mouvements de stock ───────────────────────────────────────────────────
 export const getMouvements = (params?: { dateDebut?: string; dateFin?: string }) =>
   api.get('/inventaire/mouvements', { params });
-export const ajouterMouvement = (data: any) => api.post('/inventaire/mouvement', data);
+export const ajouterMouvement = (data: any) => {
+  const { typeMouvement, quantite, ...rest } = data;
+  if (typeMouvement === 'ENTREE') return api.post('/inventaire/entree', { quantite, ...rest });
+  if (typeMouvement === 'SORTIE') return api.post('/inventaire/sortie', { quantite, ...rest });
+  // AJUSTEMENT : le backend attend nouvelleQuantite
+  return api.post('/inventaire/ajustement', { nouvelleQuantite: quantite, ...rest });
+};
+export const getSorties = (params?: { typeSortie?: string; produitId?: number; dateDebut?: string; dateFin?: string }) =>
+  api.get('/inventaire/sorties', { params });
 
 // ─── Avances fournisseurs ──────────────────────────────────────────────────
 export const getAvancesFournisseur = (id: number) =>
@@ -250,3 +278,24 @@ export const getAvancesClient = (clientId: number) =>
 // ─── Retours vente ──────────────────────────────────────────────────────────
 export const retourVente = (id: number, data: any) => api.post(`/ventes/${id}/retour`, data);
 export const modifierLignesVente = (id: number, data: any) => api.put(`/ventes/${id}/lignes`, data);
+
+// ─── Ventes annulées ────────────────────────────────────────────────────────
+export const getVentesAnnulees = (boutiqueId: number) =>
+  api.get(`/ventes/${boutiqueId}/annulees`);
+
+// ─── Annulation paiements ────────────────────────────────────────────────────
+export const getPaiementsFournisseur = (params?: { dateDebut?: string; dateFin?: string }) =>
+  api.get('/fournisseur-achats/paiements', { params });
+
+export const annulerPaiementFournisseur = (paiementId: number, utilisateurId: number) =>
+  api.post(`/fournisseur-achats/paiement/${paiementId}/annuler`, null, {
+    params: { utilisateurId: utilisateurId.toString() },
+  });
+
+export const getReglements = (params?: { dateDebut?: string; dateFin?: string }) =>
+  api.get('/caisse/credits/reglements', { params });
+
+export const annulerReglementCredit = (operationId: number, utilisateurId: number) =>
+  api.post(`/caisse/credits/reglement/${operationId}/annuler`, null, {
+    params: { utilisateurId: utilisateurId.toString() },
+  });

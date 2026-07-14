@@ -247,7 +247,7 @@ export default function ProduitsScreen() {
     try {
       const payload = {
         nom: formNiveau.nom.trim(),
-        parentId: formNiveau.parentId ? Number(formNiveau.parentId) : null,
+        parentId: formNiveau.parentId ? Number(formNiveau.parentId) : undefined,
         facteur: Math.max(1, parseNum(formNiveau.facteur, 1)),
         prixAchat: parseNum(formNiveau.prixAchat, 0),
         prixVente: parseNum(formNiveau.prixVente, 0),

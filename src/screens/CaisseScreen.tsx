@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, ScrollView, FlatList, StyleSheet, Alert, Modal,
-  TouchableOpacity, KeyboardAvoidingView, Platform,
+  TouchableOpacity, KeyboardAvoidingView, Platform, RefreshControl,
 } from 'react-native';
-import { Text, ActivityIndicator } from 'react-native-paper';
+import { Text, ActivityIndicator, Card, FAB } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import {
   getVentesJour, getCreditsNonRegles, getCreditsRegles, getCreditsEnRetard,
@@ -14,6 +15,8 @@ import {
 import { TextInput } from 'react-native';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import NetInfo from '@react-native-community/netinfo';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v || 0).toLocaleString('fr-FR') + ' FCFA';
@@ -74,16 +77,19 @@ interface Operation {
 export default function CaisseScreen() {
   const { lang } = useLang();
   const [onglet, setOnglet] = useState<Onglet>('etat');
+  const [fromCache, setFromCache] = useState(false);
 
   // --- État ---
   const [ventesJour, setVentesJour] = useState<any[]>([]);
   const [etatCaisse, setEtatCaisse] = useState<any>(null);
   const [loadingEtat, setLoadingEtat] = useState(true);
+  const [refreshingEtat, setRefreshingEtat] = useState(false);
 
   // --- Crédits ---
   const [credits, setCredits] = useState<CreditInfo[]>([]);
   const [filtreCredit, setFiltreCredit] = useState<FiltreCredit>('EN_COURS');
   const [loadingCredits, setLoadingCredits] = useState(false);
+  const [refreshingCredits, setRefreshingCredits] = useState(false);
 
   // Modal détail crédit
   const [showDetailCredit, setShowDetailCredit] = useState(false);
@@ -101,6 +107,7 @@ export default function CaisseScreen() {
   const [operations, setOperations] = useState<Operation[]>([]);
   const [filtrePeriode, setFiltrePeriode] = useState<FiltrePeriode>('AUJOURD_HUI');
   const [loadingOps, setLoadingOps] = useState(false);
+  const [refreshingOps, setRefreshingOps] = useState(false);
 
   // Modal ajout opération
   const [showAjoutOp, setShowAjoutOp] = useState(false);
@@ -120,15 +127,31 @@ export default function CaisseScreen() {
   const chargerEtat = useCallback(async () => {
     setLoadingEtat(true);
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const [resV, resEtat] = await Promise.all([
         getVentesJour().catch(() => ({ data: [] })),
         getCaisseEtat().catch(() => ({ data: null })),
       ]);
-      setVentesJour(resV.data?.data || resV.data || []);
+      const ventes = resV.data?.data || resV.data || [];
       const etat = resEtat.data?.caisse || resEtat.data?.data || resEtat.data;
+      setVentesJour(ventes);
       setEtatCaisse(etat);
-    } catch { }
+      setFromCache(false);
+      sauvegarderCache('caisse_etat', { ventes, etat }).catch(() => {});
+    } catch {
+      const cached = await lireCache<any>('caisse_etat');
+      if (cached.length > 0) {
+        const c = cached[0] as any;
+        setVentesJour(c.ventes || []);
+        setEtatCaisse(c.etat || null);
+        setFromCache(true);
+      } else {
+        setFromCache(false);
+      }
+    }
     setLoadingEtat(false);
+    setRefreshingEtat(false);
   }, []);
 
   useEffect(() => { chargerEtat(); }, []);
@@ -152,6 +175,7 @@ export default function CaisseScreen() {
       }
     } catch { }
     setLoadingCredits(false);
+    setRefreshingCredits(false);
   }, []);
 
   // ─── Chargement opérations ───────────────────────────────────────────────
@@ -175,6 +199,7 @@ export default function CaisseScreen() {
       setOperations(Array.isArray(raw) ? raw : []);
     } catch { }
     setLoadingOps(false);
+    setRefreshingOps(false);
   }, []);
 
   // ─── Chargement stats ────────────────────────────────────────────────────
@@ -302,14 +327,22 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     }
     setSavingRegl(true);
     try {
-      await reglerCreditCaisse({
+      const payload = {
         venteCreditId: selectedCredit.venteId,
         montantRegle: montant,
         modePaiement: reglMode,
-      });
+      };
+      const res = await executerOuMettreEnFile(
+        'credit_reglement',
+        payload,
+        () => reglerCreditCaisse(payload)
+      );
       setShowReglement(false);
-      chargerCredits(filtreCredit);
-      Alert.alert('OK', tr('enregistrer', lang));
+      if (!res.offline) chargerCredits(filtreCredit);
+      Alert.alert('OK', res.offline
+        ? 'Règlement sauvegardé — synchronisation au retour connexion'
+        : tr('enregistrer', lang)
+      );
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement impossible');
     }
@@ -329,22 +362,54 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       referencePaiement: opRef.trim() || '',
     };
     try {
-      if (opType === 'ENTREE') {
-        await ajouterEntreeCaisse(data);
-      } else {
-        await ajouterSortieCaisse(data);
-      }
+      const res = opType === 'ENTREE'
+        ? await executerOuMettreEnFile('caisse_entree', data, () => ajouterEntreeCaisse(data))
+        : await executerOuMettreEnFile('caisse_sortie', data, () => ajouterSortieCaisse(data));
       setShowAjoutOp(false);
       setOpMontant('');
       setOpMotif('');
       setOpRef('');
-      chargerOperations(filtrePeriode);
-      chargerEtat();
-      Alert.alert('OK', `${opType === 'ENTREE' ? tr('entree', lang) : tr('sortie', lang)}`);
+      if (!res.offline) {
+        chargerOperations(filtrePeriode);
+        chargerEtat();
+      }
+      Alert.alert('OK', res.offline
+        ? 'Sauvegardé hors ligne — synchronisation au retour connexion'
+        : `${opType === 'ENTREE' ? tr('entree', lang) : tr('sortie', lang)}`
+      );
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Opération impossible');
     }
     setSavingOp(false);
+  };
+
+  // ─── Ouvrir / Fermer caisse (offline-first) ──────────────────────────────
+  const handleOuvrirCaisse = async () => {
+    try {
+      const res = await executerOuMettreEnFile('caisse_ouvrir', {}, () => ouvrirCaisse({}));
+      if (res.offline) {
+        setEtatCaisse((prev: any) => ({ ...(prev || {}), ouverte: true, estOuverte: true }));
+        Alert.alert('OK', "Caisse ouverte — synchronisation au retour connexion");
+      } else {
+        chargerEtat();
+      }
+    } catch {
+      Alert.alert(tr('erreur', lang), "Impossible d'ouvrir la caisse");
+    }
+  };
+
+  const handleFermerCaisse = async () => {
+    try {
+      const res = await executerOuMettreEnFile('caisse_fermer', {}, () => fermerCaisse({}));
+      if (res.offline) {
+        setEtatCaisse((prev: any) => ({ ...(prev || {}), ouverte: false, estOuverte: false }));
+        Alert.alert('OK', 'Caisse fermée — synchronisation au retour connexion');
+      } else {
+        chargerEtat();
+      }
+    } catch {
+      Alert.alert(tr('erreur', lang), 'Impossible de fermer la caisse');
+    }
   };
 
   // ─── Composants helpers ──────────────────────────────────────────────────
@@ -386,9 +451,21 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         ))}
       </View>
 
+      {/* Bandeau offline */}
+      {fromCache && (
+        <View style={st.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={st.offlineTxt}>Mode hors ligne — caisse mise en cache — données non temps réel</Text>
+        </View>
+      )}
+
       {/* ════════════ ONGLET ÉTAT ════════════ */}
       {onglet === 'etat' && (
-        <ScrollView style={st.container} contentContainerStyle={{ padding: 16 }}>
+        <ScrollView
+          style={st.container}
+          contentContainerStyle={{ padding: 16 }}
+          refreshControl={<RefreshControl refreshing={refreshingEtat} onRefresh={() => { setRefreshingEtat(true); chargerEtat(); }} colors={['#1a56db']} />}
+        >
           {loadingEtat ? (
             <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#1a56db" />
           ) : (
@@ -430,11 +507,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   onPress={() =>
                     Alert.alert(tr('ouvrir_caisse', lang), tr('confirmer', lang) + ' ?', [
                       { text: tr('annuler', lang), style: 'cancel' },
-                      {
-                        text: tr('confirmer', lang),
-                        onPress: () =>
-                          ouvrirCaisse({}).then(() => chargerEtat()).catch(() => Alert.alert(tr('erreur', lang), 'Impossible d\'ouvrir la caisse')),
-                      },
+                      { text: tr('confirmer', lang), onPress: () => handleOuvrirCaisse() },
                     ])
                   }
                 >
@@ -445,11 +518,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   onPress={() =>
                     Alert.alert(tr('fermer_caisse', lang), tr('confirmer', lang) + ' ?', [
                       { text: tr('annuler', lang), style: 'cancel' },
-                      {
-                        text: tr('confirmer', lang),
-                        onPress: () =>
-                          fermerCaisse({}).then(() => chargerEtat()).catch(() => Alert.alert(tr('erreur', lang), 'Impossible de fermer la caisse')),
-                      },
+                      { text: tr('confirmer', lang), onPress: () => handleFermerCaisse() },
                     ])
                   }
                 >
@@ -466,27 +535,35 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               {/* Ventes du jour */}
               <Text style={st.sectionTitle}>{tr('vente', lang)} ({ventesJour.length})</Text>
               {ventesJour.length === 0 ? (
-                <Text style={st.empty}>{tr('aucun_resultat', lang)}</Text>
+                <View style={st.emptyState}>
+                  <MaterialCommunityIcons name="cash-register" size={48} color="#cbd5e1" />
+                  <Text style={st.emptyText}>{tr('aucun_resultat', lang)}</Text>
+                </View>
               ) : (
                 ventesJour.map((v: any) => (
-                  <View key={v.id} style={st.venteCard}>
-                    <View style={st.row}>
-                      <Text style={st.venteClient}>{v.clientNom || 'Client anonyme'}</Text>
-                      <Text style={st.venteMontant}>{money(v.montantTotal)}</Text>
-                    </View>
-                    <View style={st.row}>
-                      <View style={[st.badgeMode, v.estCredit && { backgroundColor: '#fce4ec' }]}>
-                        <Text style={[st.badgeModeText, v.estCredit && { color: '#dc2626' }]}>
-                          {v.estCredit ? 'Crédit' : (v.modePaiement || '').replace('_', ' ')}
+                  <Card key={v.id} style={st.venteCard}>
+                    <Card.Content style={st.cardRow}>
+                      <View style={[st.avatar, { backgroundColor: '#1a56db22' }]}>
+                        <MaterialCommunityIcons name="receipt" size={20} color="#1a56db" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={st.cardName}>{v.clientNom || 'Client anonyme'}</Text>
+                        <View style={[st.badgeMode, v.estCredit && { backgroundColor: '#fce4ec' }]}>
+                          <Text style={[st.badgeModeText, v.estCredit && { color: '#dc2626' }]}>
+                            {v.estCredit ? 'Crédit' : (v.modePaiement || '').replace('_', ' ')}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={st.cardAmt}>{money(v.montantTotal)}</Text>
+                        <Text style={st.venteHeure}>
+                          {v.dateVente
+                            ? new Date(v.dateVente).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                            : ''}
                         </Text>
                       </View>
-                      <Text style={st.venteHeure}>
-                        {v.dateVente
-                          ? new Date(v.dateVente).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-                          : ''}
-                      </Text>
-                    </View>
-                  </View>
+                    </Card.Content>
+                  </Card>
                 ))
               )}
             </>
@@ -529,67 +606,78 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               data={credits}
               keyExtractor={(c) => String(c.venteId)}
               contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-              ListEmptyComponent={<Text style={st.empty}>Aucun crédit dans cette catégorie</Text>}
+              refreshControl={<RefreshControl refreshing={refreshingCredits} onRefresh={() => { setRefreshingCredits(true); chargerCredits(filtreCredit); }} colors={['#1a56db']} />}
+              ListEmptyComponent={
+                <View style={st.emptyState}>
+                  <MaterialCommunityIcons name="credit-card-check-outline" size={64} color="#cbd5e1" />
+                  <Text style={st.emptyText}>Aucun crédit dans cette catégorie</Text>
+                </View>
+              }
               renderItem={({ item: c }) => {
                 const pct =
                   c.montantTotal > 0
                     ? Math.min(100, Math.round((c.montantVerse / c.montantTotal) * 100))
                     : 0;
                 return (
-                  <View style={[st.creditCard, c.enRetard && st.creditCardRetard]}>
-                    <View style={st.row}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={st.creditClient}>
-                          {c.clientNom}{c.clientPrenom ? ' ' + c.clientPrenom : ''}
-                        </Text>
-                        {c.clientTelephone ? (
-                          <Text style={st.creditTel}>{c.clientTelephone}</Text>
-                        ) : null}
-                        <Text style={st.creditNum}>{c.numeroVente}</Text>
+                  <Card style={[st.creditCardPaper, c.enRetard && { borderLeftWidth: 3, borderLeftColor: '#dc2626' }]}>
+                    <Card.Content>
+                      <View style={st.cardRow}>
+                        <View style={[st.avatar, { backgroundColor: c.enRetard ? '#fee2e2' : '#dbeafe' }]}>
+                          <MaterialCommunityIcons name="account-clock" size={20} color={c.enRetard ? '#dc2626' : '#1a56db'} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={st.cardName}>
+                            {c.clientNom}{c.clientPrenom ? ' ' + c.clientPrenom : ''}
+                          </Text>
+                          {c.clientTelephone ? (
+                            <Text style={st.cardSub}>{c.clientTelephone}</Text>
+                          ) : null}
+                          <Text style={st.cardSub}>{c.numeroVente}</Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={[st.creditRestant, c.enRetard && { color: '#dc2626' }, c.estReglee && { color: '#16a34a' }]}>
+                            {c.estReglee ? 'Réglé' : money(c.montantRestant)}
+                          </Text>
+                          {c.enRetard && (
+                            <View style={st.retardBadge}>
+                              <Text style={st.retardBadgeText}>Retard</Text>
+                            </View>
+                          )}
+                        </View>
                       </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={[st.creditRestant, c.enRetard && { color: '#dc2626' }, c.estReglee && { color: '#16a34a' }]}>
-                          {c.estReglee ? 'Réglé' : money(c.montantRestant)}
-                        </Text>
-                        {c.enRetard && (
-                          <View style={st.retardBadge}>
-                            <Text style={st.retardBadgeText}>Retard</Text>
+
+                      {/* Barre progression */}
+                      {!c.estReglee && (
+                        <View style={st.progressWrap}>
+                          <View style={st.progressBg}>
+                            <View
+                              style={[
+                                st.progressFill,
+                                c.enRetard && { backgroundColor: '#dc2626' },
+                                { width: `${pct}%` as any },
+                              ]}
+                            />
                           </View>
+                          <View style={st.rowBetween}>
+                            <Text style={st.progressText}>Versé {money(c.montantVerse)}</Text>
+                            <Text style={st.progressText}>/ {money(c.montantTotal)}</Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Boutons */}
+                      <View style={st.creditActions}>
+                        <TouchableOpacity style={st.btnVoir} onPress={() => openDetailCredit(c)}>
+                          <Text style={st.btnVoirText}>Voir</Text>
+                        </TouchableOpacity>
+                        {!c.estReglee && (
+                          <TouchableOpacity style={st.btnRegler} onPress={() => openReglement(c)}>
+                            <Text style={st.btnReglerText}>Régler</Text>
+                          </TouchableOpacity>
                         )}
                       </View>
-                    </View>
-
-                    {/* Barre progression */}
-                    {!c.estReglee && (
-                      <View style={st.progressWrap}>
-                        <View style={st.progressBg}>
-                          <View
-                            style={[
-                              st.progressFill,
-                              c.enRetard && { backgroundColor: '#dc2626' },
-                              { width: `${pct}%` as any },
-                            ]}
-                          />
-                        </View>
-                        <View style={st.row}>
-                          <Text style={st.progressText}>Versé {money(c.montantVerse)}</Text>
-                          <Text style={st.progressText}>/ {money(c.montantTotal)}</Text>
-                        </View>
-                      </View>
-                    )}
-
-                    {/* Boutons */}
-                    <View style={st.creditActions}>
-                      <TouchableOpacity style={st.btnVoir} onPress={() => openDetailCredit(c)}>
-                        <Text style={st.btnVoirText}>Voir</Text>
-                      </TouchableOpacity>
-                      {!c.estReglee && (
-                        <TouchableOpacity style={st.btnRegler} onPress={() => openReglement(c)}>
-                          <Text style={st.btnReglerText}>Régler</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
+                    </Card.Content>
+                  </Card>
                 );
               }}
             />
@@ -629,31 +717,45 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               data={operations}
               keyExtractor={(op, i) => String(op.id ?? i)}
               contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-              ListEmptyComponent={<Text style={st.empty}>Aucune opération sur cette période</Text>}
+              refreshControl={<RefreshControl refreshing={refreshingOps} onRefresh={() => { setRefreshingOps(true); chargerOperations(filtrePeriode); }} colors={['#1a56db']} />}
+              ListEmptyComponent={
+                <View style={st.emptyState}>
+                  <MaterialCommunityIcons name="swap-horizontal" size={64} color="#cbd5e1" />
+                  <Text style={st.emptyText}>Aucune opération sur cette période</Text>
+                </View>
+              }
               renderItem={({ item: op }) => {
                 const isEntree = (op.type || '').toUpperCase() === 'ENTREE' || (op.montant || 0) > 0;
                 return (
-                  <View style={st.opCard}>
-                    <View style={st.row}>
+                  <Card style={st.opCardPaper}>
+                    <Card.Content style={st.cardRow}>
+                      <View style={[st.avatar, { backgroundColor: isEntree ? '#dcfce7' : '#fee2e2' }]}>
+                        <MaterialCommunityIcons
+                          name={isEntree ? 'arrow-down-circle' : 'arrow-up-circle'}
+                          size={22}
+                          color={isEntree ? '#16a34a' : '#dc2626'}
+                        />
+                      </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={st.opMotif}>{op.motif || '—'}</Text>
-                        <Text style={st.opDate}>{dateStr(op.dateOperation)}</Text>
+                        <Text style={st.cardName}>{op.motif || '—'}</Text>
+                        <Text style={st.cardSub}>{dateStr(op.dateOperation)}</Text>
                         {op.modePaiement ? (
-                          <Text style={st.opMode}>{op.modePaiement.replace('_', ' ')}</Text>
+                          <Text style={st.cardSub}>{op.modePaiement.replace('_', ' ')}</Text>
                         ) : null}
                       </View>
                       <Text style={[st.opMontant, isEntree ? st.opEntree : st.opSortie]}>
                         {isEntree ? '+' : '-'}{money(Math.abs(op.montant))}
                       </Text>
-                    </View>
-                  </View>
+                    </Card.Content>
+                  </Card>
                 );
               }}
             />
           )}
 
           {/* FAB ajout */}
-          <TouchableOpacity
+          <FAB
+            icon="plus"
             style={st.fab}
             onPress={() => {
               setOpType('ENTREE');
@@ -663,9 +765,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               setOpRef('');
               setShowAjoutOp(true);
             }}
-          >
-            <Text style={st.fabText}>+</Text>
-          </TouchableOpacity>
+          />
         </View>
       )}
 
@@ -708,7 +808,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             </>
           ) : (
             <View style={{ alignItems: 'center', marginTop: 60 }}>
-              <Text style={st.empty}>Aucune statistique disponible</Text>
+              <MaterialCommunityIcons name="chart-bar" size={64} color="#cbd5e1" />
+              <Text style={st.emptyText}>Aucune statistique disponible</Text>
               <TouchableOpacity style={[st.refreshBtn, { marginTop: 16 }]} onPress={chargerStats}>
                 <Text style={st.refreshBtnText}>Charger les stats</Text>
               </TouchableOpacity>
@@ -753,11 +854,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   {loadingVersements ? (
                     <ActivityIndicator size="small" style={{ margin: 12 }} />
                   ) : versements.length === 0 ? (
-                    <Text style={st.empty}>Aucun versement enregistré</Text>
+                    <Text style={st.emptyText}>Aucun versement enregistré</Text>
                   ) : (
                     versements.map((v, i) => (
                       <View key={i} style={st.versRow}>
-                        <View style={st.row}>
+                        <View style={st.rowBetween}>
                           <Text style={st.versDate}>{dateStr(v.dateOperation)}</Text>
                           <Text style={st.versMontant}>+{money(v.montant)}</Text>
                         </View>
@@ -964,11 +1065,15 @@ const st = StyleSheet.create({
   tabText: { fontSize: 13, color: '#888', fontWeight: '600' },
   tabTextActive: { color: '#1a56db' },
 
+  // Offline banner
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: '#92400e', fontSize: 12, flex: 1 },
+
   container: { flex: 1 },
 
-  // Hero état
+  // Hero état (fond sombre obligatoire)
   hero: {
-    backgroundColor: '#1a56db',
+    backgroundColor: '#081648',
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
@@ -1010,23 +1115,26 @@ const st = StyleSheet.create({
   totalJourLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
   totalJourVal: { color: '#4ade80', fontSize: 20, fontWeight: 'bold' },
 
-  // Ventes jour
   sectionTitle: { fontWeight: 'bold', fontSize: 14, color: '#333', marginBottom: 8 },
-  venteCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    elevation: 1,
-  },
-  venteClient: { fontWeight: '600', color: '#333', fontSize: 14 },
-  venteMontant: { fontWeight: 'bold', color: '#1a56db', fontSize: 14 },
+
+  // Paper card rows (ventes, ops)
+  venteCard: { marginBottom: 8, borderRadius: 12, elevation: 1 },
+  opCardPaper: { marginBottom: 8, borderRadius: 12, elevation: 1 },
+  creditCardPaper: { marginBottom: 10, borderRadius: 14, elevation: 2 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
+  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+
   venteHeure: { color: '#aaa', fontSize: 12 },
   badgeMode: {
     backgroundColor: '#e3f2fd',
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    marginTop: 4,
+    alignSelf: 'flex-start',
   },
   badgeModeText: { fontSize: 12, color: '#1a56db', fontWeight: '600' },
 
@@ -1061,18 +1169,7 @@ const st = StyleSheet.create({
   },
   pdfBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 
-  // Crédit card
-  creditCard: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-    elevation: 2,
-  },
-  creditCardRetard: { borderLeftWidth: 3, borderLeftColor: '#dc2626' },
-  creditClient: { fontWeight: 'bold', fontSize: 15, color: '#1a1a1a' },
-  creditTel: { color: '#888', fontSize: 12, marginTop: 2 },
-  creditNum: { color: '#aaa', fontSize: 12, marginTop: 2 },
+  // Crédit
   creditRestant: { fontWeight: 'bold', fontSize: 15, color: '#1a56db' },
   retardBadge: {
     backgroundColor: '#fce4ec',
@@ -1082,14 +1179,10 @@ const st = StyleSheet.create({
     marginTop: 4,
   },
   retardBadgeText: { color: '#dc2626', fontWeight: '700', fontSize: 11 },
-
-  // Barre progression
   progressWrap: { marginTop: 10, marginBottom: 4 },
   progressBg: { height: 6, backgroundColor: '#f0f0f0', borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: 6, backgroundColor: '#1a56db', borderRadius: 3 },
   progressText: { fontSize: 10, color: '#aaa', marginTop: 3 },
-
-  // Actions crédit
   creditActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   btnVoir: {
     flex: 1,
@@ -1109,35 +1202,13 @@ const st = StyleSheet.create({
   },
   btnReglerText: { color: '#fff', fontWeight: '600', fontSize: 13 },
 
-  // Opération card
-  opCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    elevation: 1,
-  },
-  opMotif: { fontWeight: '600', color: '#333', fontSize: 14 },
-  opDate: { color: '#aaa', fontSize: 12, marginTop: 2 },
-  opMode: { color: '#888', fontSize: 12, marginTop: 2 },
+  // Op montant
   opMontant: { fontWeight: 'bold', fontSize: 16 },
   opEntree: { color: '#16a34a' },
   opSortie: { color: '#dc2626' },
 
   // FAB
-  fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#1a56db',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-  },
-  fabText: { color: '#fff', fontSize: 28, fontWeight: 'bold', lineHeight: 32 },
+  fab: { position: 'absolute', right: 16, bottom: 24, backgroundColor: '#1a56db' },
 
   // Stats
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
@@ -1158,6 +1229,10 @@ const st = StyleSheet.create({
     alignItems: 'center',
   },
   refreshBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+
+  // Empty state
+  emptyState: { alignItems: 'center', marginTop: 40, paddingHorizontal: 20 },
+  emptyText: { textAlign: 'center', color: '#94a3b8', marginTop: 12, fontSize: 14 },
 
   // Modal commun
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
@@ -1258,6 +1333,5 @@ const st = StyleSheet.create({
   toggleBtnText: { fontWeight: '700', fontSize: 14, color: '#555' },
 
   // Utilitaires
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  empty: { textAlign: 'center', color: '#999', marginTop: 30, fontSize: 14 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 });

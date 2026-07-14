@@ -1,12 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
-  TextInput, ScrollView, Modal, Alert, ActivityIndicator,
+  TextInput, ScrollView, Modal, Alert,
 } from 'react-native';
-import { Text } from 'react-native-paper';
-import api from '../services/api.service';
+import { Text, Card, FAB, Searchbar, ActivityIndicator } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import api, { createDepot, effectuerRetraitDepot } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import NetInfo from '@react-native-community/netinfo';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 
 interface DepotClient {
   id: number;
@@ -58,6 +61,7 @@ export default function DepotsScreen() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [search, setSearch] = useState('');
   const [filtre, setFiltre] = useState<'TOUS' | 'ACTIF' | 'CLOTURE'>('TOUS');
 
@@ -79,14 +83,29 @@ export default function DepotsScreen() {
 
   const charger = useCallback(async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const [r1, r2] = await Promise.all([
         api.get('/depots-garde').catch(() => ({ data: [] })),
         api.get('/depots-garde/statistiques').catch(() => ({ data: null })),
       ]);
       const list: DepotGarde[] = r1.data?.depots || r1.data?.data || r1.data || [];
+      const statsData: Stats | null = r2.data?.statistiques || r2.data || null;
       setDepots(list);
-      setStats(r2.data?.statistiques || r2.data || null);
-    } catch { }
+      setStats(statsData);
+      setFromCache(false);
+      sauvegarderCache('depots', { list, stats: statsData }).catch(() => {});
+    } catch {
+      const cached = await lireCache<any>('depots');
+      if (cached.length > 0) {
+        const c = cached[0] as any;
+        setDepots(c.list || []);
+        setStats(c.stats || null);
+        setFromCache(true);
+      } else {
+        setFromCache(false);
+      }
+    }
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -140,17 +159,26 @@ export default function DepotsScreen() {
     if (!mt || mt <= 0) { Alert.alert(tr('erreur', lang), tr('montant_depot', lang)); return; }
     setSaving(true);
     try {
-      await api.post('/depots-garde', {
+      const payload = {
         depotClientId: selectedClient?.id,
         nom: form.nom.trim(),
         prenom: form.prenom.trim() || undefined,
         numero: form.numero.trim(),
         montant: mt,
         observation: form.observation.trim() || undefined,
-      });
+      };
+      const res = await executerOuMettreEnFile(
+        'depot_create',
+        payload,
+        () => createDepot(payload)
+      );
       setShowCreate(false);
-      charger();
-      chargerClients();
+      if (res.offline) {
+        Alert.alert('Sauvegardé hors ligne', 'Dépôt mis en file — sync au retour connexion');
+      } else {
+        charger();
+        chargerClients();
+      }
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e?.response?.data?.message || tr('erreur', lang));
     }
@@ -163,10 +191,19 @@ export default function DepotsScreen() {
     if (!mt || mt <= 0) { Alert.alert(tr('erreur', lang), tr('montant_retrait', lang)); return; }
     if (mt > selected.montantRestant) { Alert.alert(tr('erreur', lang), `Max : ${money(selected.montantRestant)}`); return; }
     try {
-      await api.post(`/depots-garde/${selected.id}/retrait`, { montant: mt, observation: retraitObs });
+      const retraitData = { montant: mt, observation: retraitObs };
+      const res = await executerOuMettreEnFile(
+        'depot_retrait',
+        { id: selected.id, data: retraitData },
+        () => effectuerRetraitDepot(selected.id, retraitData)
+      );
       setShowRetrait(false);
-      setShowDetail(false);
-      charger();
+      if (res.offline) {
+        Alert.alert('Sauvegardé hors ligne', 'Retrait mis en file — sync au retour connexion');
+      } else {
+        setShowDetail(false);
+        charger();
+      }
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e?.response?.data?.message || tr('erreur', lang));
     }
@@ -179,84 +216,99 @@ export default function DepotsScreen() {
     return d.nomComplet.toLowerCase().includes(q) || d.numero.includes(q);
   });
 
+  const totalGarde = stats?.totalMontantGarde ?? depots.reduce((s, d) => s + (d.montantRestant || 0), 0);
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
     <View style={s.container}>
-      {/* Stats */}
-      {stats && (
-        <View style={s.statsRow}>
-          <View style={[s.statCard, { backgroundColor: '#1a56db' }]}>
-            <Text style={s.statNum}>{stats.totalActifs}</Text>
-            <Text style={s.statLbl}>{tr('actifs', lang)}</Text>
-          </View>
-          <View style={[s.statCard, { backgroundColor: '#0e9f6e' }]}>
-            <Text style={s.statNum}>{money(stats.totalMontantGarde)}</Text>
-            <Text style={s.statLbl}>{tr('en_garde', lang)}</Text>
-          </View>
-          <View style={[s.statCard, { backgroundColor: '#6b7280' }]}>
-            <Text style={s.statNum}>{stats.totalClotures}</Text>
-            <Text style={s.statLbl}>{tr('clotures', lang)}</Text>
-          </View>
+      {/* ── Hero banner ── */}
+      <View style={s.hero}>
+        <View style={s.heroStat}>
+          <Text style={s.heroVal}>{stats?.totalDepots ?? depots.length}</Text>
+          <Text style={s.heroLbl}>Dépôts</Text>
+        </View>
+        <View style={s.heroStat}>
+          <Text style={s.heroVal}>{money(totalGarde)}</Text>
+          <Text style={s.heroLbl}>En garde</Text>
+        </View>
+        <View style={s.heroStat}>
+          <Text style={[s.heroVal, { color: '#86efac' }]}>{stats?.totalActifs ?? depots.filter(d => d.statut === 'ACTIF').length}</Text>
+          <Text style={s.heroLbl}>Actifs</Text>
+        </View>
+      </View>
+
+      {/* ── Bandeau offline ── */}
+      {fromCache && (
+        <View style={s.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={s.offlineTxt}>Mode hors ligne — données locales</Text>
         </View>
       )}
 
-      {/* Filtres */}
+      {/* ── Filtres ── */}
       <View style={s.filtreRow}>
         {(['TOUS', 'ACTIF', 'CLOTURE'] as const).map(f => (
           <TouchableOpacity key={f} style={[s.filtreBtn, filtre === f && s.filtreBtnActive]} onPress={() => setFiltre(f)}>
             <Text style={[s.filtreTxt, filtre === f && s.filtreTxtActive]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? tr('actifs', lang) : tr('clotures', lang)}</Text>
           </TouchableOpacity>
         ))}
-        <TouchableOpacity style={s.addBtn} onPress={openCreate}>
-          <Text style={s.addBtnTxt}>+ {tr('nouveau_depot', lang)}</Text>
-        </TouchableOpacity>
       </View>
 
-      {/* Recherche */}
-      <TextInput
-        style={s.searchInput}
+      {/* ── Searchbar ── */}
+      <Searchbar
+        style={s.searchBar}
+        inputStyle={{ fontSize: 13 }}
         placeholder={tr('recherche_client', lang)}
         value={search}
         onChangeText={setSearch}
-        placeholderTextColor="#94a3b8"
       />
 
+      {/* ── Liste ── */}
       <FlatList
         data={filtered}
         keyExtractor={d => String(d.id)}
-        contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
-        ListEmptyComponent={<Text style={s.empty}>{tr('aucun_depot', lang)}</Text>}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 80 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={['#1a56db']} />}
+        ListEmptyComponent={
+          <View style={s.empty}>
+            <MaterialCommunityIcons name="safe" size={64} color="#cbd5e1" />
+            <Text style={s.emptyTitle}>{tr('aucun_depot', lang)}</Text>
+            <Text style={s.emptySub}>Appuyez sur + pour créer</Text>
+          </View>
+        }
         renderItem={({ item: d }) => {
           const pct = d.montantInitial > 0 ? (d.montantRetire / d.montantInitial) * 100 : 0;
           return (
-            <TouchableOpacity style={s.card} onPress={() => { setSelected(d); setShowDetail(true); }}>
-              <View style={s.cardTop}>
-                <View style={s.avatar}>
-                  <Text style={s.avatarTxt}>{(d.nom || '?')[0].toUpperCase()}</Text>
+            <Card style={s.card} onPress={() => { setSelected(d); setShowDetail(true); }}>
+              <Card.Content style={s.cardRow}>
+                <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
+                  <MaterialCommunityIcons name="safe" size={22} color="#1a56db" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.cardNom}>{d.nomComplet}</Text>
+                  <Text style={s.cardName} numberOfLines={1}>{d.nomComplet}</Text>
                   <Text style={s.cardSub}>{d.numero} · {fmt(d.dateDepot)}</Text>
                 </View>
-                <View style={[s.badge, d.statut === 'ACTIF' ? s.badgeActif : s.badgeCloture]}>
-                  <Text style={s.badgeTxt}>{d.statut}</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={s.cardAmt}>{money(d.montantRestant)}</Text>
+                  <View style={[s.badge, { backgroundColor: d.statut === 'ACTIF' ? '#d1fae5' : '#f1f5f9' }]}>
+                    <Text style={[s.badgeTxt, { color: d.statut === 'ACTIF' ? '#16a34a' : '#6b7280' }]}>{d.statut}</Text>
+                  </View>
                 </View>
-              </View>
-              <View style={s.montantRow}>
-                <Text style={s.montantLabel}>{tr('restant', lang)}</Text>
-                <Text style={s.montantVal}>{money(d.montantRestant)}</Text>
-                <Text style={s.montantLabel}>{tr('initial', lang)}</Text>
-                <Text style={s.montantSub}>{money(d.montantInitial)}</Text>
-              </View>
-              <View style={s.progressBg}>
-                <View style={[s.progressFill, { width: `${Math.min(pct, 100)}%` as any }]} />
-              </View>
-            </TouchableOpacity>
+              </Card.Content>
+              <Card.Content style={{ paddingTop: 0 }}>
+                <View style={s.progressBg}>
+                  <View style={[s.progressFill, { width: `${Math.min(pct, 100)}%` as any }]} />
+                </View>
+                <Text style={s.progressLbl}>{money(d.montantRetire)} retiré / {money(d.montantInitial)} initial</Text>
+              </Card.Content>
+            </Card>
           );
         }}
       />
+
+      {/* ── FAB ── */}
+      <FAB icon="plus" style={s.fab} onPress={openCreate} />
 
       {/* ── Modal Création ── */}
       <Modal visible={showCreate} animationType="slide" onRequestClose={() => setShowCreate(false)}>
@@ -371,7 +423,7 @@ export default function DepotsScreen() {
       <Modal visible={showRetrait} animationType="slide" transparent onRequestClose={() => setShowRetrait(false)}>
         <View style={s.retraitOverlay}>
           <View style={s.retraitCard}>
-            <Text style={s.modalTitle}>{tr('retrait', lang)}</Text>
+            <Text style={s.retraitTitle}>{tr('retrait', lang)}</Text>
             <Text style={s.retraitInfo}>{tr('disponible', lang)} : {selected ? money(selected.montantRestant) : ''}</Text>
             <Text style={s.fieldLabel}>{tr('montant_retrait', lang)} *</Text>
             <TextInput style={s.input} value={retraitMontant} onChangeText={setRetraitMontant} keyboardType="numeric" placeholder="0" />
@@ -394,40 +446,56 @@ export default function DepotsScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
-  statsRow: { flexDirection: 'row', gap: 8, padding: 12, paddingBottom: 4 },
-  statCard: { flex: 1, borderRadius: 10, padding: 10, alignItems: 'center' },
-  statNum: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  statLbl: { color: 'rgba(255,255,255,.75)', fontSize: 11, marginTop: 2 },
+
+  // Hero banner
+  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  heroStat: { flex: 1, alignItems: 'center' },
+  heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
+
+  // Offline banner
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: '#92400e', fontSize: 12 },
+
+  // Filtres
   filtreRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center' },
   filtreBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#e2e8f0' },
   filtreBtnActive: { backgroundColor: '#1a56db' },
   filtreTxt: { fontSize: 12, color: '#475569', fontWeight: '600' },
   filtreTxtActive: { color: '#fff' },
-  addBtn: { marginLeft: 'auto', backgroundColor: '#1a56db', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
-  addBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  searchInput: { marginHorizontal: 12, marginBottom: 4, backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, fontSize: 14, color: '#0f172a', borderWidth: 1, borderColor: '#e2e8f0' },
-  card: { backgroundColor: '#fff', borderRadius: 14, marginBottom: 10, padding: 14, elevation: 2, shadowColor: '#000', shadowOpacity: .06, shadowRadius: 6 },
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
-  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1a56db', justifyContent: 'center', alignItems: 'center' },
-  avatarTxt: { color: '#fff', fontWeight: '700', fontSize: 18 },
-  cardNom: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
-  cardSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  badgeActif: { backgroundColor: '#d1fae5' },
-  badgeCloture: { backgroundColor: '#f1f5f9' },
-  badgeTxt: { fontSize: 10, fontWeight: '700', color: '#0f172a' },
-  montantRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  montantLabel: { fontSize: 11, color: '#94a3b8' },
-  montantVal: { fontSize: 15, fontWeight: '700', color: '#1a56db' },
-  montantSub: { fontSize: 13, color: '#64748b', marginLeft: 4 },
-  progressBg: { height: 5, backgroundColor: '#e2e8f0', borderRadius: 3 },
+
+  // Searchbar
+  searchBar: { marginHorizontal: 12, marginBottom: 4, borderRadius: 10, backgroundColor: '#fff', elevation: 1 },
+
+  // Paper Card
+  card: { marginBottom: 10, borderRadius: 14, elevation: 2 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
+  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+  badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 },
+  badgeTxt: { fontSize: 10, fontWeight: '700' },
+
+  // Progress bar
+  progressBg: { height: 5, backgroundColor: '#e2e8f0', borderRadius: 3, marginTop: 8 },
   progressFill: { height: 5, backgroundColor: '#dc2626', borderRadius: 3 },
-  empty: { textAlign: 'center', marginTop: 40, color: '#94a3b8' },
+  progressLbl: { fontSize: 10, color: '#94a3b8', marginTop: 3 },
+
+  // Empty state
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+
+  // FAB
+  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
+
   // Modal
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#1a56db' },
   modalTitle: { color: '#fff', fontSize: 17, fontWeight: '700' },
   modalClose: { color: '#fff', fontSize: 20, fontWeight: '700' },
   modalBody: { flex: 1, padding: 16, backgroundColor: '#f8fafc' },
+
   // Recherche client
   clientSearchBox: { backgroundColor: '#eff6ff', borderRadius: 12, padding: 12, marginBottom: 16 },
   clientSearchLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', color: '#1a56db', letterSpacing: 0.6, marginBottom: 8 },
@@ -444,11 +512,13 @@ const s = StyleSheet.create({
   divider: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 4 },
   dividerLine: { flex: 1, height: 1, backgroundColor: '#cbd5e1' },
   dividerTxt: { fontSize: 11, color: '#94a3b8' },
+
   // Formulaire
   fieldLabel: { fontSize: 12, fontWeight: '600', color: '#475569', marginTop: 12, marginBottom: 4 },
   input: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a' },
   saveBtn: { backgroundColor: '#1a56db', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   saveBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
   // Détail
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   detailLbl: { fontSize: 13, color: '#64748b' },
@@ -457,8 +527,10 @@ const s = StyleSheet.create({
   retraitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   retraitDate: { fontSize: 13, color: '#64748b' },
   retraitMontant: { fontSize: 13, fontWeight: '700', color: '#dc2626' },
+
   // Retrait overlay
   retraitOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,.5)', justifyContent: 'flex-end' },
   retraitCard: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 },
+  retraitTitle: { color: '#0f172a', fontSize: 17, fontWeight: '700', marginBottom: 4 },
   retraitInfo: { fontSize: 13, color: '#64748b', marginBottom: 12 },
 });

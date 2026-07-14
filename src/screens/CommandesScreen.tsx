@@ -1,8 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput, FlatList, Share } from 'react-native';
-import { Text, Button, ActivityIndicator, Modal, Portal, Divider, Checkbox } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput, FlatList, Share, RefreshControl } from 'react-native';
+import { Text, Button, ActivityIndicator, Modal, Portal, Divider, Checkbox, Card, FAB, Searchbar } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import {
@@ -11,6 +13,7 @@ import {
   getProduits, getClients
 } from '../services/api.service';
 import { partagerFactureRN, DesignFacture } from '../services/invoice.service';
+import { sauvegarderCache, lireCache, creerCommandeOffline, executerOuMettreEnFile } from '../services/offline.service';
 
 type StatutCommande = 'BROUILLON' | 'VALIDEE' | 'ANNULEE';
 
@@ -87,6 +90,8 @@ export default function CommandesScreen() {
   const { lang } = useLang();
   const [commandes, setCommandes] = useState<Commande[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [boutique, setBoutique] = useState<any>({});
   const [design, setDesign] = useState<DesignFacture>(1);
   const [statutFilter, setStatutFilter] = useState<'' | 'BROUILLON' | 'VALIDEE' | 'CREDIT' | 'ANNULEE'>('');
@@ -149,14 +154,27 @@ export default function CommandesScreen() {
     }).catch(() => {});
   }, []));
 
-  const charger = async () => {
+  const charger = async (event?: any) => {
     setLoading(true);
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const r: any = await getCommandes();
-      setCommandes(r.data || []);
-    } catch {}
+      const data: Commande[] = r.data || [];
+      setCommandes(data);
+      setFromCache(false);
+      sauvegarderCache('commandes', data).catch(() => {});
+    } catch {
+      const cached = await lireCache<Commande>('commandes');
+      if (cached.length > 0) { setCommandes(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false);
+    setRefreshing(false);
+    if (event?.target?.complete) event.target.complete();
   };
+
+  const onRefresh = () => { setRefreshing(true); charger(); };
 
   const commandesFiltrees = commandes.filter(c => {
     if (statutFilter === 'CREDIT') {
@@ -177,9 +195,9 @@ export default function CommandesScreen() {
   const totalCommande = lignesForm.reduce((s, l) => s + Number(l.prixUnitaire || 0) * l.quantite, 0);
   const resteAPayer = Math.max(0, totalCommande - Number(form.montantVerse || 0));
 
-  const nbBrouillons = commandes.filter(c => c.statut === 'BROUILLON').length;
+  const nbEnAttente = commandes.filter(c => c.statut === 'BROUILLON').length;
   const nbValidees = commandes.filter(c => c.statut === 'VALIDEE').length;
-  const totalValidees = commandes.filter(c => c.statut === 'VALIDEE').reduce((s, c) => s + (c.montantTotal || 0), 0);
+  const totalMontant = commandes.reduce((s, c) => s + (c.montantTotal || 0), 0);
   const nbCreditsEnCours = commandes.filter(c => c.estCredit && c.montantRestant > 0).length;
   const totalCreditsRestants = commandes.filter(c => c.estCredit && c.montantRestant > 0).reduce((s, c) => s + (c.montantRestant || 0), 0);
 
@@ -268,7 +286,10 @@ export default function CommandesScreen() {
     };
     try {
       if (editingId) await updateCommande(editingId, request);
-      else await createCommande(request);
+      else {
+        const result = await creerCommandeOffline(request);
+        if (result.offline) Alert.alert('Mode hors ligne', 'Commande enregistrée localement — sera synchronisée à la reconnexion.');
+      }
       setShowModal(false);
       charger();
     } catch (e: any) {
@@ -283,7 +304,19 @@ export default function CommandesScreen() {
     Alert.alert(tr('valider', lang) + ' ?', `${c.numeroCommande} → vente créée, stock décrémenté.`, [
       { text: tr('annuler', lang), style: 'cancel' },
       { text: tr('valider', lang), onPress: async () => {
-        try { await validerCommande(c.id); charger(); }
+        try {
+          const res = await executerOuMettreEnFile(
+            'commande_valider',
+            { id: c.id },
+            () => validerCommande(c.id)
+          );
+          if (res.offline) {
+            setCommandes(prev => prev.map(x => x.id === c.id ? { ...x, statut: 'VALIDEE' as StatutCommande } : x));
+            Alert.alert('Hors ligne', `Sauvegardé hors ligne — ${c.numeroCommande} sera validée à la reconnexion.`);
+          } else {
+            charger();
+          }
+        }
         catch (e: any) { Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang)); }
       }}
     ]);
@@ -297,10 +330,20 @@ export default function CommandesScreen() {
       { text: tr('annuler', lang), style: 'cancel' },
       { text: tr('oui', lang) + ', ' + tr('annuler', lang).toLowerCase(), style: 'destructive', onPress: async () => {
         try {
-          await annulerCommande(c.id, userId);
-          setStatutFilter('');
-          charger();
-          Alert.alert(tr('succes', lang), `${c.numeroCommande} ${tr('vente_annulee', lang).toLowerCase()}`);
+          const res = await executerOuMettreEnFile(
+            'commande_annuler',
+            { id: c.id, utilisateurId: userId },
+            () => annulerCommande(c.id, userId)
+          );
+          if (res.offline) {
+            setCommandes(prev => prev.map(x => x.id === c.id ? { ...x, statut: 'ANNULEE' as StatutCommande } : x));
+            setStatutFilter('');
+            Alert.alert('Hors ligne', `Sauvegardé hors ligne — ${c.numeroCommande} sera annulée à la reconnexion.`);
+          } else {
+            setStatutFilter('');
+            charger();
+            Alert.alert(tr('succes', lang), `${c.numeroCommande} ${tr('vente_annulee', lang).toLowerCase()}`);
+          }
         }
         catch (e: any) { Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang)); }
       }}
@@ -355,10 +398,19 @@ export default function CommandesScreen() {
   const confirmerReglementIndividuel = async () => {
     if (!commandeRegl || !montantRegl || Number(montantRegl) <= 0) return;
     try {
-      await payerCreditCommande(commandeRegl.id, Number(montantRegl));
+      const montant = Number(montantRegl);
+      const res = await executerOuMettreEnFile(
+        'credit_commande_payer',
+        { id: commandeRegl.id, montant },
+        () => payerCreditCommande(commandeRegl.id, montant)
+      );
       setShowReglModal(false);
       setCommandeRegl(null);
-      charger();
+      if (res.offline) {
+        Alert.alert('Hors ligne', 'Sauvegardé hors ligne — le règlement sera envoyé à la reconnexion.');
+      } else {
+        charger();
+      }
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
     }
@@ -403,73 +455,68 @@ export default function CommandesScreen() {
     color: statutFilter === filter ? '#fff' : '#374151'
   });
 
-  const badgeColor = (statut: string) => {
-    if (statut === 'VALIDEE') return styles.badgeGreen;
-    if (statut === 'ANNULEE') return styles.badgeRed;
-    return styles.badgeYellow;
+  const badgeBg = (statut: string) => {
+    if (statut === 'VALIDEE') return '#dcfce7';
+    if (statut === 'ANNULEE') return '#fee2e2';
+    return '#fef3c7';
   };
 
-  const cardBorderColor = (c: Commande) => {
-    if (c.statut === 'ANNULEE') return '#9ca3af';
-    if (c.statut === 'VALIDEE') return '#10b981';
+  const badgeColor = (statut: string) => {
+    if (statut === 'VALIDEE') return '#16a34a';
+    if (statut === 'ANNULEE') return '#dc2626';
     return '#f59e0b';
   };
 
   return (
     <View style={styles.container}>
-      {/* ── Stats ── */}
-      <View style={styles.statsRow}>
-        <View style={[styles.statCard, { borderLeftColor: '#3b82f6' }]}>
-          <Text style={styles.statVal}>{nbBrouillons}</Text>
-          <Text style={styles.statLbl}>{tr('brouillon', lang)}</Text>
+      {/* ── Hero banner ── */}
+      <View style={styles.hero}>
+        <View style={styles.heroStat}>
+          <Text style={styles.heroVal}>{commandes.length}</Text>
+          <Text style={styles.heroLbl}>Total</Text>
         </View>
-        <View style={[styles.statCard, { borderLeftColor: '#10b981' }]}>
-          <Text style={styles.statVal}>{nbValidees}</Text>
-          <Text style={styles.statLbl}>{tr('validee', lang)}</Text>
+        <View style={styles.heroStat}>
+          <Text style={styles.heroVal}>{formatMontant(totalMontant)}</Text>
+          <Text style={styles.heroLbl}>Montant</Text>
         </View>
-        <View style={[styles.statCard, { borderLeftColor: '#8b5cf6', flex: 1.5 }]}>
-          <Text style={[styles.statVal, { fontSize: 11 }]}>{formatMontant(totalValidees)}</Text>
-          <Text style={styles.statLbl}>{tr('ca_valide', lang)}</Text>
+        <View style={styles.heroStat}>
+          <Text style={[styles.heroVal, { color: '#fbbf24' }]}>{nbEnAttente}</Text>
+          <Text style={styles.heroLbl}>En attente</Text>
         </View>
-        <TouchableOpacity
-          style={[styles.statCard, { borderLeftColor: '#f59e0b' }]}
-          onPress={nbCreditsEnCours > 0 ? ouvrirReglementGroupe : undefined}>
-          <Text style={[styles.statVal, { color: '#d97706' }]}>{nbCreditsEnCours}</Text>
-          <Text style={styles.statLbl}>{tr('credits', lang)}</Text>
-        </TouchableOpacity>
       </View>
 
-      {/* ── Filtres ── */}
-      <View style={styles.filtersRow}>
-        <TextInput
-          style={styles.searchInput}
-          value={searchTerm}
-          onChangeText={setSearchTerm}
-          placeholder={tr('recherche_commande', lang)}
-          placeholderTextColor="#9ca3af"
-        />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.chipsRow}>
-            {(['', 'BROUILLON', 'VALIDEE', 'CREDIT', 'ANNULEE'] as const).map(s => (
-              <TouchableOpacity
-                key={s}
-                style={[styles.chip, chipColor(s)]}
-                onPress={() => setStatutFilter(s)}>
-                <Text style={[styles.chipText, chipTextColor(s)]}>
-                  {s === '' ? `${tr('commandes', lang)} (${commandes.length})` : s === 'BROUILLON' ? tr('brouillon', lang) : s === 'VALIDEE' ? tr('validee', lang) : s === 'CREDIT' ? tr('credits', lang) : tr('annulee', lang)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
-      </View>
+      {/* ── Bandeau offline ── */}
+      {fromCache && (
+        <View style={styles.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
 
-      {/* ── Bouton créer ── */}
-      <View style={{ paddingHorizontal: 12, marginBottom: 8 }}>
-        <Button mode="contained" onPress={ouvrirCreer} icon="plus" buttonColor="#1a56db">
-          {tr('nouvelle_commande', lang)}
-        </Button>
-      </View>
+      {/* ── Searchbar ── */}
+      <Searchbar
+        style={styles.searchBar}
+        inputStyle={{ fontSize: 13 }}
+        value={searchTerm}
+        onChangeText={setSearchTerm}
+        placeholder={tr('recherche_commande', lang)}
+      />
+
+      {/* ── Filtres chips ── */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 12, marginBottom: 6 }}>
+        <View style={styles.chipsRow}>
+          {(['', 'BROUILLON', 'VALIDEE', 'CREDIT', 'ANNULEE'] as const).map(s => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.chip, chipColor(s)]}
+              onPress={() => setStatutFilter(s)}>
+              <Text style={[styles.chipText, chipTextColor(s)]}>
+                {s === '' ? `${tr('commandes', lang)} (${commandes.length})` : s === 'BROUILLON' ? tr('brouillon', lang) : s === 'VALIDEE' ? tr('validee', lang) : s === 'CREDIT' ? tr('credits', lang) : tr('annulee', lang)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
 
       {/* ── Liste ── */}
       {loading ? (
@@ -478,114 +525,113 @@ export default function CommandesScreen() {
         <FlatList
           data={commandesFiltrees}
           keyExtractor={item => String(item.id)}
-          contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
+          contentContainerStyle={{ paddingHorizontal: 0, paddingBottom: 80 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1a56db']} />}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>{tr('aucune_commande', lang)}</Text>
+              <MaterialCommunityIcons name="clipboard-list-outline" size={64} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>{tr('aucune_commande', lang)}</Text>
+              <Text style={styles.emptySub}>Appuyez sur + pour créer</Text>
             </View>
           }
           renderItem={({ item: c }) => (
-            <View style={[styles.card, { borderLeftColor: cardBorderColor(c) }]}>
-              {/* En-tête */}
-              <View style={styles.cardHeader}>
-                <View>
-                  <Text style={styles.cardNumero}>{c.numeroCommande}</Text>
-                  <Text style={styles.cardDate}>{formatDate(c.dateCommande)}</Text>
-                </View>
-                <View style={styles.badgesRow}>
-                  <View style={[styles.badge, badgeColor(c.statut)]}>
-                    <Text style={styles.badgeText}>
-                      {c.statut === 'VALIDEE' ? tr('validee', lang) : c.statut === 'ANNULEE' ? tr('annulee', lang) : tr('brouillon', lang)}
-                    </Text>
+            <Card style={styles.card} onPress={() => {}}>
+              <Card.Content style={{ paddingVertical: 4 }}>
+                {/* En-tête */}
+                <View style={styles.cardRow}>
+                  <View style={[styles.avatar, { backgroundColor: '#7c3aed22' }]}>
+                    <MaterialCommunityIcons name="clipboard-list" size={22} color="#7c3aed" />
                   </View>
-                  {c.estCredit && c.montantRestant > 0 && (
-                    <View style={[styles.badge, { backgroundColor: '#fef3c7' }]}>
-                      <Text style={[styles.badgeText, { color: '#92400e' }]}>{tr('credits', lang)}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardName} numberOfLines={1}>{c.numeroCommande}</Text>
+                    <Text style={styles.cardSub}>
+                      {getClientNom(c) !== 'N/A' ? getClientNom(c) : 'Client anonyme'}{c.clientTelephone ? ` · ${c.clientTelephone}` : ''}
+                    </Text>
+                    <Text style={[styles.cardSub, { marginTop: 1 }]}>{formatDate(c.dateCommande)}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.cardAmt}>{formatMontant(c.montantTotal)}</Text>
+                    <View style={[styles.badge, { backgroundColor: badgeBg(c.statut) }]}>
+                      <Text style={[styles.badgeTxt, { color: badgeColor(c.statut) }]}>
+                        {c.statut === 'VALIDEE' ? tr('validee', lang) : c.statut === 'ANNULEE' ? tr('annulee', lang) : tr('brouillon', lang)}
+                      </Text>
                     </View>
-                  )}
-                </View>
-              </View>
-
-              {/* Client */}
-              {getClientNom(c) !== 'N/A' && (
-                <Text style={styles.cardClient}>
-                  {getClientNom(c)}{c.clientTelephone ? ` · ${c.clientTelephone}` : ''}
-                </Text>
-              )}
-
-              {/* Total */}
-              <Text style={styles.cardMontant}>{formatMontant(c.montantTotal)}</Text>
-
-              {/* Crédit détail */}
-              {c.estCredit && (
-                <View style={styles.creditInfo}>
-                  <Text style={styles.creditText}>{tr('verse', lang)} : {formatMontant(c.montantVerse)}</Text>
-                  {c.montantRestant > 0 && (
-                    <Text style={[styles.creditText, { color: '#dc2626', fontWeight: '600' }]}>
-                      {tr('reste', lang)} : {formatMontant(c.montantRestant)}
-                    </Text>
-                  )}
-                </View>
-              )}
-
-              {/* Produits */}
-              <View style={styles.linesRow}>
-                {c.lignes.slice(0, 3).map((l, i) => (
-                  <View key={i} style={styles.lineChip}>
-                    <Text style={styles.lineChipText}>{l.produit?.nom || l.produitNom} ×{l.quantite}</Text>
+                    {c.estCredit && c.montantRestant > 0 && (
+                      <View style={[styles.badge, { backgroundColor: '#fef3c7', marginTop: 3 }]}>
+                        <Text style={[styles.badgeTxt, { color: '#92400e' }]}>{tr('credits', lang)}</Text>
+                      </View>
+                    )}
                   </View>
-                ))}
-                {c.lignes.length > 3 && <Text style={{ color: '#6b7280', fontSize: 11 }}>+{c.lignes.length - 3}</Text>}
-              </View>
+                </View>
 
-              <Divider style={{ marginVertical: 8 }} />
-
-              {/* Actions */}
-              <View style={styles.cardActions}>
-                {/* Partager bon de commande */}
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handlePartager(c)}>
-                  <Text style={styles.actionBtnText}>{tr('imprimer', lang)}</Text>
-                </TouchableOpacity>
-
-                {/* Modifier (brouillon) */}
-                {c.statut === 'BROUILLON' && (
-                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBlue]} onPress={() => ouvrirModifier(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#1d4ed8' }]}>{tr('modifier', lang)}</Text>
-                  </TouchableOpacity>
+                {/* Crédit détail */}
+                {c.estCredit && (
+                  <View style={styles.creditInfo}>
+                    <Text style={styles.creditText}>{tr('verse', lang)} : {formatMontant(c.montantVerse)}</Text>
+                    {c.montantRestant > 0 && (
+                      <Text style={[styles.creditText, { color: '#dc2626', fontWeight: '600' }]}>
+                        {tr('reste', lang)} : {formatMontant(c.montantRestant)}
+                      </Text>
+                    )}
+                  </View>
                 )}
 
-                {/* Valider (brouillon) */}
-                {c.statut === 'BROUILLON' && (
-                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGreen]} onPress={() => handleValider(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#16a34a' }]}>{tr('valider', lang)}</Text>
-                  </TouchableOpacity>
-                )}
+                {/* Produits */}
+                <View style={styles.linesRow}>
+                  {c.lignes.slice(0, 3).map((l, i) => (
+                    <View key={i} style={styles.lineChip}>
+                      <Text style={styles.lineChipText}>{l.produit?.nom || l.produitNom} ×{l.quantite}</Text>
+                    </View>
+                  ))}
+                  {c.lignes.length > 3 && <Text style={{ color: '#6b7280', fontSize: 11 }}>+{c.lignes.length - 3}</Text>}
+                </View>
 
-                {/* Régler crédit */}
-                {c.estCredit && c.montantRestant > 0 && (
-                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnOrange]} onPress={() => ouvrirReglementIndividuel(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#b45309' }]}>{tr('regler', lang)}</Text>
-                  </TouchableOpacity>
-                )}
+                <Divider style={{ marginVertical: 8 }} />
 
-                {/* Annuler */}
-                {c.statut !== 'ANNULEE' && (
-                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleAnnuler(c)}>
-                    <Text style={[styles.actionBtnText, { color: '#dc2626' }]}>{tr('annuler', lang)}</Text>
+                {/* Actions */}
+                <View style={styles.cardActions}>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => handlePartager(c)}>
+                    <Text style={styles.actionBtnText}>{tr('imprimer', lang)}</Text>
                   </TouchableOpacity>
-                )}
 
-                {/* Supprimer (brouillon) */}
-                {c.statut === 'BROUILLON' && (
-                  <TouchableOpacity style={[styles.actionBtn, { flex: 0, paddingHorizontal: 10 }]} onPress={() => handleSupprimer(c)}>
-                    <Text style={styles.actionBtnText}>{tr('supprimer', lang)}</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
+                  {c.statut === 'BROUILLON' && (
+                    <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBlue]} onPress={() => ouvrirModifier(c)}>
+                      <Text style={[styles.actionBtnText, { color: '#1d4ed8' }]}>{tr('modifier', lang)}</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {c.statut === 'BROUILLON' && (
+                    <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGreen]} onPress={() => handleValider(c)}>
+                      <Text style={[styles.actionBtnText, { color: '#16a34a' }]}>{tr('valider', lang)}</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {c.estCredit && c.montantRestant > 0 && (
+                    <TouchableOpacity style={[styles.actionBtn, styles.actionBtnOrange]} onPress={() => ouvrirReglementIndividuel(c)}>
+                      <Text style={[styles.actionBtnText, { color: '#b45309' }]}>{tr('regler', lang)}</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {c.statut !== 'ANNULEE' && (
+                    <TouchableOpacity style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleAnnuler(c)}>
+                      <Text style={[styles.actionBtnText, { color: '#dc2626' }]}>{tr('annuler', lang)}</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {c.statut === 'BROUILLON' && (
+                    <TouchableOpacity style={[styles.actionBtn, { flex: 0, paddingHorizontal: 10 }]} onPress={() => handleSupprimer(c)}>
+                      <Text style={styles.actionBtnText}>{tr('supprimer', lang)}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </Card.Content>
+            </Card>
           )}
         />
       )}
+
+      {/* ── FAB ── */}
+      <FAB icon="plus" style={styles.fab} onPress={ouvrirCreer} />
 
       {/* ─── MODAL CRÉER / MODIFIER ─────────────────────────────────────────── */}
       <Portal>
@@ -805,38 +851,46 @@ export default function CommandesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
 
-  statsRow: { flexDirection: 'row', gap: 6, padding: 12, paddingBottom: 6 },
-  statCard: { flex: 1, backgroundColor: '#fff', borderRadius: 10, padding: 8, borderLeftWidth: 3, elevation: 2 },
-  statVal: { fontSize: 15, fontWeight: '700', color: '#1f2937' },
-  statLbl: { fontSize: 10, color: '#6b7280' },
+  // Hero banner
+  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  heroStat: { flex: 1, alignItems: 'center' },
+  heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
 
-  filtersRow: { paddingHorizontal: 12, paddingBottom: 6 },
-  searchInput: { backgroundColor: '#fff', borderRadius: 10, padding: 10, fontSize: 13, color: '#1f2937', marginBottom: 6, elevation: 1 },
+  // Offline banner
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: '#92400e', fontSize: 12 },
+
+  // Searchbar
+  searchBar: { marginHorizontal: 12, marginTop: 10, marginBottom: 4, borderRadius: 10, backgroundColor: '#fff', elevation: 1 },
+
+  // Chips
   chipsRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
   chip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
   chipText: { fontSize: 12, fontWeight: '500' },
 
-  empty: { padding: 60, alignItems: 'center' },
-  emptyText: { color: '#9ca3af', fontSize: 15 },
+  // Paper Card
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
+  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+  badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 },
+  badgeTxt: { fontSize: 11, fontWeight: '600' },
 
-  card: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 12, borderLeftWidth: 4, elevation: 3 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
-  cardNumero: { fontWeight: '700', fontSize: 14, color: '#1a56db' },
-  cardDate: { fontSize: 11, color: '#6b7280', marginTop: 2 },
-  badgesRow: { flexDirection: 'row', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' },
-  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-  badgeGreen: { backgroundColor: '#d1fae5' },
-  badgeYellow: { backgroundColor: '#fef3c7' },
-  badgeRed: { backgroundColor: '#fee2e2' },
-  badgeText: { fontSize: 10, fontWeight: '600', color: '#374151' },
+  // Empty state
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
 
-  cardClient: { fontSize: 13, color: '#374151', marginBottom: 4 },
-  cardMontant: { fontSize: 17, fontWeight: '700', color: '#1a56db', marginBottom: 4 },
+  // FAB
+  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
 
-  creditInfo: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 6, marginBottom: 6, gap: 2 },
+  creditInfo: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 6, marginBottom: 6, marginTop: 6, gap: 2 },
   creditText: { fontSize: 12, color: '#16a34a' },
 
-  linesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 4 },
+  linesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 4, marginTop: 4 },
   lineChip: { backgroundColor: '#eff6ff', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
   lineChipText: { fontSize: 11, color: '#1e40af', fontWeight: '500' },
 
@@ -880,7 +934,6 @@ const styles = StyleSheet.create({
 
   resteInfo: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 8, fontSize: 13, color: '#dc2626', marginBottom: 8 },
 
-  // Règlement
   reglInfoBox: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 12, marginBottom: 12, gap: 4 },
   shortcutBtn: { flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', alignItems: 'center' },
   shortcutText: { fontSize: 12, color: '#1d4ed8', fontWeight: '600' },

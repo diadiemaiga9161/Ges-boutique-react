@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
   ScrollView, TouchableOpacity,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import {
   Text, Card, FAB, Searchbar, ActivityIndicator, Modal, Portal,
   TextInput, Button,
@@ -112,6 +115,7 @@ export default function FournisseursScreen() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [tab, setTab] = useState<'achats' | 'paiements' | 'situation' | 'avances'>('achats');
   const [achats, setAchats] = useState<any[]>([]);
@@ -138,10 +142,18 @@ export default function FournisseursScreen() {
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await getFournisseurs();
       const data = res.data?.data || res.data || [];
       setFournisseurs(data); setFiltered(data);
-    } catch {}
+      sauvegarderCache('fournisseurs', data).catch(() => {});
+      setFromCache(false);
+    } catch {
+      const cached = await lireCache<any>('fournisseurs');
+      if (cached.length > 0) { setFournisseurs(cached); setFiltered(cached); setFromCache(true); }
+      else setFromCache(false);
+    }
     setLoading(false); setRefreshing(false);
   };
 
@@ -187,10 +199,18 @@ export default function FournisseursScreen() {
   const ajouterFournisseur = async () => {
     if (!fournForm.nom || !fournForm.code) { Alert.alert(tr('erreur', lang), 'Nom et code obligatoires'); return; }
     try {
-      await createFournisseur(fournForm);
+      const payload = { ...fournForm };
+      const res = await executerOuMettreEnFile('fournisseur_create', payload, () => createFournisseur(payload));
       setShowFournModal(false);
       setFournForm({ nom: '', code: '', telephone: '', email: '', adresse: '' });
-      charger();
+      if (res.offline) {
+        const tempItem = { ...payload, id: Date.now() };
+        setFournisseurs(prev => [...prev, tempItem]);
+        setFiltered(prev => [...prev, tempItem]);
+        Alert.alert('Sauvegardé', 'Fournisseur sauvegardé hors ligne — sync au retour connexion');
+      } else {
+        charger();
+      }
     } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'ajouter le fournisseur'); }
   };
 
@@ -209,7 +229,7 @@ export default function FournisseursScreen() {
     if (!achatForm.produitId) { Alert.alert(tr('erreur', lang), 'Sélectionnez un produit'); return; }
     if (!achatForm.quantite || !achatForm.prixAchatUnitaire) { Alert.alert(tr('erreur', lang), 'Quantité et prix obligatoires'); return; }
     try {
-      await creerAchatFournisseur({
+      const payload = {
         fournisseurId: selected.id,
         lignes: [{
           produitId: achatForm.produitId,
@@ -219,24 +239,34 @@ export default function FournisseursScreen() {
         }],
         montantPaye: parseFloat(achatForm.montantPaye || '0'),
         commentaire: achatForm.commentaire,
-      });
+      };
+      const res = await executerOuMettreEnFile('achat_fournisseur', payload, () => creerAchatFournisseur(payload));
       setShowAchatModal(false);
-      chargerDetail(selected.id);
+      if (res.offline) {
+        Alert.alert('Sauvegardé', 'Achat sauvegardé hors ligne — sync au retour connexion');
+      } else {
+        chargerDetail(selected.id);
+      }
     } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'achat'); }
   };
 
   const enregistrerPaiement = async () => {
     if (!paiForm.montant) { Alert.alert(tr('erreur', lang), 'Montant obligatoire'); return; }
     try {
-      await payerFournisseur({
+      const payload = {
         fournisseurId: selected.id,
         montant: parseFloat(paiForm.montant),
         modePaiement: paiForm.modePaiement,
         reference: paiForm.reference,
         observation: paiForm.observation,
-      });
+      };
+      const res = await executerOuMettreEnFile('paiement_fournisseur', payload, () => payerFournisseur(payload));
       setShowPaiementModal(false);
-      chargerDetail(selected.id);
+      if (res.offline) {
+        Alert.alert('Sauvegardé', 'Paiement sauvegardé hors ligne — sync au retour connexion');
+      } else {
+        chargerDetail(selected.id);
+      }
     } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer le paiement'); }
   };
 

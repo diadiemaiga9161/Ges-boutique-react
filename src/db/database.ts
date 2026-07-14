@@ -39,6 +39,33 @@ export async function initDatabase(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now')),
       synced INTEGER DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS depenses_pending (
+      local_id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      synced INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS clients_pending (
+      local_id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      synced INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS commandes_pending (
+      local_id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      synced INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS operations_pending (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT
+    );
   `);
 }
 
@@ -152,4 +179,113 @@ export async function countProduitsPending(): Promise<number> {
   const r1 = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM produits_pending WHERE synced = 0');
   const r2 = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM produits_updates_pending WHERE synced = 0');
   return (r1?.count || 0) + (r2?.count || 0);
+}
+
+// ─── Dépenses offline ────────────────────────────────────────────────────────
+
+export async function saveDepensePending(localId: string, data: any): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('INSERT OR REPLACE INTO depenses_pending (local_id, data) VALUES (?, ?)', [localId, JSON.stringify(data)]);
+}
+
+export async function getDepensesPending(): Promise<any[]> {
+  if (isWeb) return [];
+  const rows = await db.getAllAsync<{ local_id: string; data: string }>('SELECT * FROM depenses_pending WHERE synced = 0 ORDER BY created_at ASC');
+  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+}
+
+export async function marquerDepenseSynced(localId: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE depenses_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function countDepensesPending(): Promise<number> {
+  if (isWeb) return Promise.resolve(0);
+  const r = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM depenses_pending WHERE synced = 0');
+  return r?.count || 0;
+}
+
+// ─── Clients offline ─────────────────────────────────────────────────────────
+
+export async function saveClientPending(localId: string, data: any): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('INSERT OR REPLACE INTO clients_pending (local_id, data) VALUES (?, ?)', [localId, JSON.stringify(data)]);
+}
+
+export async function getClientsPending(): Promise<any[]> {
+  if (isWeb) return [];
+  const rows = await db.getAllAsync<{ local_id: string; data: string }>('SELECT * FROM clients_pending WHERE synced = 0 ORDER BY created_at ASC');
+  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+}
+
+export async function marquerClientPendingSynced(localId: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE clients_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function countClientsPending(): Promise<number> {
+  if (isWeb) return Promise.resolve(0);
+  const r = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM clients_pending WHERE synced = 0');
+  return r?.count || 0;
+}
+
+// ─── Commandes offline ───────────────────────────────────────────────────────
+
+export async function saveCommandePending(localId: string, data: any): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('INSERT OR REPLACE INTO commandes_pending (local_id, data) VALUES (?, ?)', [localId, JSON.stringify(data)]);
+}
+
+export async function getCommandesPending(): Promise<any[]> {
+  if (isWeb) return [];
+  const rows = await db.getAllAsync<{ local_id: string; data: string }>('SELECT * FROM commandes_pending WHERE synced = 0 ORDER BY created_at ASC');
+  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+}
+
+export async function marquerCommandePendingSynced(localId: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE commandes_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function countCommandesPending(): Promise<number> {
+  if (isWeb) return Promise.resolve(0);
+  const r = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM commandes_pending WHERE synced = 0');
+  return r?.count || 0;
+}
+
+// ─── File d'attente générique (toutes opérations) ────────────────────────────
+
+export async function saveOperation(id: string, type: string, payload: any): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync(
+    'INSERT OR REPLACE INTO operations_pending (id, type, payload) VALUES (?, ?, ?)',
+    [id, type, JSON.stringify(payload)]
+  );
+}
+
+export async function getOperationsPending(): Promise<{ id: string; type: string; payload: any; attempts: number }[]> {
+  if (isWeb) return [];
+  const rows = await db.getAllAsync<{ id: string; type: string; payload: string; attempts: number }>(
+    'SELECT id, type, payload, attempts FROM operations_pending WHERE synced = 0 ORDER BY created_at ASC'
+  );
+  return rows.map(r => ({ id: r.id, type: r.type, payload: JSON.parse(r.payload), attempts: r.attempts }));
+}
+
+export async function markOperationSynced(id: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE operations_pending SET synced = 1 WHERE id = ?', [id]);
+}
+
+export async function incrementOperationAttempts(id: string, error: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync(
+    'UPDATE operations_pending SET attempts = attempts + 1, last_error = ? WHERE id = ?',
+    [error, id]
+  );
+}
+
+export async function countOperationsPending(): Promise<number> {
+  if (isWeb) return Promise.resolve(0);
+  const r = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM operations_pending WHERE synced = 0');
+  return r?.count || 0;
 }

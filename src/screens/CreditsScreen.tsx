@@ -3,14 +3,16 @@ import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
   TextInput, Alert, ScrollView, Modal
 } from 'react-native';
-import { Text, ActivityIndicator } from 'react-native-paper';
+import { Text, ActivityIndicator, Searchbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
-import api, { getPaiementsGroupes } from '../services/api.service';
+import api, { getPaiementsGroupes, reglerCreditCaisse } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildRecuReglementCreditHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import NetInfo from '@react-native-community/netinfo';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CreditInfo {
@@ -107,6 +109,7 @@ export default function CreditsScreen() {
   const [filtered, setFiltered] = useState<ClientGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [search, setSearch] = useState('');
   const [filterRetard, setFilterRetard] = useState(false);
   const [statutFilter, setStatutFilter] = useState<StatutFilter>('EN_COURS');
@@ -215,6 +218,8 @@ export default function CreditsScreen() {
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const [resNonRegles, resRegles, resVentes] = await Promise.all([
         api.get('/caisse/credits/non-regles').catch(() => ({ data: [] })),
         api.get('/caisse/credits/regles').catch(() => ({ data: [] })),
@@ -259,8 +264,19 @@ export default function CreditsScreen() {
       });
 
       setAllCredits(all);
+      sauvegarderCache('credits', all).catch(() => {});
+      setFromCache(false);
       applyFilters(all, statutFilter, search, filterRetard, dateDebut, dateFin, clientSelectionne);
-    } catch { }
+    } catch {
+      const cached = await lireCache<CreditInfo>('credits');
+      if (cached.length > 0) {
+        setAllCredits(cached);
+        setFromCache(true);
+        applyFilters(cached, statutFilter, search, filterRetard, dateDebut, dateFin, clientSelectionne);
+      } else {
+        setFromCache(false);
+      }
+    }
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -670,27 +686,42 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
     try {
       const raw = await AsyncStorage.getItem('user');
       const user = raw ? JSON.parse(raw) : {};
-      await api.post('/caisse/credits/reglement', {
+      const payload = {
         venteCreditId: selectedCredit.venteId,
         montantRegle: montant,
         modePaiement: simpleMode,
         referencePaiement: simpleRef || undefined,
         utilisateurId: user.id,
-      });
+      };
+      const res = await executerOuMettreEnFile(
+        'credit_reglement',
+        payload,
+        () => reglerCreditCaisse(payload)
+      );
       setShowSimple(false);
-      charger();
-      // Impression automatique du reçu après règlement réussi
-      try {
-        const resteApres = Math.max(0, selectedCredit.montantRestant - montant);
-        const html = buildRecuReglementCreditHtml(
-          { montant, modePaiement: simpleMode, datePaiement: new Date().toISOString(), montantRestant: resteApres },
-          { nom: selectedCredit.clientNom, prenom: selectedCredit.clientPrenom, telephone: selectedCredit.clientTelephone },
-          { nom: 'Ges Boutique' }
-        );
-        await Print.printAsync({ html });
-      } catch { /* impression optionnelle, ne pas bloquer */ }
+      if (res.offline) {
+        // Mise à jour locale optimiste
+        setAllCredits(prev => prev.map(c =>
+          c.venteId === selectedCredit.venteId
+            ? { ...c, montantVerse: c.montantVerse + montant, montantRestant: Math.max(0, c.montantRestant - montant) }
+            : c
+        ));
+        Alert.alert('Sauvegardé hors ligne', 'Règlement mis en file — sync au retour connexion');
+      } else {
+        charger();
+        // Impression automatique du reçu après règlement réussi
+        try {
+          const resteApres = Math.max(0, selectedCredit.montantRestant - montant);
+          const html = buildRecuReglementCreditHtml(
+            { montant, modePaiement: simpleMode, datePaiement: new Date().toISOString(), montantRestant: resteApres },
+            { nom: selectedCredit.clientNom, prenom: selectedCredit.clientPrenom, telephone: selectedCredit.clientTelephone },
+            { nom: 'Ges Boutique' }
+          );
+          await Print.printAsync({ html });
+        } catch { /* impression optionnelle, ne pas bloquer */ }
+      }
     } catch (e: any) {
-      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement impossible');
+      Alert.alert(tr('erreur', lang), e?.response?.data?.message || 'Règlement impossible');
     }
     setSavingSimple(false);
   };
@@ -741,23 +772,30 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             const total = groupeTotal();
             const ratio = montant / total;
             const refGroupe = Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-            try {
-              const motifGroupe = `Paiement groupé | Total apporté: ${montant}`;
-              for (const c of creditsSelec) {
-                await api.post('/caisse/credits/reglement', {
-                  venteCreditId: c.venteId,
-                  montantRegle: Math.round(c.montantRestant * ratio),
-                  modePaiement: groupeMode,
-                  referencePaiement: groupeRef || undefined,
-                  utilisateurId: user.id,
-                  motif: motifGroupe,
-                  referenceGroupe: refGroupe,
-                });
-              }
-              setShowGroupe(false);
+            const motifGroupe = `Paiement groupé | Total apporté: ${montant}`;
+            let anyOffline = false;
+            for (const c of creditsSelec) {
+              const payload = {
+                venteCreditId: c.venteId,
+                montantRegle: Math.round(c.montantRestant * ratio),
+                modePaiement: groupeMode,
+                referencePaiement: groupeRef || undefined,
+                utilisateurId: user.id,
+                motif: motifGroupe,
+                referenceGroupe: refGroupe,
+              };
+              const res = await executerOuMettreEnFile(
+                'credit_reglement',
+                payload,
+                () => reglerCreditCaisse(payload)
+              );
+              if (res.offline) anyOffline = true;
+            }
+            setShowGroupe(false);
+            if (anyOffline) {
+              Alert.alert('Sauvegardé hors ligne', 'Règlements groupés mis en file — sync au retour connexion');
+            } else {
               charger();
-            } catch (e: any) {
-              Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement groupé impossible');
             }
             setSavingGroupe(false);
           }
@@ -925,7 +963,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
   );
 
   // ─── Rendu principal ─────────────────────────────────────────────────────
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#9c27b0" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
     <View style={s.container}>
@@ -952,25 +990,32 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
       {/* Hero — 4 stats */}
       <View style={s.hero}>
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>{tr('reste_a_payer', lang)}</Text>
           <Text style={s.heroVal}>{money(totalDu)}</Text>
+          <Text style={s.heroLabel}>{tr('reste_a_payer', lang)}</Text>
         </View>
         <View style={s.heroDivider} />
         <View style={s.heroStat}>
-          <Text style={s.heroLabel}>{tr('clients', lang)}</Text>
           <Text style={s.heroVal}>{nbClients}</Text>
+          <Text style={s.heroLabel}>{tr('clients', lang)}</Text>
         </View>
         <View style={s.heroDivider} />
         <View style={[s.heroStat, { opacity: nbRetard > 0 ? 1 : 0.5 }]}>
+          <Text style={[s.heroVal, { color: '#fca5a5' }]}>{nbRetard}</Text>
           <Text style={s.heroLabel}>En retard</Text>
-          <Text style={[s.heroVal, { color: '#ffcdd2' }]}>{nbRetard}</Text>
         </View>
         <View style={s.heroDivider} />
         <View style={[s.heroStat, { opacity: nbRegles > 0 ? 1 : 0.5 }]}>
+          <Text style={[s.heroVal, { color: '#86efac' }]}>{nbRegles}</Text>
           <Text style={s.heroLabel}>{tr('regle', lang)}</Text>
-          <Text style={[s.heroVal, { color: '#c8e6c9' }]}>{nbRegles}</Text>
         </View>
       </View>
+
+      {fromCache && (
+        <View style={s.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={s.offlineTxt}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
 
       {/* Onglets statut + bouton PDF */}
       <View style={[s.statutTabs, { justifyContent: 'space-between' }]}>
@@ -1902,4 +1947,6 @@ const s = StyleSheet.create({
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   btnPdf: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#0f766e', borderRadius: 10 },
   btnPdfText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: '#92400e', fontSize: 12 },
 });

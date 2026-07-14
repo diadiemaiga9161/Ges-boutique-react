@@ -6,9 +6,10 @@ import {
 } from 'react-native';
 import {
   Text, Card, FAB, ActivityIndicator, Modal, Portal,
-  TextInput, Button, Divider,
+  TextInput, Button, Divider, Searchbar,
 } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import {
   getDepenses, createDepense, updateDepense, deleteDepense, getPaiementsEmploye,
@@ -16,8 +17,30 @@ import {
 } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import NetInfo from '@react-native-community/netinfo';
+import { sauvegarderCache, lireCache, creerDepenseOffline } from '../services/offline.service';
 
 interface TypeDepense { id: number; nom: string; }
+
+function getIconeType(nom: string): string {
+  const n = (nom || '').toLowerCase();
+  if (/loyer|maison|location|logement|appartement|bail/.test(n)) return 'home-outline';
+  if (/transport|carburant|essence|voiture|taxi|moto|bus|v.hicule/.test(n)) return 'car-outline';
+  if (/lectricit|courant|nergie|lumi.re|kwh/.test(n)) return 'flash-outline';
+  if (/eau/.test(n)) return 'water-outline';
+  if (/nourriture|alimentation|repas|restaurant|manger|vivres|provisions|courses/.test(n)) return 'restaurant-outline';
+  if (/t.l.phone|mobile|forfait|appel/.test(n)) return 'call-outline';
+  if (/internet|wifi|connexion|web|fibre/.test(n)) return 'wifi-outline';
+  if (/salaire|employ|paie|personnel/.test(n)) return 'people-outline';
+  if (/fourniture|mat.riel|bureau|papeterie/.test(n)) return 'construct-outline';
+  if (/sant|m.decin|pharmacie|m.dicament|h.pital/.test(n)) return 'medkit-outline';
+  if (/publicit|marketing|pub|annonce/.test(n)) return 'megaphone-outline';
+  if (/entretien|nettoyage|maintenance|r.paration/.test(n)) return 'build-outline';
+  if (/imp.t|taxe|fiscalit|douane/.test(n)) return 'receipt-outline';
+  if (/assurance/.test(n)) return 'shield-checkmark-outline';
+  if (/formation|.cole|.ducation|cours|stage/.test(n)) return 'school-outline';
+  return 'pricetag-outline';
+}
 
 function buildDepensesPdfHtml(
   depenses: any[],
@@ -92,6 +115,9 @@ export default function DepensesScreen() {
   const [paiementsEmploye, setPaiementsEmploye] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+  const [searchDepense, setSearchDepense] = useState('');
+  const [showOfflineBadge, setShowOfflineBadge] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showTypePicker, setShowTypePicker] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -132,6 +158,8 @@ export default function DepensesScreen() {
 
   const charger = async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const [resD, resP] = await Promise.all([getDepenses(), getPaiementsEmploye().catch(() => ({ data: [] }))]);
       const liste: any[] = resD.data?.depenses || resD.data?.data || [];
       const salaires: any[] = (Array.isArray(resP.data) ? resP.data : [])
@@ -150,6 +178,9 @@ export default function DepensesScreen() {
       setDepenses(liste);
       setPaiementsEmploye(salaires);
       const toutes = [...liste, ...salaires];
+      sauvegarderCache('depenses', toutes).catch(() => {});
+      setFromCache(false);
+      setShowOfflineBadge(false);
       const map = new Map<string, number>();
       for (const d of toutes) {
         if (d.typeDepense) map.set(d.typeDepense, (map.get(d.typeDepense) || 0) + (d.montant || 0));
@@ -159,7 +190,21 @@ export default function DepensesScreen() {
           .map(([type, total]) => ({ type, total }))
           .sort((a, b) => b.total - a.total),
       );
-    } catch { }
+    } catch {
+      const cached = await lireCache<any>('depenses');
+      if (cached.length > 0) {
+        setDepenses(cached.filter((d: any) => !d.sourceExterne));
+        setPaiementsEmploye(cached.filter((d: any) => !!d.sourceExterne));
+        setFromCache(true);
+        const map = new Map<string, number>();
+        for (const d of cached) {
+          if (d.typeDepense) map.set(d.typeDepense, (map.get(d.typeDepense) || 0) + (d.montant || 0));
+        }
+        setTotauxParType(Array.from(map.entries()).map(([type, total]) => ({ type, total })).sort((a, b) => b.total - a.total));
+      } else {
+        setFromCache(false);
+      }
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -246,7 +291,8 @@ export default function DepensesScreen() {
       if (editing) {
         await updateDepense(editing.id, payload);
       } else {
-        await createDepense(payload);
+        const result = await creerDepenseOffline(payload);
+        if (result.offline) setShowOfflineBadge(true);
       }
       setShowModal(false);
       charger();
@@ -306,8 +352,28 @@ export default function DepensesScreen() {
     [depensesFiltrees],
   );
 
+  // Recherche par description/nom
+  const depensesFiltreesSearch = useMemo(() => {
+    if (!searchDepense.trim()) return depensesFiltrees;
+    const t = searchDepense.toLowerCase();
+    return depensesFiltrees.filter(d =>
+      (d.nom || '').toLowerCase().includes(t) ||
+      (d.motif || '').toLowerCase().includes(t)
+    );
+  }, [depensesFiltrees, searchDepense]);
+
+  // ── Pagination dépenses (sur résultat avec recherche) ──
+  const depensesPagineesSearch = useMemo(
+    () => depensesFiltreesSearch.slice((pageDepenses - 1) * ITEMS_PAGE, pageDepenses * ITEMS_PAGE),
+    [depensesFiltreesSearch, pageDepenses],
+  );
+  const totalPagesSearch = useMemo(
+    () => Math.max(1, Math.ceil(depensesFiltreesSearch.length / ITEMS_PAGE)),
+    [depensesFiltreesSearch],
+  );
+
   // Reset page quand les filtres changent
-  useEffect(() => { setPageDepenses(1); }, [filtreType, filtreMois]);
+  useEffect(() => { setPageDepenses(1); }, [filtreType, filtreMois, searchDepense]);
 
   const filtreTitre = (() => {
     const parts: string[] = [];
@@ -446,9 +512,12 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                       style={styles.filtreTypeItem}
                       onPress={() => { setFiltreType(t.nom); setShowTypePicker2(false); }}
                     >
-                      <Text style={[styles.filtreTypeText, filtreType === t.nom && { color: '#f44336', fontWeight: 'bold' }]}>
-                        {t.nom}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name={getIconeType(t.nom) as any} size={14} color={filtreType === t.nom ? '#f44336' : '#64748b'} style={{ marginRight: 6 }} />
+                        <Text style={[styles.filtreTypeText, filtreType === t.nom && { color: '#f44336', fontWeight: 'bold' }]}>
+                          {t.nom}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -476,7 +545,10 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                 <Text style={styles.typeSummaryTitle}>Répartition par type</Text>
                 {totauxFiltres.map(t => (
                   <View key={t.type} style={styles.typeRow}>
-                    <Text style={styles.typeLabel}>{t.type}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <Ionicons name={getIconeType(t.type) as any} size={14} color="#475569" style={{ marginRight: 6 }} />
+                      <Text style={styles.typeLabel}>{t.type}</Text>
+                    </View>
                     <Text style={styles.typeTotal}>{t.total.toLocaleString('fr-FR')} FCFA</Text>
                   </View>
                 ))}
@@ -492,7 +564,12 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                 <Text style={styles.montant}>{d.montant?.toLocaleString('fr-FR')} FCFA</Text>
               </View>
               <View style={styles.badgeWrap}>
-                {d.typeDepense ? <Text style={styles.badge}>{d.typeDepense}</Text> : null}
+                {d.typeDepense ? (
+                  <View style={styles.badgeContainer}>
+                    <Ionicons name={getIconeType(d.typeDepense) as any} size={11} color="#f44336" style={{ marginRight: 3 }} />
+                    <Text style={styles.badge}>{d.typeDepense}</Text>
+                  </View>
+                ) : null}
                 {d.sourceExterne ? (
                   <Text style={[styles.badge, { backgroundColor: '#fef3c7', color: '#b45309', marginLeft: 4 }]}>Via Employés</Text>
                 ) : null}
@@ -596,6 +673,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                     </>
                   ) : (
                     <>
+                      <Ionicons name={getIconeType(t.nom) as any} size={18} color="#64748b" style={{ marginRight: 8 }} />
                       <Text style={styles.typesItemText}>{t.nom}</Text>
                       <TouchableOpacity onPress={() => { setEditingTypeId(t.id); setEditingTypeName(t.nom); }} style={{ marginLeft: 8 }}>
                         <Ionicons name="pencil-outline" size={20} color="#1A56DB" />
@@ -677,14 +755,17 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                       setShowTypePicker(false);
                     }}
                   >
-                    <Text
-                      style={[
-                        styles.typePickerText,
-                        form.typeDepense === t.nom && { color: '#f44336', fontWeight: 'bold' },
-                      ]}
-                    >
-                      {t.nom}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name={getIconeType(t.nom) as any} size={14} color={form.typeDepense === t.nom ? '#f44336' : '#64748b'} style={{ marginRight: 6 }} />
+                      <Text
+                        style={[
+                          styles.typePickerText,
+                          form.typeDepense === t.nom && { color: '#f44336', fontWeight: 'bold' },
+                        ]}
+                      >
+                        {t.nom}
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -734,16 +815,20 @@ const styles = StyleSheet.create({
   card: { marginBottom: 10, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   montant: { fontWeight: 'bold', color: '#f44336' },
-  badgeWrap: { marginTop: 4 },
-  badge: {
+  badgeWrap: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
+  badgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: '#fef2f2',
-    color: '#f44336',
-    fontSize: 11,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
     overflow: 'hidden',
+  },
+  badge: {
+    color: '#f44336',
+    fontSize: 11,
   },
   sub: { color: '#888', fontSize: 12, marginTop: 4 },
   date: { color: '#aaa', fontSize: 11, marginTop: 2 },

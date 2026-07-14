@@ -31,6 +31,7 @@ const getMenuItems = (lang: string) => [
   { icon: 'bank', label: 'Comptes bancaires', screen: 'Comptes' },
   { icon: 'target', label: 'Objectifs fournisseurs', screen: 'ObjectifsFournisseur' },
   { icon: 'account-tie', label: 'Vendeurs', screen: 'Vendeurs' },
+  { icon: 'cash-remove', label: 'Annulation paiements', screen: 'AnnulationPaiements' },
   { icon: 'help-circle', label: tr('aide_ressources', lang), screen: 'Resources' },
   { icon: 'store-settings', label: tr('parametres_boutique', lang), screen: 'BoutiqueSettings' },
   { icon: 'account', label: tr('mon_profil', lang), screen: 'Profil' },

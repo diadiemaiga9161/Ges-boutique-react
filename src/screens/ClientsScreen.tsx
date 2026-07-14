@@ -7,11 +7,13 @@ import {
   Text, Card, FAB, Searchbar, ActivityIndicator,
   Portal, Modal as PaperModal, TextInput, Button,
 } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import {
-  getClients, createClient, updateClient, deleteClient,
+  getClients, updateClient, deleteClient,
   getClientVentes, getCreditsNonRegles,
 } from '../services/api.service';
-import { cacheClients } from '../db/database';
+import { creerClientOffline, sauvegarderCache, lireCache } from '../services/offline.service';
 import { Client } from '../types';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -43,6 +45,10 @@ function money(v: number) { return (v ?? 0).toLocaleString('fr-FR') + ' FCFA'; }
 function fdate(d?: string) { if (!d) return '—'; return new Date(d).toLocaleDateString('fr-FR'); }
 function initiales(nom: string) { return nom.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase().slice(0, 2); }
 
+// ─── Couleurs avatar (déterministes selon client.id) ─────────────────────────
+const AVATAR_BG   = ['#1a56db22', '#16a34a22', '#f59e0b22'];
+const AVATAR_TEXT = ['#1a56db',   '#16a34a',   '#d97706'];
+
 // ─── Composant principal ───────────────────────────────────────────────────────
 export default function ClientsScreen() {
   const { lang } = useLang();
@@ -53,6 +59,7 @@ export default function ClientsScreen() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   // ── Modal ajout / modification ─────────────────────────────────────────────
   const [showFormModal, setShowFormModal] = useState(false);
@@ -71,12 +78,24 @@ export default function ClientsScreen() {
   // ── Chargement liste ───────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) throw new Error('offline');
       const res = await getClients();
       const data: Client[] = res.data?.data || res.data || [];
       setClients(data);
       setFiltered(data);
-      await cacheClients(data);
-    } catch { /* réseau indisponible, liste offline déjà en cache */ }
+      setFromCache(false);
+      sauvegarderCache('clients', data).catch(() => {});
+    } catch {
+      const cached = await lireCache<Client>('clients');
+      if (cached.length > 0) {
+        setClients(cached);
+        setFiltered(cached);
+        setFromCache(true);
+      } else {
+        setFromCache(false);
+      }
+    }
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -116,7 +135,7 @@ export default function ClientsScreen() {
       if (editingClient) {
         await updateClient(editingClient.id, form);
       } else {
-        await createClient(form);
+        await creerClientOffline(form);
       }
       setShowFormModal(false);
       setForm({ nom: '', telephone: '', email: '', adresse: '' });
@@ -164,7 +183,6 @@ export default function ClientsScreen() {
   const chargerVentes = useCallback(async (client: Client) => {
     setLoadingVentes(true);
     try {
-      // Essaie d'abord par clientId, puis filtre par nom si vide
       let data: VenteClient[] = [];
       try {
         const res = await getClientVentes(client.id);
@@ -172,7 +190,6 @@ export default function ClientsScreen() {
       } catch {
         data = [];
       }
-      // Fallback : si aucun résultat, tente filtre par nom côté serveur
       if (!data.length) {
         try {
           const { getVentes } = await import('../services/api.service');
@@ -191,7 +208,6 @@ export default function ClientsScreen() {
     try {
       const res = await getCreditsNonRegles();
       const all: CreditClient[] = res.data?.data || res.data?.credits || res.data || [];
-      // Filtre côté frontend par nom client
       const nom = client.nom.toLowerCase().trim();
       const filtered2 = all.filter((c: CreditClient) =>
         (c.clientNom ?? '').toLowerCase().trim() === nom,
@@ -213,11 +229,40 @@ export default function ClientsScreen() {
   const totalCAClient = ventes.reduce((s, v) => s + (v.montantTotal ?? 0), 0);
   const totalRestantDu = credits.filter(c => !c.estReglee).reduce((s, c) => s + c.montantRestant, 0);
 
+  // ── Stats hero ─────────────────────────────────────────────────────────────
+  const avecCredit   = clients.filter(c => c.soldeCredit && c.soldeCredit > 0).length;
+  const avecTelephone = clients.filter(c => !!c.telephone).length;
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
     <View style={styles.container}>
-      {/* ── Barre de recherche ─────────────────────────────────────────────── */}
+
+      {/* ── Hero banner ─────────────────────────────────────────────────────── */}
+      <View style={styles.hero}>
+        <View style={styles.heroStat}>
+          <Text style={styles.heroVal}>{clients.length}</Text>
+          <Text style={styles.heroLbl}>Total</Text>
+        </View>
+        <View style={styles.heroStat}>
+          <Text style={styles.heroVal}>{avecCredit}</Text>
+          <Text style={styles.heroLbl}>En crédit</Text>
+        </View>
+        <View style={styles.heroStat}>
+          <Text style={styles.heroVal}>{avecTelephone}</Text>
+          <Text style={styles.heroLbl}>Avec tél</Text>
+        </View>
+      </View>
+
+      {/* ── Bandeau offline ─────────────────────────────────────────────────── */}
+      {fromCache && (
+        <View style={styles.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
+        </View>
+      )}
+
+      {/* ── Barre de recherche ──────────────────────────────────────────────── */}
       <Searchbar
         placeholder={tr('recherche_client', lang)}
         value={search}
@@ -225,42 +270,57 @@ export default function ClientsScreen() {
         style={styles.search}
       />
 
-      {/* ── Liste clients ──────────────────────────────────────────────────── */}
+      {/* ── Liste clients ────────────────────────────────────────────────────── */}
       <FlatList
         data={filtered}
         keyExtractor={c => String(c.id)}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />
         }
-        contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
-        renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => ouvrirDetail(item)} activeOpacity={0.8}>
-            <Card style={styles.card}>
-              <Card.Content style={styles.cardContent}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initiales(item.nom)}</Text>
+        contentContainerStyle={{ paddingVertical: 8, paddingBottom: 80 }}
+        renderItem={({ item }) => {
+          const colorIdx = Number(item.id) % 3;
+          return (
+            <Card style={styles.card} onPress={() => ouvrirDetail(item)}>
+              <Card.Content style={styles.cardRow}>
+                <View style={[styles.avatar, { backgroundColor: AVATAR_BG[colorIdx] }]}>
+                  <Text style={[styles.avatarTxt, { color: AVATAR_TEXT[colorIdx] }]}>
+                    {initiales(item.nom)}
+                  </Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text variant="titleMedium" style={styles.clientNom}>{item.nom}</Text>
-                  {item.telephone ? <Text style={styles.sub}>{item.telephone}</Text> : null}
-                  {item.soldeCredit && item.soldeCredit > 0 ? (
-                    <Text style={styles.credit}>Credit du : {money(item.soldeCredit)}</Text>
-                  ) : null}
+                  <Text style={styles.cardName} numberOfLines={1}>{item.nom}</Text>
+                  <Text style={styles.cardSub} numberOfLines={1}>
+                    {item.telephone || item.email || item.adresse || '—'}
+                  </Text>
                 </View>
-                <Text style={styles.chevron}>›</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  {item.soldeCredit && item.soldeCredit > 0 ? (
+                    <Text style={[styles.cardAmt, { color: '#dc2626' }]}>
+                      {money(item.soldeCredit)}
+                    </Text>
+                  ) : null}
+                  <Text style={{ color: '#94a3b8', fontSize: 18, fontWeight: 'bold' }}>›</Text>
+                </View>
               </Card.Content>
             </Card>
-          </TouchableOpacity>
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_client', lang)}</Text>}
+          );
+        }}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <MaterialCommunityIcons name={"account-multiple-off-outline" as any} size={64} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>{tr('aucun_client', lang)}</Text>
+            <Text style={styles.emptySub}>Aucun client enregistré</Text>
+          </View>
+        }
       />
 
-      {/* ── FAB ajout ──────────────────────────────────────────────────────── */}
+      {/* ── FAB ajout ────────────────────────────────────────────────────────── */}
       <FAB icon="plus" style={styles.fab} onPress={ouvrirFormAjout} />
 
-      {/* ════════════════════════════════════════════════════════════════════
+      {/* ════════════════════════════════════════════════════════════════════════
           MODAL AJOUT / MODIFICATION
-      ════════════════════════════════════════════════════════════════════ */}
+      ════════════════════════════════════════════════════════════════════════ */}
       <Portal>
         <PaperModal
           visible={showFormModal}
@@ -312,9 +372,9 @@ export default function ClientsScreen() {
         </PaperModal>
       </Portal>
 
-      {/* ════════════════════════════════════════════════════════════════════
+      {/* ════════════════════════════════════════════════════════════════════════
           MODAL DETAIL CLIENT
-      ════════════════════════════════════════════════════════════════════ */}
+      ════════════════════════════════════════════════════════════════════════ */}
       <Modal
         visible={showDetail}
         animationType="slide"
@@ -323,14 +383,16 @@ export default function ClientsScreen() {
       >
         <View style={styles.overlay}>
           <View style={styles.sheet}>
-            {/* Poignee */}
+            {/* Poignée */}
             <View style={styles.handle} />
 
             {/* Header modal : avatar + nom + fermer */}
             {selectedClient && (
               <View style={styles.detailHeader}>
-                <View style={styles.detailAvatar}>
-                  <Text style={styles.detailAvatarText}>{initiales(selectedClient.nom)}</Text>
+                <View style={[styles.detailAvatar, { backgroundColor: AVATAR_BG[Number(selectedClient.id) % 3] }]}>
+                  <Text style={[styles.detailAvatarText, { color: AVATAR_TEXT[Number(selectedClient.id) % 3] }]}>
+                    {initiales(selectedClient.nom)}
+                  </Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.detailNom}>{selectedClient.nom}</Text>
@@ -454,7 +516,6 @@ export default function ClientsScreen() {
                     <ActivityIndicator size="large" color="#dc2626" style={{ marginTop: 40 }} />
                   ) : (
                     <>
-                      {/* KPI Total restant du */}
                       {totalRestantDu > 0 ? (
                         <View style={[styles.kpiBox, styles.kpiBoxRed]}>
                           <Text style={[styles.kpiLabel, { color: '#dc2626' }]}>Total restant du</Text>
@@ -527,33 +588,46 @@ export default function ClientsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
 
+  // Hero
+  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  heroStat: { flex: 1, alignItems: 'center' },
+  heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
+
+  // Offline
+  offlineBanner: {
+    flexDirection: 'row', gap: 6, alignItems: 'center',
+    backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6,
+  },
+  offlineTxt: { color: '#92400e', fontSize: 12 },
+
   // Liste
   search: { margin: 12 },
-  card: { marginBottom: 10, borderRadius: 12 },
-  cardContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center',
-  },
-  avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  clientNom: { fontWeight: 'bold', color: '#1e293b' },
-  sub: { color: '#666', marginTop: 2, fontSize: 13 },
-  credit: { color: '#dc2626', fontWeight: '600', marginTop: 4, fontSize: 12 },
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
-  chevron: { color: '#94a3b8', fontSize: 22, fontWeight: 'bold' },
-  fab: { position: 'absolute', bottom: 20, right: 20 },
+
+  // Card design system
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  avatarTxt: { fontWeight: 'bold', fontSize: 15 },
+  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
+  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+
+  // Empty state
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+
+  // FAB
+  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
 
   // Modal ajout / modification (Paper)
-  paperModal: {
-    backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20,
-  },
+  paperModal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20 },
   input: { marginBottom: 12 },
 
   // Modal detail (RN)
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%',
-  },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%' },
   handle: {
     width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2,
     alignSelf: 'center', marginTop: 10,
@@ -565,10 +639,9 @@ const styles = StyleSheet.create({
     padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0',
   },
   detailAvatar: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center',
+    width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center',
   },
-  detailAvatarText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
+  detailAvatarText: { fontWeight: 'bold', fontSize: 18 },
   detailNom: { fontWeight: 'bold', fontSize: 17, color: '#1e293b' },
   detailSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
   closeBtn: { padding: 8 },
@@ -643,10 +716,7 @@ const styles = StyleSheet.create({
   venteDate: { flex: 1, color: '#475569', fontSize: 13, fontWeight: '500' },
   venteMontant: { fontWeight: 'bold', color: '#1e293b', fontSize: 14 },
   venteMode: { color: '#94a3b8', fontSize: 11 },
-  badgeCredit: {
-    backgroundColor: '#fef3c7', borderRadius: 8,
-    paddingHorizontal: 6, paddingVertical: 2,
-  },
+  badgeCredit: { backgroundColor: '#fef3c7', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
   badgeCreditText: { color: '#92400e', fontSize: 10, fontWeight: 'bold' },
   emptyOnglet: { textAlign: 'center', color: '#94a3b8', marginTop: 40, fontSize: 14 },
 
@@ -672,9 +742,7 @@ const styles = StyleSheet.create({
   progressText: { fontSize: 10, color: '#94a3b8' },
 
   // Pied modal detail
-  detailFoot: {
-    padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0',
-  },
+  detailFoot: { padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
   btnFermer: {
     backgroundColor: '#f1f5f9', borderRadius: 10,
     paddingVertical: 12, alignItems: 'center',

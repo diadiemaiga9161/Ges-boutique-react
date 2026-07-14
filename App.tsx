@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { LangProvider } from './src/i18n/LangContext';
 import { PaperProvider, MD3LightTheme, Portal } from 'react-native-paper';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -18,6 +18,7 @@ import BoutiqueSelectScreen from './src/screens/BoutiqueSelectScreen';
 import AppNavigation from './src/navigation';
 import { initDatabase } from './src/db/database';
 import { demarrerAutoSync } from './src/services/offline.service';
+import { setOnAuthError } from './src/services/api.service';
 
 enableScreens();
 
@@ -32,7 +33,7 @@ const theme = {
 };
 
 const HEADER = {
-  headerStyle: { backgroundColor: '#1976D2' },
+  headerStyle: { backgroundColor: '#081648' },
   headerTintColor: '#fff' as const,
   headerTitleStyle: { fontWeight: 'bold' as const },
 };
@@ -58,11 +59,30 @@ export default function App() {
   const [boutiqueChoisie, setBoutiqueChoisie] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const handleLogout = useCallback(async () => {
+    await AsyncStorage.removeItem('user');
+    await AsyncStorage.removeItem('token');
+    setUser(null);
+    // boutique_port / api_url conservés → pas de re-sélection
+  }, []);
+
+  // Ref pour éviter les problèmes de closure avec le callback 401
+  const logoutRef = useRef(handleLogout);
+  useEffect(() => { logoutRef.current = handleLogout; }, [handleLogout]);
+
+  useEffect(() => {
+    // Enregistre le callback de déconnexion automatique sur 401
+    setOnAuthError(() => logoutRef.current());
+    return () => setOnAuthError(() => {});
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       try { await initDatabase(); } catch (e) { console.warn('DB:', e); }
       const raw = await AsyncStorage.getItem('user');
-      if (raw) setUser(JSON.parse(raw));
+      if (raw) {
+        try { setUser(JSON.parse(raw)); } catch { await AsyncStorage.removeItem('user'); }
+      }
       const apiUrl = await AsyncStorage.getItem('api_url');
       if (apiUrl) setBoutiqueChoisie(true);
       setLoading(false);
@@ -71,13 +91,6 @@ export default function App() {
     const stopSync = demarrerAutoSync((n) => console.log(`${n} vente(s) sync`));
     return () => stopSync();
   }, []);
-
-  const handleLogout = async () => {
-    await AsyncStorage.removeItem('user');
-    await AsyncStorage.removeItem('token');
-    setUser(null);
-    // boutique_port / api_url conservés → pas de re-sélection
-  };
 
   if (loading) {
     return (

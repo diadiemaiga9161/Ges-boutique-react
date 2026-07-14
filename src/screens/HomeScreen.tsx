@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   Text,
   Card,
@@ -16,6 +17,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api.service';
+import { getNombreOperationsPending } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -41,6 +43,7 @@ export default function HomeScreen() {
 
   const [user, setUser] = useState<any>(null);
   const [boutique, setBoutique] = useState<any>({});
+  const [pendingCount, setPendingCount] = useState(0);
   const [periode, setPeriode] = useState<Periode>('jour');
   const [rapport, setRapport] = useState<RapportStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +54,7 @@ export default function HomeScreen() {
   useEffect(() => {
     AsyncStorage.getItem('user').then(raw => { if (raw) setUser(JSON.parse(raw)); });
     AsyncStorage.getItem('boutique_info').then(raw => { if (raw) setBoutique(JSON.parse(raw)); });
+    getNombreOperationsPending().then(setPendingCount);
     charger('jour');
   }, []);
 
@@ -124,6 +128,14 @@ export default function HomeScreen() {
           <Text style={styles.dateText}>{dateAujourdhui}</Text>
         </View>
       </View>
+
+      {/* Bandeau sync */}
+      {pendingCount > 0 && (
+        <View style={styles.syncBanner}>
+          <MaterialCommunityIcons name="cloud-sync" size={14} color="#1e40af" />
+          <Text style={styles.syncTxt}>{pendingCount} opération{pendingCount > 1 ? 's' : ''} en attente de synchronisation</Text>
+        </View>
+      )}
 
       {/* Sélecteur période */}
       <SegmentedButtons
@@ -264,6 +276,10 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
+
+  // Sync banner
+  syncBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#dbeafe', paddingHorizontal: 12, paddingVertical: 6 },
+  syncTxt: { color: '#1e40af', fontSize: 12 },
 
   // Header
   header: {

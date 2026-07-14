@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { enableScreens } from 'react-native-screens';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 enableScreens();
 
@@ -45,6 +46,7 @@ import ComptesScreen from '../screens/ComptesScreen';
 import ObjectifsFournisseurScreen from '../screens/ObjectifsFournisseurScreen';
 import VendeursScreen from '../screens/VendeursScreen';
 import HomeScreen from '../screens/HomeScreen';
+import AnnulationPaiementsScreen from '../screens/AnnulationPaiementsScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -57,12 +59,13 @@ const HEADER = {
 };
 
 function MainTabs({ onLogout }: { onLogout: () => void }) {
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
         tabBarActiveTintColor: '#1a56db',
         tabBarInactiveTintColor: '#aaa',
-        tabBarStyle: { height: 62, paddingBottom: 10, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
+        tabBarStyle: { height: 62 + insets.bottom, paddingBottom: insets.bottom + 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         ...HEADER,
       }}
@@ -122,7 +125,7 @@ function MainStack({ onLogout }: { onLogout: () => void }) {
       <Stack.Screen name="Comptes"            component={ComptesScreen}               options={{ title: 'Comptes bancaires' }} />
       <Stack.Screen name="ObjectifsFournisseur" component={ObjectifsFournisseurScreen} options={{ title: 'Objectifs fournisseurs' }} />
       <Stack.Screen name="Vendeurs"           component={VendeursScreen}              options={{ title: 'Vendeurs' }} />
-      <Stack.Screen name="Home"               component={HomeScreen}                  options={{ title: 'Accueil' }} />
+      <Stack.Screen name="AnnulationPaiements" component={AnnulationPaiementsScreen}  options={{ title: 'Annulation paiements' }} />
     </Stack.Navigator>
   );
 }
