@@ -6,6 +6,7 @@ import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
 const getMenuItems = (lang: string) => [
+  { icon: 'home-outline', label: 'Accueil', screen: 'Home' },
   { icon: 'history', label: tr('historique_ventes', lang), screen: 'Historique' },
   { icon: 'file-document-edit-outline', label: tr('commandes', lang), screen: 'Commandes' },
   { icon: 'account-group', label: tr('clients', lang), screen: 'Clients' },

@@ -3,7 +3,8 @@ import {
   View, FlatList, StyleSheet, RefreshControl, Alert,
   Modal, ScrollView, TouchableOpacity,
 } from 'react-native';
-import { Text, Card, Chip, Searchbar, ActivityIndicator, ProgressBar } from 'react-native-paper';
+import { Text, Card, Chip, Searchbar, ActivityIndicator, ProgressBar, FAB } from 'react-native-paper';
+import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -52,6 +53,7 @@ interface VenteAnnulee {
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function HistoriqueVentesScreen() {
   const { lang } = useLang();
+  const navigation = useNavigation<any>();
 
   // ─── Onglets ───────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>('ventes');
@@ -716,6 +718,14 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
           </View>
         </View>
       </Modal>
+
+      {/* ─── FAB Nouvelle vente (comme Ionic sales page) ─── */}
+      <FAB
+        icon="cart-plus"
+        style={styles.fab}
+        onPress={() => navigation.navigate('Vente')}
+        label="Nouvelle vente"
+      />
     </View>
   );
 }
@@ -723,6 +733,9 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
+
+  // FAB
+  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
 
   // Onglets
   tabRow: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },

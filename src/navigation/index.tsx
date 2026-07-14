@@ -71,14 +71,14 @@ function MainTabs({ onLogout }: { onLogout: () => void }) {
         ...HEADER,
       }}
     >
-      <Tab.Screen name="Home" component={HomeScreen}
-        options={{ title: 'Accueil', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="home" color={color} size={size} /> }} />
-      <Tab.Screen name="Produits" component={ProduitsScreen}
-        options={{ title: 'Produits', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="package-variant" color={color} size={size} /> }} />
-      <Tab.Screen name="Vente" component={VenteScreen}
-        options={{ title: 'Vente', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cart-outline" color={color} size={size} /> }} />
       <Tab.Screen name="Caisse" component={CaisseScreen}
         options={{ title: 'Caisse', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cash-register" color={color} size={size} /> }} />
+      <Tab.Screen name="Ventes" component={HistoriqueVentesScreen}
+        options={{ title: 'Ventes', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="receipt" color={color} size={size} /> }} />
+      <Tab.Screen name="Produits" component={ProduitsScreen}
+        options={{ title: 'Produits', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="package-variant" color={color} size={size} /> }} />
+      <Tab.Screen name="Inventaire" component={InventaireScreen}
+        options={{ title: 'Inventaire', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="clipboard-list" color={color} size={size} /> }} />
       <Tab.Screen name="Rapports" component={RapportsScreen}
         options={{ title: 'Rapports', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chart-bar" color={color} size={size} /> }} />
       <Tab.Screen name="Menu" options={{ title: 'Menu', tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="menu" color={color} size={size} /> }}>
@@ -95,8 +95,9 @@ function MainStack({ onLogout }: { onLogout: () => void }) {
         {() => <MainTabs onLogout={onLogout} />}
       </Stack.Screen>
       <Stack.Screen name="Historique"       component={HistoriqueVentesScreen}   options={{ title: 'Historique ventes' }} />
+      <Stack.Screen name="Vente"            component={VenteScreen}              options={{ title: 'Nouvelle vente' }} />
+      <Stack.Screen name="Home"             component={HomeScreen}               options={{ title: 'Accueil' }} />
       <Stack.Screen name="Clients"          component={ClientsScreen}            options={{ title: 'Clients' }} />
-      <Stack.Screen name="Inventaire"       component={InventaireScreen}         options={{ title: 'Inventaire' }} />
       <Stack.Screen name="Depenses"         component={DepensesScreen}           options={{ title: 'Dépenses' }} />
       <Stack.Screen name="Notifications"    component={NotificationsScreen}      options={{ title: 'Notifications' }} />
       <Stack.Screen name="Credits"          component={CreditsScreen}            options={{ title: 'Crédits clients' }} />
