@@ -11,6 +11,14 @@ import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
+const TYPES_PAIEMENT = [
+  { value: 'SANS_PAIEMENT', label: 'Sans paiement' },
+  { value: 'IMMEDIAT', label: 'Paiement immédiat' },
+  { value: 'CREDIT', label: 'Crédit' },
+] as const;
+
+type TypePaiement = typeof TYPES_PAIEMENT[number]['value'];
+
 export default function TransfertsScreen() {
   const { lang } = useLang();
   const [transferts, setTransferts] = useState<any[]>([]);
@@ -29,6 +37,7 @@ export default function TransfertsScreen() {
   const [produit, setProduit] = useState<any | null>(null);
   const [quantite, setQuantite] = useState('');
   const [motif, setMotif] = useState('');
+  const [typePaiement, setTypePaiement] = useState<TypePaiement>('SANS_PAIEMENT');
   const [searchProduit, setSearchProduit] = useState('');
   const [etape, setEtape] = useState<'src' | 'dest' | 'produit' | 'confirm'>('src');
 
@@ -60,6 +69,7 @@ export default function TransfertsScreen() {
     setProduit(null);
     setQuantite('');
     setMotif('');
+    setTypePaiement('SANS_PAIEMENT');
     setSearchProduit('');
     setEtape('src');
     setShowCreate(true);
@@ -88,7 +98,8 @@ export default function TransfertsScreen() {
         boutiqueDestId: boutiqueDest.id,
         produitId: produit.id,
         quantite: qty,
-        motif: motif.trim() || undefined,
+        notes: motif.trim() || undefined,
+        typePaiement: typePaiement,
       };
       const res = await executerOuMettreEnFile(
         'transfert_create',
@@ -334,7 +345,7 @@ export default function TransfertsScreen() {
                     placeholder="Ex : 10"
                     placeholderTextColor="#94a3b8"
                   />
-                  <Text style={styles.stepLabel}>Motif (facultatif) :</Text>
+                  <Text style={styles.stepLabel}>Notes (facultatif) :</Text>
                   <TextInput
                     style={styles.input}
                     value={motif}
@@ -342,6 +353,20 @@ export default function TransfertsScreen() {
                     placeholder="Raison du transfert..."
                     placeholderTextColor="#94a3b8"
                   />
+                  <Text style={styles.stepLabel}>Type de paiement :</Text>
+                  <View style={styles.typePaiementRow}>
+                    {TYPES_PAIEMENT.map(tp => (
+                      <TouchableOpacity
+                        key={tp.value}
+                        style={[styles.typePaiementBtn, typePaiement === tp.value && styles.typePaiementBtnActive]}
+                        onPress={() => setTypePaiement(tp.value)}
+                      >
+                        <Text style={[styles.typePaiementBtnText, typePaiement === tp.value && styles.typePaiementBtnTextActive]}>
+                          {tp.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   <TouchableOpacity
                     style={styles.saveBtn}
                     onPress={() => {
@@ -373,7 +398,8 @@ export default function TransfertsScreen() {
                   ['Destination', boutiqueDest?.nom],
                   ['Produit', produit?.nom],
                   ['Quantité', quantite],
-                  ...(motif ? [['Motif', motif]] : []),
+                  ['Type paiement', TYPES_PAIEMENT.find(t => t.value === typePaiement)?.label || typePaiement],
+                  ...(motif ? [['Notes', motif]] : []),
                 ].map(([label, val]) => (
                   <View key={label as string} style={styles.recapLine}>
                     <Text style={styles.recapLabel}>{label}</Text>
@@ -473,4 +499,11 @@ const styles = StyleSheet.create({
 
   saveBtn: { backgroundColor: '#1a56db', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8, marginBottom: 4 },
   saveBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  // Type paiement
+  typePaiementRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  typePaiementBtn: { flex: 1, borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 10, paddingVertical: 9, alignItems: 'center', backgroundColor: '#fff' },
+  typePaiementBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
+  typePaiementBtnText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  typePaiementBtnTextActive: { color: '#fff' },
 });
