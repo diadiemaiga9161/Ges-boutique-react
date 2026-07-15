@@ -22,7 +22,7 @@ import { buildRecuPaiementFournisseurHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
-const MODES_PAIEMENT = ['ESPECES', 'VIREMENT', 'CHEQUE'];
+const MODES_PAIEMENT = ['ESPECES', 'BANQUE'];
 const STATUT_COLOR: Record<string, string> = {
   PAYE: '#16a34a', EN_COURS: '#d97706', IMPAYE: '#dc2626', ANNULE: '#6b7280',
 };
