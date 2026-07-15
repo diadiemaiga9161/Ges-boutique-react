@@ -3,6 +3,7 @@ import { View, FlatList, StyleSheet, RefreshControl, Linking, Alert } from 'reac
 import { Text, Card, Button, ActivityIndicator } from 'react-native-paper';
 import { getVentes } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { imprimerFactureRN, partagerFactureRN, DesignFacture } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -12,6 +13,7 @@ export default function FacturesScreen() {
   const [ventes, setVentes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [boutique, setBoutique] = useState<any>({});
   const [design, setDesign] = useState<DesignFacture>(1);
 
@@ -22,10 +24,20 @@ export default function FacturesScreen() {
     if (tpl === 'moderne') setDesign(2);
     else if (tpl === 'minimaliste') setDesign(3);
     else setDesign(1);
+    const net = await NetInfo.fetch();
     try {
+      if (!net.isConnected) throw new Error('offline');
       const res = await getVentes();
-      setVentes(res.data?.data || res.data || []);
-    } catch { }
+      const liste = res.data?.data || res.data || [];
+      setVentes(liste);
+      setFromCache(false);
+      AsyncStorage.setItem('cache_factures', JSON.stringify(liste)).catch(() => {});
+    } catch {
+      try {
+        const s = await AsyncStorage.getItem('cache_factures');
+        if (s) { setVentes(JSON.parse(s)); setFromCache(true); } else setFromCache(false);
+      } catch { setFromCache(false); }
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -90,6 +102,11 @@ export default function FacturesScreen() {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
+        </View>
+      )}
       <FlatList
         data={ventes}
         keyExtractor={v => String(v.id)}

@@ -16,6 +16,7 @@ import {
 } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
 import { getNombreOperationsPending } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
@@ -50,6 +51,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [ventes, setVentes] = useState<any[]>([]);
   const [alertes, setAlertes] = useState<any[]>([]);
+  const [fromCache, setFromCache] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('user').then(raw => { if (raw) setUser(JSON.parse(raw)); });
@@ -60,26 +62,56 @@ export default function HomeScreen() {
 
   const charger = useCallback(async (p: Periode) => {
     setLoading(true);
+    const net = await NetInfo.fetch();
+
+    // Rapport
     try {
+      if (!net.isConnected) throw new Error('offline');
       const today = new Date().toISOString().split('T')[0];
       let rapportRes;
       if (p === 'jour') rapportRes = await api.get('/rapports/jour', { params: { date: today } });
       else if (p === 'semaine') rapportRes = await api.get('/rapports/semaine');
       else rapportRes = await api.get('/rapports/mois');
-      setRapport(rapportRes.data?.data || rapportRes.data || null);
-    } catch { setRapport(null); }
+      const r = rapportRes.data?.data || rapportRes.data || null;
+      setRapport(r);
+      setFromCache(false);
+      AsyncStorage.setItem(`cache_home_rapport_${p}`, JSON.stringify(r)).catch(() => {});
+    } catch {
+      try {
+        const s = await AsyncStorage.getItem(`cache_home_rapport_${p}`);
+        if (s) { setRapport(JSON.parse(s)); setFromCache(true); } else setRapport(null);
+      } catch { setRapport(null); }
+    }
 
+    // Ventes récentes
     try {
+      if (!net.isConnected) throw new Error('offline');
       const vRes = await api.get('/ventes/jour', { params: { limite: 5 } });
       const raw = vRes.data?.data || vRes.data;
-      setVentes(Array.isArray(raw) ? raw.slice(0, 5) : []);
-    } catch { setVentes([]); }
+      const v = Array.isArray(raw) ? raw.slice(0, 5) : [];
+      setVentes(v);
+      AsyncStorage.setItem('cache_home_ventes', JSON.stringify(v)).catch(() => {});
+    } catch {
+      try {
+        const s = await AsyncStorage.getItem('cache_home_ventes');
+        if (s) setVentes(JSON.parse(s)); else setVentes([]);
+      } catch { setVentes([]); }
+    }
 
+    // Alertes stock
     try {
+      if (!net.isConnected) throw new Error('offline');
       const nRes = await api.get('/notifications');
       const rawN = nRes.data?.data || nRes.data;
-      setAlertes(Array.isArray(rawN) ? rawN.filter((n: any) => n.type === 'STOCK_BAS' || n.stockActuel != null) : []);
-    } catch { setAlertes([]); }
+      const a = Array.isArray(rawN) ? rawN.filter((n: any) => n.type === 'STOCK_BAS' || n.stockActuel != null) : [];
+      setAlertes(a);
+      AsyncStorage.setItem('cache_home_alertes', JSON.stringify(a)).catch(() => {});
+    } catch {
+      try {
+        const s = await AsyncStorage.getItem('cache_home_alertes');
+        if (s) setAlertes(JSON.parse(s)); else setAlertes([]);
+      } catch { setAlertes([]); }
+    }
 
     setLoading(false);
     setRefreshing(false);
@@ -134,6 +166,11 @@ export default function HomeScreen() {
         <View style={styles.syncBanner}>
           <MaterialCommunityIcons name="cloud-sync" size={14} color="#1e40af" />
           <Text style={styles.syncTxt}>{pendingCount} opération{pendingCount > 1 ? 's' : ''} en attente de synchronisation</Text>
+        </View>
+      )}
+      {fromCache && (
+        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
+          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
         </View>
       )}
 
