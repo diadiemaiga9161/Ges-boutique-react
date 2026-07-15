@@ -23,7 +23,16 @@ interface CartItem {
   niveauFacteurTotal?: number;
 }
 
-const MODES_PAIEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE', 'CARTE_BANCAIRE'];
+const MODES_PAIEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'];
+
+const MODES_LABELS: Record<string, string> = {
+  'ESPECES': 'Espèces',
+  'ORANGE_MONEY': 'Orange Money',
+  'MOOV_MONEY': 'Moov Money',
+  'WAVE_MONEY': 'Wave',
+  'CARTE_BANCAIRE': 'Carte Bancaire',
+  'VIREMENT': 'Virement',
+};
 
 export default function VenteScreen() {
   const { lang } = useLang();
@@ -42,6 +51,8 @@ export default function VenteScreen() {
   const [showScanner, setShowScanner] = useState(false);
   const [offline, setOffline] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [referencePaiement, setReferencePaiement] = useState('');
+  const [remiseGlobale, setRemiseGlobale] = useState('');
 
   // Conditionnement
   const [showNiveauModal, setShowNiveauModal] = useState(false);
@@ -206,6 +217,10 @@ export default function VenteScreen() {
         return;
       }
     }
+    if (modePaiement !== 'ESPECES' && !referencePaiement.trim()) {
+      Alert.alert('Erreur', `Référence obligatoire pour ${MODES_LABELS[modePaiement] || modePaiement}`);
+      return;
+    }
     const lignes: LigneVenteRequest[] = panier.map(i => ({
       produitId: i.produit.id,
       quantite: i.quantite,
@@ -222,6 +237,8 @@ export default function VenteScreen() {
       clientId: clientId || undefined,
       montantRecu: montantRecu ? parseFloat(montantRecu) : total,
       estCredit,
+      referencePaiement: referencePaiement.trim() || undefined,
+      remiseGlobale: Number(remiseGlobale || 0),
     };
     const panierSnapshot = [...panier];
     const result = await enregistrerVente(vente);
@@ -234,6 +251,8 @@ export default function VenteScreen() {
       setPanier([]);
       setShowCheckout(false);
       setMontantRecu('');
+      setReferencePaiement('');
+      setRemiseGlobale('');
       const n = await getNombreVentesPending();
       setVentesPending(n);
     }
@@ -447,8 +466,12 @@ export default function VenteScreen() {
             <Text variant="labelLarge">{tr('mode_paiement', lang)}</Text>
             {MODES_PAIEMENT.map(m => (
               <View key={m} style={styles.radioRow}>
-                <RadioButton value={m} status={modePaiement === m ? 'checked' : 'unchecked'} onPress={() => setModePaiement(m)} />
-                <Text>{m.replace('_', ' ')}</Text>
+                <RadioButton
+                  value={m}
+                  status={modePaiement === m ? 'checked' : 'unchecked'}
+                  onPress={() => { setModePaiement(m); setReferencePaiement(''); }}
+                />
+                <Text>{MODES_LABELS[m] || m}</Text>
               </View>
             ))}
             {modePaiement === 'ESPECES' && (
@@ -466,6 +489,25 @@ export default function VenteScreen() {
                 {tr('monnaie', lang)} : {monnaie.toFixed(0)} FCFA
               </Text>
             )}
+            {modePaiement !== 'ESPECES' && (
+              <TextInput
+                label="Référence paiement (obligatoire)"
+                placeholder="Référence paiement (obligatoire)"
+                value={referencePaiement}
+                onChangeText={setReferencePaiement}
+                mode="outlined"
+                style={{ marginTop: 12 }}
+              />
+            )}
+            <TextInput
+              label="Remise globale (%)"
+              placeholder="Remise globale (%)"
+              value={remiseGlobale}
+              onChangeText={setRemiseGlobale}
+              keyboardType="numeric"
+              mode="outlined"
+              style={{ marginTop: 12 }}
+            />
             <Button
               mode="contained"
               onPress={valider}
