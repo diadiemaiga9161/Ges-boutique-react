@@ -57,10 +57,10 @@ interface LigneForm {
   remise: string;
 }
 
-const MODES = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'];
+const MODES = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE_MONEY', 'CARTE_BANCAIRE', 'VIREMENT', 'CHEQUE'];
 const MODES_LABELS: Record<string, string> = {
   ESPECES: 'Espèces', ORANGE_MONEY: 'Orange Money', MOOV_MONEY: 'Moov Money',
-  WAVE_MONEY: 'Wave', CARTE_BANCAIRE: 'Carte', VIREMENT: 'Virement'
+  WAVE_MONEY: 'Wave', CARTE_BANCAIRE: 'Carte Bancaire', VIREMENT: 'Virement', CHEQUE: 'Chèque'
 };
 
 function formatMontant(v: number) {
@@ -272,6 +272,10 @@ export default function CommandesScreen() {
 
   const enregistrer = async () => {
     if (lignesForm.length === 0) { Alert.alert(tr('erreur', lang), tr('ajouter_produit', lang)); return; }
+    if (form.modePaiement !== 'ESPECES' && !form.referencePaiement?.trim()) {
+      Alert.alert(tr('erreur', lang), `Référence obligatoire pour ${MODES_LABELS[form.modePaiement] || form.modePaiement}`);
+      return;
+    }
     setSubmitting(true);
     const request = {
       vendeurId: userId,
@@ -279,7 +283,13 @@ export default function CommandesScreen() {
       clientNom: form.clientNom || undefined,
       clientPrenom: form.clientPrenom || undefined,
       clientTelephone: form.clientTelephone || undefined,
-      lignes: lignesForm.map(l => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: Number(l.prixUnitaire), remise: Number(l.remise) || 0 })),
+      lignes: lignesForm.map(l => ({
+        produitId: l.produitId,
+        quantite: l.quantite,
+        prixUnitaire: Number(l.remise) > 0
+          ? Math.round(Number(l.prixUnitaire) * (1 - Number(l.remise) / 100))
+          : Number(l.prixUnitaire),
+      })),
       modePaiement: form.modePaiement,
       referencePaiement: form.referencePaiement || undefined,
       estCredit: form.estCredit,
@@ -748,11 +758,21 @@ export default function CommandesScreen() {
                 <TouchableOpacity
                   key={m}
                   style={[styles.modePaiChip, form.modePaiement === m && styles.modePaiChipActive]}
-                  onPress={() => setForm(f => ({ ...f, modePaiement: m }))}>
+                  onPress={() => setForm(f => ({ ...f, modePaiement: m, referencePaiement: '' }))}>
                   <Text style={[styles.modePaiText, form.modePaiement === m && { color: '#fff' }]}>{MODES_LABELS[m]}</Text>
                 </TouchableOpacity>
               ))}
             </View>
+
+            {form.modePaiement !== 'ESPECES' && (
+              <TextInput
+                style={styles.input}
+                value={form.referencePaiement}
+                onChangeText={v => setForm(f => ({ ...f, referencePaiement: v }))}
+                placeholder={`Référence ${MODES_LABELS[form.modePaiement] || ''} *`}
+                placeholderTextColor="#9ca3af"
+              />
+            )}
 
             <View style={styles.creditToggleRow}>
               <Text style={{ fontSize: 14 }}>{tr('paiement_credit', lang)}</Text>
