@@ -7,7 +7,7 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { login, getBoutique } from '../services/api.service';
+import { login, getBoutique, setAuthToken } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -60,6 +60,7 @@ export default function LoginScreen({ onLogin }: any) {
       const user = { ...data };
       await AsyncStorage.setItem('user', JSON.stringify(user));
       await AsyncStorage.setItem('token', data.token);
+      setAuthToken(data.token);
       // Charger les infos boutique immédiatement après login
       try {
         const bRes = await getBoutique();

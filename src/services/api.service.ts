@@ -15,6 +15,28 @@ export function getApiUrlForPort(port: number): string {
   return BOUTIQUES_CONFIG[port - 1]?.url || DEFAULT_API_URL;
 }
 
+// ─── Cache en mémoire (peuplé au démarrage via initApiSession) ────────────
+let _baseUrl: string = DEFAULT_API_URL;
+let _token: string | null = null;
+
+export function setApiUrl(url: string): void {
+  _baseUrl = url;
+}
+
+export function setAuthToken(token: string | null): void {
+  _token = token;
+}
+
+export function clearAuthToken(): void {
+  _token = null;
+}
+
+export async function initApiSession(): Promise<void> {
+  const [urlEntry, tokenEntry] = await AsyncStorage.multiGet(['api_url', 'token']);
+  if (urlEntry[1]) _baseUrl = urlEntry[1];
+  if (tokenEntry[1]) _token = tokenEntry[1];
+}
+
 // ─── Callback déconnexion automatique (401) ───────────────────────────────
 let _onAuthError: (() => void) | null = null;
 export function setOnAuthError(cb: () => void) {
@@ -27,12 +49,11 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Intercepteur requête : injecte l'URL boutique + le token JWT
-api.interceptors.request.use(async (config) => {
-  const savedUrl = await AsyncStorage.getItem('api_url');
-  if (savedUrl) config.baseURL = savedUrl;
-  const token = await AsyncStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+// Intercepteur requête : injecte l'URL boutique + le token JWT (synchrone)
+api.interceptors.request.use((config) => {
+  config.baseURL = _baseUrl;
+  if (_token) config.headers['Authorization'] = `Bearer ${_token}`;
+  config.headers['Content-Type'] = 'application/json';
   return config;
 });
 
@@ -41,8 +62,8 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      await AsyncStorage.removeItem('user');
-      await AsyncStorage.removeItem('token');
+      clearAuthToken();
+      await AsyncStorage.multiRemove(['user', 'token']);
       if (_onAuthError) _onAuthError();
     }
     return Promise.reject(error);

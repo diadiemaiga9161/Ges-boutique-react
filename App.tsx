@@ -18,7 +18,7 @@ import BoutiqueSelectScreen from './src/screens/BoutiqueSelectScreen';
 import AppNavigation from './src/navigation';
 import { initDatabase } from './src/db/database';
 import { demarrerAutoSync } from './src/services/offline.service';
-import { setOnAuthError } from './src/services/api.service';
+import { setOnAuthError, initApiSession } from './src/services/api.service';
 
 enableScreens();
 
@@ -80,6 +80,7 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       try { await initDatabase(); } catch (e) { console.warn('DB:', e); }
+      await initApiSession();
       const raw = await AsyncStorage.getItem('user');
       if (raw) {
         try { setUser(JSON.parse(raw)); } catch { await AsyncStorage.removeItem('user'); }

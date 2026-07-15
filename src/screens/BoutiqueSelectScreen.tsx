@@ -2,7 +2,7 @@ import React from 'react';
 import { View, FlatList, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Text } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BOUTIQUES_CONFIG } from '../services/api.service';
+import { BOUTIQUES_CONFIG, setApiUrl } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -15,6 +15,7 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
   const choisir = async (b: typeof BOUTIQUES_CONFIG[0]) => {
     await AsyncStorage.setItem('api_url', b.url);
     await AsyncStorage.setItem('boutique_nom', b.nom);
+    setApiUrl(b.url);
     onSelect();
   };
 
