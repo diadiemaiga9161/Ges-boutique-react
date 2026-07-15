@@ -25,7 +25,7 @@ const getMenuItems = (lang: string) => [
   { icon: 'bell', label: 'Notifications', screen: 'Notifications' },
   { icon: 'translate', label: 'Langue', screen: 'Langue' },
   { icon: 'tag-multiple', label: 'Promotions', screen: 'Promotions' },
-  { icon: 'robot', label: 'Assistant IA', screen: 'AssistantIA' },
+  { icon: 'robot', label: 'IA Boutique', screen: 'IA' },
   { icon: 'receipt-text-edit', label: tr('modele_facture', lang), screen: 'FactureDesign' },
   { icon: 'swap-horizontal-bold', label: tr('config_transferts', lang), screen: 'ConfigTransferts' },
   { icon: 'account-hard-hat', label: 'Employés', screen: 'Employes' },
@@ -66,9 +66,9 @@ export default function MenuScreen({ navigation, onLogout }: any) {
     <ScrollView style={styles.container}>
       {/* Header profil */}
       <View style={styles.header}>
-        <Avatar.Text size={56} label={(user?.nom?.[0] || 'U').toUpperCase()} />
+        <Avatar.Text size={56} label={(user?.nomComplet || user?.username || 'U')[0].toUpperCase()} />
         <View style={{ marginLeft: 16 }}>
-          <Text variant="titleMedium" style={{ color: '#fff' }}>{user?.nom || 'Utilisateur'}</Text>
+          <Text variant="titleMedium" style={{ color: '#fff' }}>{user?.nomComplet || user?.username || 'Utilisateur'}</Text>
           <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>{boutique.nom || ''}</Text>
           <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>{user?.role}</Text>
         </View>

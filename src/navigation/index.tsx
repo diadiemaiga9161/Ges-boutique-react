@@ -35,6 +35,7 @@ import ResetPasswordScreen from '../screens/ResetPasswordScreen';
 import BoutiqueSelectScreen from '../screens/BoutiqueSelectScreen';
 import ConfigTransfertsScreen from '../screens/ConfigTransfertsScreen';
 import AssistantIAScreen from '../screens/AssistantIAScreen';
+import IAScreen from '../screens/IAScreen';
 import FactureDesignScreen from '../screens/FactureDesignScreen';
 import ResourcesScreen from '../screens/ResourcesScreen';
 import PromotionsScreen from '../screens/PromotionsScreen';
@@ -129,6 +130,7 @@ function MainStack({ onLogout }: { onLogout: () => void }) {
       <Stack.Screen name="Vendeurs"           component={VendeursScreen}              options={{ title: 'Vendeurs' }} />
       <Stack.Screen name="AnnulationPaiements" component={AnnulationPaiementsScreen}  options={{ title: 'Annulation paiements' }} />
       <Stack.Screen name="Sorties"             component={SortiesScreen}              options={{ title: 'Sorties stock' }} />
+      <Stack.Screen name="IA"                  component={IAScreen}                   options={{ title: 'IA Boutique' }} />
     </Stack.Navigator>
   );
 }

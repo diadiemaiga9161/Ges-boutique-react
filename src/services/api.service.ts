@@ -326,3 +326,25 @@ export const annulerReglementCredit = (operationId: number, utilisateurId: numbe
   api.post(`/caisse/credits/reglement/${operationId}/annuler`, null, {
     params: { utilisateurId: utilisateurId.toString() },
   });
+
+// ─── Transferts avancés ────────────────────────────────────────────────────
+export const getTransfertsEnvoyes = () => api.get('/transferts/envoyes');
+export const getTransfertsRecus = () => api.get('/transferts/recus');
+export const accepterTransfert = (id: number) => api.post(`/transferts/${id}/accepter`, {});
+export const rejeterTransfert = (id: number, motif?: string) => api.post(`/transferts/${id}/rejeter`, { motif });
+
+// ─── Analytique ────────────────────────────────────────────────────────────
+export const getCA30Jours = () => api.get('/rapports/ca-30-jours');
+export const getTopProduits = () => api.get('/rapports/top-produits');
+export const getVentesParHeure = () => api.get('/rapports/ventes-par-heure');
+export const getMarges = () => api.get('/rapports/marges');
+export const getPrevisionStock = () => api.get('/previsions/stock');
+
+// ─── IA (100% locale — pas d'API externe) ──────────────────────────────────
+export const getProfilIA = () => api.get('/ia/profil');
+export const sauvegarderProfilIA = (profil: any) => api.post('/ia/profil', profil);
+export const analyserIA = () => api.get('/ia/analyse');
+export const getRecommandationsIA = () => api.get('/ia/recommandations');
+export const enregistrerFeedbackIA = (id: string, statut: 'SUIVIE' | 'IGNOREE') =>
+  api.post(`/ia/feedback/${id}`, { statut });
+export const getScoreSanteIA = () => api.get('/ia/sante');

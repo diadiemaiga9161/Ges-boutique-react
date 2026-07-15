@@ -1,12 +1,13 @@
 export interface User {
   id: number;
-  nom: string;
+  username: string;
+  role: 'ADMIN' | 'VENDEUR';
+  nomComplet: string;
   email?: string;
   telephone?: string;
-  username?: string;
-  role: 'ADMIN' | 'VENDEUR';
   token: string;
   boutiqueId?: number;
+  photo?: string;
 }
 
 export interface BoutiqueInfo {
@@ -90,4 +91,47 @@ export interface MainTabParamList {
   Vente: undefined;
   Rapports: undefined;
   Menu: undefined;
+}
+
+// ─── IA ───────────────────────────────────────────────────────────────────────
+
+export interface RecommandationIA {
+  id: string;
+  type: string;
+  priorite: string; // CRITIQUE, HAUTE, MOYENNE, BASSE
+  titre: string;
+  description: string;
+  actionLabel: string;
+  donnees: any;
+  scoreConfiance: number; // 0-100
+}
+
+export interface AlerteIA {
+  type: string;
+  message: string;
+  severity: string; // CRITIQUE, HAUTE, BASSE
+}
+
+export interface AnalyseIAResult {
+  scoreGlobal: number;
+  tendanceCA: string; // FORTE_HAUSSE, HAUSSE, STABLE, BAISSE, FORTE_BAISSE
+  tauxCroissanceMensuel: number;
+  previsionCA7Jours: number;
+  previsionCA30Jours: number;
+  caHier: number;
+  caCetteSemaine: number;
+  caCeMois: number;
+  recommandations: RecommandationIA[];
+  alertes: AlerteIA[];
+  segmentsClients: { [key: string]: number };
+  previsionCA30JoursDetail: { date: string; prevision: number }[];
+  precisionModele: number;
+}
+
+export interface ProfilIA {
+  typeBoutique: string; // ALIMENTATION, TEXTILE, ELECTRONIQUE, PHARMACIE, MIXTE, AUTRE
+  joursApprovisionnement: number[]; // [1..6] lundi=1 samedi=6
+  objectifStockJours: number; // 7, 14, 21, 30, 45, 60
+  margeObjectif: number; // 10, 15, 20, 25, 30, 40, 50 (%)
+  delaiReglementCredit: number; // 7, 15, 30, 45, 60 (jours)
 }
