@@ -21,7 +21,11 @@ export function setOnAuthError(cb: () => void) {
   _onAuthError = cb;
 }
 
-const api = axios.create({ baseURL: DEFAULT_API_URL, timeout: 15000 });
+const api = axios.create({
+  baseURL: DEFAULT_API_URL,
+  timeout: 15000,
+  headers: { 'Content-Type': 'application/json' },
+});
 
 // Intercepteur requête : injecte l'URL boutique + le token JWT
 api.interceptors.request.use(async (config) => {
@@ -48,8 +52,10 @@ api.interceptors.response.use(
 export default api;
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
-export const login = (identifier: string, password: string) =>
-  api.post('/auth/login', { identifier, password });
+export const login = (username: string, password: string) =>
+  api.post('/auth/login', { username, password });
+export const changerMotDePasse = (data: { ancienMotDePasse: string; nouveauMotDePasse: string }) =>
+  api.post('/auth/changer-password', data);
 export const forgotPassword = (email: string) =>
   api.post('/auth/mot-de-passe-oublie', { email });
 export const resetPassword = (token: string, newPassword: string) =>
