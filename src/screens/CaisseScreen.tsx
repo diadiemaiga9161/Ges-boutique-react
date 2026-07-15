@@ -36,13 +36,19 @@ type FiltreCredit = 'EN_COURS' | 'REGLES' | 'EN_RETARD';
 type FiltrePeriode = 'AUJOURD_HUI' | 'SEMAINE' | 'MOIS';
 type TypeOp = 'ENTREE' | 'SORTIE';
 
-const MODES = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'VIREMENT'] as const;
-type Mode = typeof MODES[number];
+const MODES_OPERATION = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'VIREMENT'] as const;
+type ModeOperation = typeof MODES_OPERATION[number];
+
+const MODES_REGLEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'] as const;
+type ModeReglement = typeof MODES_REGLEMENT[number];
+
+type Mode = ModeOperation | ModeReglement;
 const MODE_LABELS: Record<Mode, string> = {
   ESPECES: 'Espèces',
   ORANGE_MONEY: 'Orange',
   MOOV_MONEY: 'Moov',
   VIREMENT: 'Virement',
+  CARTE_BANCAIRE: 'Carte',
 };
 
 interface CreditInfo {
@@ -100,7 +106,8 @@ export default function CaisseScreen() {
   // Modal règlement
   const [showReglement, setShowReglement] = useState(false);
   const [reglMontant, setReglMontant] = useState('');
-  const [reglMode, setReglMode] = useState<Mode>('ESPECES');
+  const [reglMode, setReglMode] = useState<ModeReglement>('ESPECES');
+  const [reglRef, setReglRef] = useState('');
   const [savingRegl, setSavingRegl] = useState(false);
 
   // --- Opérations ---
@@ -114,7 +121,7 @@ export default function CaisseScreen() {
   const [opType, setOpType] = useState<TypeOp>('ENTREE');
   const [opMontant, setOpMontant] = useState('');
   const [opMotif, setOpMotif] = useState('');
-  const [opMode, setOpMode] = useState<Mode>('ESPECES');
+  const [opMode, setOpMode] = useState<ModeOperation>('ESPECES');
   const [opRef, setOpRef] = useState('');
   const [savingOp, setSavingOp] = useState(false);
 
@@ -313,6 +320,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     setSelectedCredit(credit);
     setReglMontant(String(credit.montantRestant));
     setReglMode('ESPECES');
+    setReglRef('');
     setShowDetailCredit(false);
     setShowReglement(true);
   };
@@ -325,12 +333,17 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       Alert.alert(tr('erreur', lang), `Montant max : ${money(selectedCredit.montantRestant)}`);
       return;
     }
+    if (reglMode !== 'ESPECES' && !reglRef.trim()) {
+      Alert.alert('Erreur', 'Référence obligatoire pour ce mode de paiement');
+      return;
+    }
     setSavingRegl(true);
     try {
       const payload = {
         venteCreditId: selectedCredit.venteId,
         montantRegle: montant,
         modePaiement: reglMode,
+        referencePaiement: reglRef.trim() || undefined,
       };
       const res = await executerOuMettreEnFile(
         'credit_reglement',
@@ -413,15 +426,15 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
   };
 
   // ─── Composants helpers ──────────────────────────────────────────────────
-  const ModeChips = ({ current, onSelect }: { current: Mode; onSelect: (m: Mode) => void }) => (
+  const ModeChips = ({ modes, current, onSelect }: { modes: readonly string[]; current: string; onSelect: (m: any) => void }) => (
     <View style={st.chips}>
-      {MODES.map((m) => (
+      {modes.map((m) => (
         <TouchableOpacity
           key={m}
           style={[st.chip, current === m && st.chipActive]}
           onPress={() => onSelect(m)}
         >
-          <Text style={[st.chipText, current === m && st.chipTextActive]}>{MODE_LABELS[m]}</Text>
+          <Text style={[st.chipText, current === m && st.chipTextActive]}>{MODE_LABELS[m as Mode] || m}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -927,7 +940,19 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   placeholderTextColor="#bbb"
                 />
                 <Text style={st.fieldLabel}>Mode de paiement</Text>
-                <ModeChips current={reglMode} onSelect={setReglMode} />
+                <ModeChips modes={MODES_REGLEMENT} current={reglMode} onSelect={setReglMode} />
+                {reglMode !== 'ESPECES' && (
+                  <>
+                    <Text style={st.fieldLabel}>Référence paiement (obligatoire)</Text>
+                    <TextInput
+                      style={st.fieldInput}
+                      placeholder="Référence paiement (obligatoire)"
+                      value={reglRef}
+                      onChangeText={setReglRef}
+                      placeholderTextColor="#bbb"
+                    />
+                  </>
+                )}
               </ScrollView>
               <View style={st.modalFoot}>
                 <TouchableOpacity style={st.btnCancel} onPress={() => setShowReglement(false)}>
@@ -1000,7 +1025,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 />
 
                 <Text style={st.fieldLabel}>Mode de paiement</Text>
-                <ModeChips current={opMode} onSelect={setOpMode} />
+                <ModeChips modes={MODES_OPERATION} current={opMode} onSelect={setOpMode} />
 
                 {opMode !== 'ESPECES' && (
                   <>
