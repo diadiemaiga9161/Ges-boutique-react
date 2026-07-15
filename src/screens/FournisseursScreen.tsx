@@ -17,6 +17,7 @@ import {
   getSituationFournisseur, creerAchatFournisseur, payerFournisseur,
   getProduits, annulerAchatFournisseur,
   getAvancesFournisseur, creerAvanceFournisseur,
+  getComptes,
 } from '../services/api.service';
 import { buildRecuPaiementFournisseurHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
@@ -128,7 +129,8 @@ export default function FournisseursScreen() {
   const [avances, setAvances] = useState<any[]>([]);
   const [soldeAvance, setSoldeAvance] = useState(0);
   const [showAvanceModal, setShowAvanceModal] = useState(false);
-  const [avanceForm, setAvanceForm] = useState({ montant: '', motif: '' });
+  const [avanceForm, setAvanceForm] = useState({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined as number | undefined });
+  const [comptes, setComptes] = useState<any[]>([]);
 
   const [showFournModal, setShowFournModal] = useState(false);
   const [showAchatModal, setShowAchatModal] = useState(false);
@@ -136,7 +138,7 @@ export default function FournisseursScreen() {
 
   const [fournForm, setFournForm] = useState({ nom: '', code: '', telephone: '', email: '', adresse: '' });
   const [achatForm, setAchatForm] = useState({ produitId: 0, produitNom: '', quantite: '1', prixAchatUnitaire: '', prixVente: '', montantPaye: '0', commentaire: '' });
-  const [paiForm, setPaiForm] = useState({ montant: '', modePaiement: 'ESPECES', reference: '', observation: '' });
+  const [paiForm, setPaiForm] = useState({ montant: '', modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined as number | undefined });
   const [produits, setProduits] = useState<any[]>([]);
   const [showProduitPicker, setShowProduitPicker] = useState(false);
 
@@ -157,7 +159,10 @@ export default function FournisseursScreen() {
     setLoading(false); setRefreshing(false);
   };
 
-  useEffect(() => { charger(); }, []);
+  useEffect(() => {
+    charger();
+    getComptes().then(r => setComptes(r.data?.data || r.data || [])).catch(() => {});
+  }, []);
   useEffect(() => {
     if (!search) { setFiltered(fournisseurs); return; }
     setFiltered(fournisseurs.filter((f: any) =>
@@ -252,6 +257,9 @@ export default function FournisseursScreen() {
 
   const enregistrerPaiement = async () => {
     if (!paiForm.montant) { Alert.alert(tr('erreur', lang), 'Montant obligatoire'); return; }
+    if (paiForm.modePaiement === 'BANQUE' && !paiForm.compteId) {
+      Alert.alert(tr('erreur', lang), 'Choisissez un compte bancaire'); return;
+    }
     try {
       const payload = {
         fournisseurId: selected.id,
@@ -259,6 +267,7 @@ export default function FournisseursScreen() {
         modePaiement: paiForm.modePaiement,
         reference: paiForm.reference,
         observation: paiForm.observation,
+        compteId: paiForm.modePaiement === 'BANQUE' ? paiForm.compteId : undefined,
       };
       const res = await executerOuMettreEnFile('paiement_fournisseur', payload, () => payerFournisseur(payload));
       setShowPaiementModal(false);
@@ -296,14 +305,19 @@ export default function FournisseursScreen() {
     if (!avanceForm.montant || isNaN(Number(avanceForm.montant)) || Number(avanceForm.montant) <= 0) {
       Alert.alert(tr('erreur', lang), 'Montant invalide'); return;
     }
+    if (avanceForm.sourceFinancement === 'BANQUE' && !avanceForm.compteId) {
+      Alert.alert(tr('erreur', lang), 'Choisissez un compte bancaire'); return;
+    }
     try {
       await creerAvanceFournisseur({
         fournisseurId: selected.id,
         montant: parseFloat(avanceForm.montant),
         motif: avanceForm.motif,
+        sourceFinancement: avanceForm.sourceFinancement as 'CAISSE' | 'BANQUE',
+        compteId: avanceForm.sourceFinancement === 'BANQUE' ? avanceForm.compteId : undefined,
       });
       setShowAvanceModal(false);
-      setAvanceForm({ montant: '', motif: '' });
+      setAvanceForm({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
       chargerDetail(selected.id);
     } catch {
       Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'avance');
@@ -541,13 +555,13 @@ export default function FournisseursScreen() {
         )}
         {tab === 'paiements' && (
           <FAB icon="cash" style={[styles.fab, { backgroundColor: '#16a34a' }]} onPress={() => {
-            setPaiForm({ montant: '', modePaiement: 'ESPECES', reference: '', observation: '' });
+            setPaiForm({ montant: '', modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined });
             setShowPaiementModal(true);
           }} />
         )}
         {tab === 'avances' && (
           <FAB icon="plus" style={[styles.fab, { backgroundColor: '#1e88e5' }]} onPress={() => {
-            setAvanceForm({ montant: '', motif: '' });
+            setAvanceForm({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
             setShowAvanceModal(true);
           }} />
         )}
@@ -597,11 +611,28 @@ export default function FournisseursScreen() {
             <Text style={styles.sectionLabel}>Mode de paiement</Text>
             <View style={{ flexDirection: 'row', marginBottom: 12, gap: 6 }}>
               {MODES_PAIEMENT.map(m => (
-                <TouchableOpacity key={m} style={[styles.modeBtn, paiForm.modePaiement === m && styles.modeBtnActive]} onPress={() => setPaiForm({ ...paiForm, modePaiement: m })}>
-                  <Text style={[styles.modeBtnText, paiForm.modePaiement === m && { color: '#fff' }]}>{m}</Text>
+                <TouchableOpacity key={m} style={[styles.modeBtn, paiForm.modePaiement === m && styles.modeBtnActive]}
+                  onPress={() => setPaiForm({ ...paiForm, modePaiement: m, compteId: undefined })}>
+                  <Text style={[styles.modeBtnText, paiForm.modePaiement === m && { color: '#fff' }]}>
+                    {m === 'ESPECES' ? 'Espèces' : 'Banque'}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
+            {paiForm.modePaiement === 'BANQUE' && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.sectionLabel}>Compte bancaire *</Text>
+                {comptes.map(c => (
+                  <TouchableOpacity key={c.id}
+                    style={[styles.modeBtn, { marginBottom: 4, flex: 0 }, paiForm.compteId === c.id && styles.modeBtnActive]}
+                    onPress={() => setPaiForm({ ...paiForm, compteId: c.id })}>
+                    <Text style={[styles.modeBtnText, paiForm.compteId === c.id && { color: '#fff' }]}>
+                      {c.nomBanque} — {(c.soldeActuel || 0).toLocaleString('fr-FR')} FCFA
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             <TextInput label="Reference" value={paiForm.reference} onChangeText={t => setPaiForm({ ...paiForm, reference: t })} mode="outlined" style={styles.input} />
             <TextInput label="Observation" value={paiForm.observation} onChangeText={t => setPaiForm({ ...paiForm, observation: t })} mode="outlined" style={styles.input} />
             <Button mode="contained" onPress={enregistrerPaiement} style={{ marginTop: 4, backgroundColor: '#16a34a' }}>{tr('enregistrer', lang)}</Button>
@@ -620,6 +651,31 @@ export default function FournisseursScreen() {
               keyboardType="numeric"
               style={styles.input}
             />
+            <Text style={styles.sectionLabel}>Source</Text>
+            <View style={{ flexDirection: 'row', marginBottom: 12, gap: 6 }}>
+              {['CAISSE', 'BANQUE'].map(m => (
+                <TouchableOpacity key={m} style={[styles.modeBtn, avanceForm.sourceFinancement === m && styles.modeBtnActive]}
+                  onPress={() => setAvanceForm({ ...avanceForm, sourceFinancement: m, compteId: undefined })}>
+                  <Text style={[styles.modeBtnText, avanceForm.sourceFinancement === m && { color: '#fff' }]}>
+                    {m === 'CAISSE' ? 'Caisse' : 'Banque'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {avanceForm.sourceFinancement === 'BANQUE' && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.sectionLabel}>Compte bancaire *</Text>
+                {comptes.map(c => (
+                  <TouchableOpacity key={c.id}
+                    style={[styles.modeBtn, { marginBottom: 4, flex: 0 }, avanceForm.compteId === c.id && styles.modeBtnActive]}
+                    onPress={() => setAvanceForm({ ...avanceForm, compteId: c.id })}>
+                    <Text style={[styles.modeBtnText, avanceForm.compteId === c.id && { color: '#fff' }]}>
+                      {c.nomBanque} — {(c.soldeActuel || 0).toLocaleString('fr-FR')} FCFA
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             <TextInput
               label="Motif"
               value={avanceForm.motif}
