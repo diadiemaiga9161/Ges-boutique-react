@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Animated, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, Animated, Image, StyleSheet, Dimensions } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -53,7 +53,7 @@ export default function SplashLoadingScreen() {
       {/* Logo ring */}
       <Animated.View style={[styles.logoRing, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
         <View style={styles.logoRingInner}>
-          <Text style={styles.initials}>GL</Text>
+          <Image source={require('../../assets/icon.png')} style={styles.logoImg} />
         </View>
       </Animated.View>
 
@@ -134,20 +134,17 @@ const styles = StyleSheet.create({
   logoRingInner: {
     flex: 1,
     borderRadius: 62,
-    backgroundColor: '#1a56db',
+    backgroundColor: 'rgba(255,255,255,0.10)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
+    overflow: 'hidden',
   },
-  initials: {
-    color: '#fff',
-    fontSize: 38,
-    fontWeight: '900',
-    letterSpacing: -2,
-    textShadowColor: 'rgba(0,0,0,0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
+  logoImg: {
+    width: 96,
+    height: 96,
+    borderRadius: 58,
   },
 
   // Textes
