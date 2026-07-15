@@ -58,6 +58,7 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [boutiqueChoisie, setBoutiqueChoisie] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
 
   const handleLogout = useCallback(async () => {
     await AsyncStorage.removeItem('user');
@@ -92,11 +93,14 @@ export default function App() {
     return () => stopSync();
   }, []);
 
-  if (loading) {
+  if (showSplash) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <StatusBar style="light" />
-        <SplashLoadingScreen />
+        <SplashLoadingScreen
+          ready={!loading}
+          onComplete={() => setShowSplash(false)}
+        />
       </GestureHandlerRootView>
     );
   }

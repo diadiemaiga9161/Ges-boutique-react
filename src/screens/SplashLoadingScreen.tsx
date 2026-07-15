@@ -1,56 +1,84 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, Animated, Image, StyleSheet, Dimensions } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Animated, Image, StyleSheet } from 'react-native';
 
-const { width, height } = Dimensions.get('window');
+interface Props {
+  ready?: boolean;
+  onComplete?: () => void;
+}
 
-export default function SplashLoadingScreen() {
-  // Dots animation — même effet que spl-pulse en CSS
+export default function SplashLoadingScreen({ ready = false, onComplete }: Props) {
   const dot1 = useRef(new Animated.Value(0.4)).current;
   const dot2 = useRef(new Animated.Value(0.4)).current;
   const dot3 = useRef(new Animated.Value(0.4)).current;
 
-  // Logo ring pulse doux
-  const logoScale = useRef(new Animated.Value(0.85)).current;
+  const logoScale   = useRef(new Animated.Value(0.85)).current;
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const textOpacity = useRef(new Animated.Value(0)).current;
+  const dotsOpacity = useRef(new Animated.Value(0)).current;
 
+  const checkScale   = useRef(new Animated.Value(0)).current;
+  const checkOpacity = useRef(new Animated.Value(0)).current;
+
+  const [animDone, setAnimDone] = useState(false);
+  const completeCalled = useRef(false);
+
+  // Animation d'entrée
   useEffect(() => {
-    // Logo apparaît
+    const dotLoops = [dot1, dot2, dot3].map((dot, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 200),
+          Animated.timing(dot, { toValue: 1, duration: 280, useNativeDriver: false }),
+          Animated.timing(dot, { toValue: 0.4, duration: 560, useNativeDriver: false }),
+          Animated.delay(1400 - 280 - 560 - i * 200),
+        ])
+      )
+    );
+
     Animated.parallel([
       Animated.spring(logoScale, { toValue: 1, tension: 60, friction: 8, useNativeDriver: true }),
       Animated.timing(logoOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
     ]).start(() => {
-      Animated.timing(textOpacity, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+      Animated.timing(textOpacity, { toValue: 1, duration: 400, useNativeDriver: true }).start(() => {
+        Animated.timing(dotsOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start(() => {
+          setAnimDone(true);
+        });
+      });
     });
 
-    // Dots pulse — useNativeDriver: false car backgroundColor ne supporte pas le native driver
-    const animDot = (dot: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(dot, { toValue: 1, duration: 280, useNativeDriver: false }),
-          Animated.timing(dot, { toValue: 0.4, duration: 560, useNativeDriver: false }),
-          Animated.delay(1400 - 280 - 560 - delay),
-        ])
-      );
-
-    const d1 = animDot(dot1, 0);
-    const d2 = animDot(dot2, 200);
-    const d3 = animDot(dot3, 400);
-    d1.start();
-    d2.start();
-    d3.start();
-
-    return () => { d1.stop(); d2.stop(); d3.stop(); };
+    dotLoops.forEach(l => l.start());
+    return () => dotLoops.forEach(l => l.stop());
   }, []);
+
+  // Quand tout est prêt → coche ✓
+  useEffect(() => {
+    if (!animDone || !ready || completeCalled.current) return;
+
+    // Faire disparaître les dots
+    Animated.timing(dotsOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+      // Faire apparaître la coche
+      Animated.parallel([
+        Animated.spring(checkScale, { toValue: 1, tension: 100, friction: 6, useNativeDriver: true }),
+        Animated.timing(checkOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+      ]).start(() => {
+        // Après 600ms afficher l'écran suivant
+        setTimeout(() => {
+          if (!completeCalled.current) {
+            completeCalled.current = true;
+            onComplete?.();
+          }
+        }, 600);
+      });
+    });
+  }, [animDone, ready]);
 
   return (
     <View style={styles.container}>
-      {/* Décors lumineux (simule les spl-glow) */}
+      {/* Décors lumineux */}
       <View style={styles.glow1} />
       <View style={styles.glow2} />
 
-      {/* Logo ring */}
+      {/* Logo */}
       <Animated.View style={[styles.logoRing, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
         <View style={styles.logoRingInner}>
           <Image source={require('../../assets/icon.png')} style={styles.logoImg} />
@@ -64,24 +92,37 @@ export default function SplashLoadingScreen() {
         <Text style={styles.tagline}>Gestion de Boutique</Text>
       </Animated.View>
 
-      {/* Dots animés */}
-      <View style={styles.dotsRow}>
-        {[dot1, dot2, dot3].map((dot, i) => (
-          <Animated.View
-            key={i}
-            style={[
-              styles.dot,
-              {
-                opacity: dot,
-                transform: [{ scale: dot.interpolate({ inputRange: [0.4, 1], outputRange: [0.6, 1.1] }) }],
-                backgroundColor: dot.interpolate({
-                  inputRange: [0.4, 1],
-                  outputRange: ['rgba(255,255,255,0.4)', '#1a56db'],
-                }),
-              },
-            ]}
-          />
-        ))}
+      {/* Zone indicateur : dots ou coche */}
+      <View style={styles.indicatorZone}>
+        {/* Dots */}
+        <Animated.View style={[styles.dotsRow, { opacity: dotsOpacity }]}>
+          {[dot1, dot2, dot3].map((dot, i) => (
+            <Animated.View
+              key={i}
+              style={[
+                styles.dot,
+                {
+                  opacity: dot,
+                  transform: [{ scale: dot.interpolate({ inputRange: [0.4, 1], outputRange: [0.6, 1.1] }) }],
+                  backgroundColor: dot.interpolate({
+                    inputRange: [0.4, 1],
+                    outputRange: ['rgba(255,255,255,0.4)', '#1a56db'],
+                  }),
+                },
+              ]}
+            />
+          ))}
+        </Animated.View>
+
+        {/* Coche ✓ */}
+        <Animated.View
+          style={[
+            styles.checkCircle,
+            { opacity: checkOpacity, transform: [{ scale: checkScale }] },
+          ]}
+        >
+          <Text style={styles.checkText}>✓</Text>
+        </Animated.View>
       </View>
     </View>
   );
@@ -93,37 +134,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#081648',
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
     overflow: 'hidden',
   },
 
-  // Lueurs décoratives
   glow1: {
     position: 'absolute',
-    width: 340,
-    height: 340,
-    borderRadius: 170,
-    top: -80,
-    right: -80,
+    width: 340, height: 340, borderRadius: 170,
+    top: -80, right: -80,
     backgroundColor: 'rgba(26,86,219,0.18)',
   },
   glow2: {
     position: 'absolute',
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    bottom: -60,
-    left: -60,
+    width: 260, height: 260, borderRadius: 130,
+    bottom: -60, left: -60,
     backgroundColor: 'rgba(26,86,219,0.13)',
   },
 
-  // Logo
   logoRing: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 130, height: 130, borderRadius: 65,
     backgroundColor: 'transparent',
-    padding: 3,
+    padding: 4,
     marginBottom: 28,
     shadowColor: '#1a56db',
     shadowOffset: { width: 0, height: 20 },
@@ -133,51 +163,67 @@ const styles = StyleSheet.create({
   },
   logoRingInner: {
     flex: 1,
-    borderRadius: 62,
-    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 61,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
     overflow: 'hidden',
   },
   logoImg: {
-    width: 96,
-    height: 96,
-    borderRadius: 58,
+    width: 110,
+    height: 110,
+    borderRadius: 57,
   },
 
-  // Textes
   company: {
     color: 'rgba(255,255,255,0.55)',
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 11, fontWeight: '700',
     letterSpacing: 4,
     textTransform: 'uppercase',
     marginBottom: 6,
   },
   appname: {
     color: '#ffffff',
-    fontSize: 32,
-    fontWeight: '900',
+    fontSize: 32, fontWeight: '900',
     letterSpacing: -0.5,
     marginBottom: 6,
   },
   tagline: {
     color: 'rgba(255,255,255,0.45)',
-    fontSize: 13,
-    letterSpacing: 0.5,
-    marginBottom: 44,
+    fontSize: 13, letterSpacing: 0.5,
+    marginBottom: 32,
   },
 
-  // Dots
+  indicatorZone: {
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dotsRow: {
     flexDirection: 'row',
     gap: 8,
+    position: 'absolute',
   },
   dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 8, height: 8, borderRadius: 4,
+  },
+
+  checkCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    shadowColor: '#22c55e',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  checkText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '900',
+    lineHeight: 24,
   },
 });
