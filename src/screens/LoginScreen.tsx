@@ -39,6 +39,14 @@ export default function LoginScreen({ onLogin }: any) {
     setShowLang(false);
   };
 
+  // Même logique qu'Ionic : email → tel (normalise) → username
+  const resolveUsername = (id: string): string => {
+    const trimmed = id.trim();
+    if (trimmed.includes('@')) return trimmed;
+    if (/^[\d\s+\-().]{6,}$/.test(trimmed)) return trimmed.replace(/[\s\-().]/g, '');
+    return trimmed;
+  };
+
   const handleLogin = async () => {
     if (!identifier || !password) {
       Alert.alert(tr('erreur', lang), tr('remplir_champs', lang));
@@ -46,7 +54,7 @@ export default function LoginScreen({ onLogin }: any) {
     }
     setLoading(true);
     try {
-      const res  = await login(identifier, password);
+      const res  = await login(resolveUsername(identifier), password);
       const data = res.data?.data || res.data;
       // Le backend renvoie { token, username, role, nomComplet, ... } à la racine
       const user = { ...data };
