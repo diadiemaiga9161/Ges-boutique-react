@@ -130,7 +130,7 @@ export interface AnalyseIAResult {
 
 export interface ProfilIA {
   typeBoutique: string; // ALIMENTATION, TEXTILE, ELECTRONIQUE, PHARMACIE, MIXTE, AUTRE
-  joursApprovisionnement: number[]; // [1..6] lundi=1 samedi=6
+  joursApprovisionnement: string[]; // ex: ['LUNDI', 'MERCREDI']
   objectifStockJours: number; // 7, 14, 21, 30, 45, 60
   margeObjectif: number; // 10, 15, 20, 25, 30, 40, 50 (%)
   delaiReglementCredit: number; // 7, 15, 30, 45, 60 (jours)

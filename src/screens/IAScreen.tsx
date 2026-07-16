@@ -36,12 +36,12 @@ const TYPES_BOUTIQUE = [
 ];
 
 const JOURS_SEMAINE = [
-  { value: 1, label: 'Lun' },
-  { value: 2, label: 'Mar' },
-  { value: 3, label: 'Mer' },
-  { value: 4, label: 'Jeu' },
-  { value: 5, label: 'Ven' },
-  { value: 6, label: 'Sam' },
+  { value: 'LUNDI',    label: 'Lun' },
+  { value: 'MARDI',    label: 'Mar' },
+  { value: 'MERCREDI', label: 'Mer' },
+  { value: 'JEUDI',    label: 'Jeu' },
+  { value: 'VENDREDI', label: 'Ven' },
+  { value: 'SAMEDI',   label: 'Sam' },
 ];
 
 const OBJECTIFS_STOCK = [7, 14, 21, 30, 45, 60];
@@ -100,7 +100,7 @@ function fmt(n: number): string {
 
 const PROFIL_INITIAL: ProfilIA = {
   typeBoutique: '',
-  joursApprovisionnement: [],
+  joursApprovisionnement: [] as string[],
   objectifStockJours: 30,
   margeObjectif: 20,
   delaiReglementCredit: 30,
@@ -145,8 +145,13 @@ export default function IAScreen() {
       const res = await analyserIA();
       const data: AnalyseIAResult = res.data?.data || res.data;
       setAnalyse(data);
-    } catch {
-      setErreur('Impossible de charger l\'analyse IA. Verifiez la connexion.');
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.erreur ||
+        e?.response?.data?.message ||
+        e?.message ||
+        'Impossible de charger l\'analyse IA. Verifiez la connexion.';
+      setErreur(msg);
     }
     setLoading(false);
     setRefreshing(false);
@@ -169,17 +174,27 @@ export default function IAScreen() {
   const terminerWizard = async () => {
     setSavingProfil(true);
     try {
-      await sauvegarderProfilIA(profil);
+      // joursApprovisionnement envoyé en chaîne JSON comme attendu par le backend
+      const payload = {
+        ...profil,
+        joursApprovisionnement: JSON.stringify(profil.joursApprovisionnement),
+      };
+      await sauvegarderProfilIA(payload);
       setShowWizard(false);
       setWizardStep(0);
       charger();
-    } catch {
-      Alert.alert('Erreur', 'Impossible de sauvegarder le profil IA. Reessayez.');
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.erreur ||
+        e?.response?.data?.message ||
+        e?.message ||
+        'Impossible de sauvegarder le profil IA. Reessayez.';
+      Alert.alert('Erreur', msg);
     }
     setSavingProfil(false);
   };
 
-  const toggleJour = (val: number) => {
+  const toggleJour = (val: string) => {
     setProfil(p => ({
       ...p,
       joursApprovisionnement: p.joursApprovisionnement.includes(val)
