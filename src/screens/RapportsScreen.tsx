@@ -2,34 +2,38 @@ import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, Linking, RefreshControl } from 'react-native';
 import { Text, Card, Button, SegmentedButtons, ActivityIndicator, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { getRapportJour, getRapportSemaine, getRapportMois } from '../services/api.service';
+import { getRapportJour, getRapportSemaine, getRapportMois, getCA30Jours, getTopProduits, getVentesParHeure, getPrevisionStock } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useAuth } from '../hooks/useAuth';
 
 export default function RapportsScreen() {
   const { lang } = useLang();
+  const { user } = useAuth();
+  const isVendeur = user?.role === 'VENDEUR';
   const [periode, setPeriode] = useState<'jour' | 'semaine' | 'mois'>('jour');
   const [rapport, setRapport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const [boutique, setBoutique] = useState<any>({});
-  const [isVendeur, setIsVendeur] = useState(false);
+  const [ca30Jours, setCA30Jours] = useState<any[]>([]);
+  const [topProduits, setTopProduits] = useState<any[]>([]);
+  const [ventesParHeure, setVentesParHeure] = useState<any[]>([]);
+  const [previsionStock, setPrevisionStock] = useState<any[]>([]);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [maxCA, setMaxCA] = useState(1);
+  const [maxQte, setMaxQte] = useState(1);
+  const [maxVentes, setMaxVentes] = useState(1);
 
   useEffect(() => {
     AsyncStorage.getItem('boutique_info').then(raw => {
       if (raw) setBoutique(JSON.parse(raw));
     });
-    AsyncStorage.getItem('user').then(raw => {
-      if (raw) {
-        const u = JSON.parse(raw);
-        const role = (u.role || '').toUpperCase().replace('ROLE_', '');
-        setIsVendeur(role === 'VENDEUR');
-      }
-    });
     charger('jour');
+    chargerAnalytics();
   }, []);
 
   const charger = async (p: 'jour' | 'semaine' | 'mois') => {
@@ -57,6 +61,32 @@ export default function RapportsScreen() {
     setRefreshing(false);
   };
 
+  const chargerAnalytics = async () => {
+    setLoadingAnalytics(true);
+    try {
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) return;
+      const [r1, r2, r3, r4] = await Promise.all([
+        getCA30Jours().catch(() => ({ data: [] })),
+        getTopProduits().catch(() => ({ data: [] })),
+        getVentesParHeure().catch(() => ({ data: [] })),
+        getPrevisionStock().catch(() => ({ data: [] })),
+      ]);
+      const d1: any[] = r1.data?.data || r1.data || [];
+      const d2: any[] = r2.data?.data || r2.data || [];
+      const d3: any[] = r3.data?.data || r3.data || [];
+      const d4: any[] = r4.data?.data || r4.data || [];
+      setCA30Jours(d1);
+      setMaxCA(Math.max(...d1.map((x: any) => x.ca || 0), 1));
+      setTopProduits(d2);
+      setMaxQte(Math.max(...d2.map((x: any) => x.quantiteVendue || 0), 1));
+      setVentesParHeure(d3);
+      setMaxVentes(Math.max(...d3.map((x: any) => x.nbVentes || 0), 1));
+      setPrevisionStock(d4);
+    } catch {}
+    setLoadingAnalytics(false);
+  };
+
   const switchPeriode = (p: 'jour' | 'semaine' | 'mois') => {
     setPeriode(p);
     charger(p);
@@ -72,8 +102,8 @@ export default function RapportsScreen() {
       `📊 *Rapport ${periode} — ${new Date().toLocaleDateString('fr-FR')}*`,
       `🏪 ${boutique.nom || ''}`,
       ``,
-      `💰 CA : ${money(rapport.chiffreAffaireTotal)}`,
-      (!isVendeur && rapport.beneficeTotal != null) ? `📈 Bénéfice : ${money(rapport.beneficeTotal)}` : null,
+      !isVendeur ? `💰 CA : ${money(rapport.chiffreAffaireTotal)}` : null,
+      // Bénéfice retiré de l'envoi WhatsApp (données financières internes)
       `🛒 Ventes : ${rapport.nombreVentes || 0}`,
     ].filter(Boolean).join('\n');
 
@@ -86,6 +116,8 @@ export default function RapportsScreen() {
   };
 
   const labelPeriode = periode === 'jour' ? 'jour' : periode === 'semaine' ? 'semaine' : 'mois';
+
+  const pct = (val: number, max: number) => (max > 0 ? (val / max) * 100 : 0);
 
   return (
     <View style={styles.container}>
@@ -139,14 +171,15 @@ export default function RapportsScreen() {
                   <Text style={styles.heroVal}>{rapport.nombreVentes || 0}</Text>
                   <Text style={styles.heroLbl}>Ventes</Text>
                 </View>
-                {!isVendeur && rapport.beneficeTotal != null && (
+                {/* Bénéfice hero retiré pour tous — données financières internes */}
+                {/* {rapport.beneficeTotal != null && (
                   <View style={styles.heroStat}>
                     <Text style={styles.heroVal} numberOfLines={1}>
                       {money(rapport.beneficeTotal)}
                     </Text>
                     <Text style={styles.heroLbl}>Bénéfice</Text>
                   </View>
-                )}
+                )} */}
               </View>
 
               <View style={{ padding: 16 }}>
@@ -163,12 +196,13 @@ export default function RapportsScreen() {
                       </Text>
                     )}
                     <Divider style={{ marginVertical: 8 }} />
-                    {!isVendeur && rapport.beneficeTotal != null && (
+                    {/* Ligne bénéfice retirée pour tous — données financières internes */}
+                    {/* {rapport.beneficeTotal != null && (
                       <View style={styles.row}>
                         <Text>{tr('benefice', lang)}</Text>
                         <Text style={styles.green}>{money(rapport.beneficeTotal)}</Text>
                       </View>
-                    )}
+                    )} */}
                     <View style={styles.row}>
                       <Text>{tr('nb_ventes', lang)}</Text>
                       <Text style={styles.bold}>{rapport.nombreVentes || 0}</Text>
@@ -233,6 +267,115 @@ export default function RapportsScreen() {
               <Text style={styles.emptyTitle}>{tr('aucun_resultat', lang)}</Text>
               <Text style={styles.emptySub}>Aucune donnée disponible pour cette période</Text>
             </View>
+          )}
+
+          {/* ===== ANALYSES VISUELLES ===== */}
+          {loadingAnalytics ? (
+            <ActivityIndicator style={{ margin: 24 }} size="small" color="#1a56db" />
+          ) : ((!isVendeur && ca30Jours.length > 0) || topProduits.length > 0 || ventesParHeure.length > 0) ? (
+            <Card style={{ margin: 12, marginTop: 8 }}>
+              <Card.Title title="Analyses visuelles" titleStyle={{ fontSize: 14 }} />
+              <Card.Content>
+
+                {/* CA 30 jours — masqué pour les vendeurs */}
+                {!isVendeur && ca30Jours.length > 0 && (
+                  <>
+                    <Text style={{ fontWeight: '600', fontSize: 12, marginBottom: 6 }}>CA des 30 derniers jours</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 70, gap: 1, marginBottom: 16 }}>
+                      {ca30Jours.map((d, i) => (
+                        <View key={i} style={{ flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
+                          <View style={{
+                            width: '100%',
+                            height: Math.max(2, pct(d.ca || 0, maxCA) * 0.7),
+                            backgroundColor: '#4f46e5',
+                            borderRadius: 2,
+                          }} />
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                )}
+
+                {topProduits.length > 0 && (
+                  <>
+                    <Divider style={{ marginVertical: 8 }} />
+                    {/* Top produits */}
+                    <Text style={{ fontWeight: '600', fontSize: 12, marginBottom: 6 }}>Top 10 produits</Text>
+                    {topProduits.map((p, i) => (
+                      <View key={i} style={{ marginBottom: 6 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                          <Text style={{ fontSize: 11 }} numberOfLines={1}>{p.produitNom}</Text>
+                          <Text style={{ fontSize: 11, color: '#6b7280' }}>{p.quantiteVendue}</Text>
+                        </View>
+                        <View style={{ backgroundColor: '#e5e7eb', borderRadius: 4, height: 6 }}>
+                          <View style={{
+                            width: `${pct(p.quantiteVendue || 0, maxQte)}%` as any,
+                            backgroundColor: '#10b981', height: '100%', borderRadius: 4
+                          }} />
+                        </View>
+                      </View>
+                    ))}
+                  </>
+                )}
+
+                {ventesParHeure.length > 0 && (
+                  <>
+                    <Divider style={{ marginVertical: 8 }} />
+                    {/* Ventes par heure */}
+                    <Text style={{ fontWeight: '600', fontSize: 12, marginBottom: 6 }}>Ventes par heure</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 50, gap: 2 }}>
+                      {ventesParHeure.map((h, i) => (
+                        <View key={i} style={{ flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
+                          <View style={{
+                            width: '100%',
+                            height: Math.max(2, pct(h.nbVentes || 0, maxVentes) * 0.5),
+                            backgroundColor: '#f59e0b',
+                            borderRadius: 2,
+                          }} />
+                          <Text style={{ fontSize: 8, color: '#6b7280' }}>{h.heure}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                )}
+
+              </Card.Content>
+            </Card>
+          ) : null}
+
+          {/* Prévisions de stock */}
+          {previsionStock.length > 0 && (
+            <Card style={{ margin: 12, marginTop: 0 }}>
+              <Card.Title title="Prévisions de stock" titleStyle={{ fontSize: 14 }} />
+              <Card.Content style={{ padding: 0 }}>
+                {previsionStock.slice(0, 15).map((p, i) => (
+                  <View key={i} style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingHorizontal: 12, paddingVertical: 8,
+                    borderBottomWidth: i < Math.min(previsionStock.length, 15) - 1 ? 1 : 0,
+                    borderBottomColor: '#f3f4f6'
+                  }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '500' }}>{p.produitNom}</Text>
+                      <Text style={{ fontSize: 10, color: '#6b7280' }}>
+                        Stock: {p.stockActuel} | Jours: {p.joursAvantRupture >= 999 ? '—' : p.joursAvantRupture} | Reco: {p.quantiteRecommandee}
+                      </Text>
+                    </View>
+                    <View style={{
+                      backgroundColor: p.urgence === 'CRITIQUE' ? '#fee2e2' : p.urgence === 'ATTENTION' ? '#fef3c7' : '#dcfce7',
+                      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12
+                    }}>
+                      <Text style={{
+                        fontSize: 10, fontWeight: '600',
+                        color: p.urgence === 'CRITIQUE' ? '#dc2626' : p.urgence === 'ATTENTION' ? '#d97706' : '#16a34a'
+                      }}>
+                        {p.urgence}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </Card.Content>
+            </Card>
           )}
         </ScrollView>
       )}
