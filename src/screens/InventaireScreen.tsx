@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert, ScrollView,
 } from 'react-native';
@@ -7,44 +8,38 @@ import {
   TextInput, IconButton,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
-import { getProduits, getMouvements, ajouterMouvement } from '../services/api.service';
+import { getProduits, getMouvements, getMouvementsParDate, ajouterMouvement } from '../services/api.service';
 import { getNiveaux, decomposer } from '../services/produit-niveau.service';
 import { Produit } from '../types';
 import { ProduitNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
+import { StockBadge } from '../components/StockBadge';
 
 type FiltrePrincipal = 'tous' | 'faible' | 'rupture' | 'niveaux' | 'mouvements';
-type TypeMouvement = 'TOUS' | 'ENTREE' | 'SORTIE' | 'AJUSTEMENT';
-type FiltrePeriode = 'tout' | 'aujourd_hui' | 'semaine' | 'mois' | 'annee';
+// Les 10 types de mouvements réellement produits par le backend (voir
+// MouvementStock.typeMouvement / inventory.page.html sur Ionic) — filtrer
+// uniquement Entrée/Sortie/Ajustement (comme avant) masquait la grande
+// majorité des mouvements réels (ventes, retours, annulations...).
+type TypeMouvement = 'TOUS' | 'ENTREE' | 'SORTIE' | 'VENTE' | 'CREDIT' | 'ANNULATION_VENTE'
+  | 'ANNULATION_CREDIT' | 'RETOUR' | 'AJUSTEMENT' | 'BONUS_FOURNISSEUR' | 'DECOMPOSITION';
 
-function getPeriodeDates(p: FiltrePeriode): { dateDebut?: string; dateFin?: string } {
-  const now = new Date();
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
-  if (p === 'aujourd_hui') {
-    return { dateDebut: fmt(now), dateFin: fmt(now) };
-  }
-  if (p === 'semaine') {
-    const debut = new Date(now);
-    debut.setDate(now.getDate() - 6);
-    return { dateDebut: fmt(debut), dateFin: fmt(now) };
-  }
-  if (p === 'mois') {
-    const debut = new Date(now.getFullYear(), now.getMonth(), 1);
-    return { dateDebut: fmt(debut), dateFin: fmt(now) };
-  }
-  if (p === 'annee') {
-    const debut = new Date(now.getFullYear(), 0, 1);
-    return { dateDebut: fmt(debut), dateFin: fmt(now) };
-  }
-  return {}; // 'tout'
-}
+const TYPE_MOUVEMENT_LABELS: Record<TypeMouvement, string> = {
+  TOUS: 'Tous', ENTREE: 'Entrée stock', SORTIE: 'Sortie stock', VENTE: 'Vente', CREDIT: 'Crédit',
+  ANNULATION_VENTE: 'Annulation vente', ANNULATION_CREDIT: 'Annulation crédit', RETOUR: 'Retour fournisseur',
+  AJUSTEMENT: 'Ajustement', BONUS_FOURNISSEUR: 'Bonus Fournisseur', DECOMPOSITION: 'Décomposition',
+};
+
+function toIsoDebut(d: string) { return `${d}T00:00:00`; }
+function toIsoFin(d: string) { return `${d}T23:59:59`; }
+function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 export default function InventaireScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
@@ -52,6 +47,17 @@ export default function InventaireScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (!raw) return;
+      try {
+        const role: string = JSON.parse(raw)?.role || '';
+        setIsAdmin(role === 'ROLE_ADMIN' || role === 'ADMIN');
+      } catch {}
+    });
+  }, []);
 
   // Niveaux
   const [niveauxMap, setNiveauxMap] = useState<{ [id: number]: ProduitNiveau[] }>({});
@@ -59,13 +65,16 @@ export default function InventaireScreen() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [searchNiveaux, setSearchNiveaux] = useState('');
   const [showScanner, setShowScanner] = useState(false);
+  const [showScannerMouv, setShowScannerMouv] = useState(false);
 
   // Mouvements
   const [mouvements, setMouvements] = useState<any[]>([]);
   const [mouvementsFiltered, setMouvementsFiltered] = useState<any[]>([]);
   const [loadingMouvements, setLoadingMouvements] = useState(false);
   const [filtreType, setFiltreType] = useState<TypeMouvement>('TOUS');
-  const [filtrePeriode, setFiltrePeriode] = useState<FiltrePeriode>('tout');
+  const [searchMouvements, setSearchMouvements] = useState('');
+  const [dateDebut, setDateDebut] = useState('');
+  const [dateFin, setDateFin] = useState('');
 
   // Modal ajout mouvement
   const [showMouvModal, setShowMouvModal] = useState(false);
@@ -81,8 +90,8 @@ export default function InventaireScreen() {
 
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
+      // Toujours tenter l'appel réel en premier — NetInfo.fetch() peut renvoyer
+      // isConnected=null au premier appel et ferait sauter l'appel réel à tort.
       const res = await getProduits();
       const data = res.data?.data || res.data || [];
       setProduits(data);
@@ -103,28 +112,35 @@ export default function InventaireScreen() {
     setRefreshing(false);
   };
 
-  const chargerMouvements = useCallback(async (periode: FiltrePeriode) => {
+  // ─── Mouvements : chargement + filtres (type/dates/recherche appliqués
+  //     côté client sur le lot chargé, comme applyFilters() sur Ionic). ─────
+  const chargerMouvements = useCallback(async (debut: string, fin: string) => {
     setLoadingMouvements(true);
     try {
-      const params = getPeriodeDates(periode);
-      const res = await getMouvements(params);
+      const res = (debut && fin)
+        ? await getMouvementsParDate(toIsoDebut(debut), toIsoFin(fin))
+        : await getMouvements();
       const data: any[] = res.data?.data || res.data || [];
       setMouvements(data);
-      appliquerFiltresMouvements(data, filtreType);
     } catch {
       setMouvements([]);
-      setMouvementsFiltered([]);
     }
     setLoadingMouvements(false);
-  }, [filtreType]);
+  }, []);
 
-  const appliquerFiltresMouvements = (data: any[], type: TypeMouvement) => {
-    if (type === 'TOUS') {
-      setMouvementsFiltered(data);
-    } else {
-      setMouvementsFiltered(data.filter(m => m.typeMouvement === type));
+  const appliquerFiltresMouvements = useCallback((data: any[], type: TypeMouvement, search: string) => {
+    let result = data;
+    if (type !== 'TOUS') result = result.filter(m => m.typeMouvement === type);
+    if (search.trim()) {
+      const term = search.toLowerCase().trim();
+      result = result.filter(m =>
+        (m.produit?.nom || '').toLowerCase().includes(term) ||
+        (m.motif || '').toLowerCase().includes(term) ||
+        (m.utilisateur?.nomComplet || '').toLowerCase().includes(term)
+      );
     }
-  };
+    setMouvementsFiltered(result);
+  }, []);
 
   const appliquerFiltres = (data: Produit[], f: string, s: string) => {
     if (f === 'niveaux' || f === 'mouvements') { setFiltered(data); return; }
@@ -139,14 +155,14 @@ export default function InventaireScreen() {
 
   useEffect(() => {
     appliquerFiltres(produits, filtre, search);
-    if (filtre === 'mouvements') {
-      chargerMouvements(filtrePeriode);
+    if (filtre === 'mouvements' && mouvements.length === 0 && !loadingMouvements) {
+      chargerMouvements(dateDebut, dateFin);
     }
   }, [filtre, search, produits]);
 
   useEffect(() => {
-    appliquerFiltresMouvements(mouvements, filtreType);
-  }, [filtreType, mouvements]);
+    appliquerFiltresMouvements(mouvements, filtreType, searchMouvements);
+  }, [filtreType, searchMouvements, mouvements, appliquerFiltresMouvements]);
 
   const valeurTotale = produits.reduce((s, p) => s + p.prixAchat * p.quantite, 0);
   const ruptures = produits.filter(p => p.quantite === 0).length;
@@ -182,26 +198,25 @@ export default function InventaireScreen() {
     }
   };
 
-  const couleurNiveau = (n: ProduitNiveau) => {
-    const s = n.stock ?? 0;
-    if (s === 0) return '#f44336';
-    if (s <= 5) return '#ff9800';
-    return '#4caf50';
-  };
-
   const produitsFiltresNiveaux = produits.filter(p =>
     !searchNiveaux || p.nom.toLowerCase().includes(searchNiveaux.toLowerCase())
   );
 
   const couleurTypeMouvement = (type: string) => {
-    if (type === 'ENTREE') return '#16a34a';
-    if (type === 'SORTIE') return '#dc2626';
-    return '#d97706';
+    if (type === 'ENTREE' || type === 'BONUS_FOURNISSEUR') return '#16a34a';
+    if (type === 'SORTIE' || type === 'ANNULATION_VENTE' || type === 'ANNULATION_CREDIT') return '#dc2626';
+    if (type === 'VENTE' || type === 'CREDIT') return '#1a56db';
+    if (type === 'RETOUR' || type === 'DECOMPOSITION') return '#7c3aed';
+    return '#d97706'; // AJUSTEMENT et autres
   };
 
   const iconTypeMouvement = (type: string) => {
-    if (type === 'ENTREE') return 'arrow-down-circle';
+    if (type === 'ENTREE' || type === 'BONUS_FOURNISSEUR') return 'arrow-down-circle';
     if (type === 'SORTIE') return 'arrow-up-circle';
+    if (type === 'VENTE' || type === 'CREDIT') return 'cart-outline';
+    if (type === 'ANNULATION_VENTE' || type === 'ANNULATION_CREDIT') return 'close-circle-outline';
+    if (type === 'RETOUR') return 'undo-variant';
+    if (type === 'DECOMPOSITION') return 'layers-outline';
     return 'swap-horizontal';
   };
 
@@ -239,7 +254,7 @@ export default function InventaireScreen() {
       }
       setShowMouvModal(false);
       setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '', typeSortie: 'DETAIL' });
-      if (!res.offline) chargerMouvements(filtrePeriode);
+      if (!res.offline) chargerMouvements(dateDebut, dateFin);
       Alert.alert(
         tr('succes', lang),
         res.offline
@@ -251,17 +266,45 @@ export default function InventaireScreen() {
     }
   };
 
-  const onChangePeriode = (p: FiltrePeriode) => {
-    setFiltrePeriode(p);
-    chargerMouvements(p);
+  const onCodeScanneMouvement = (code: string) => {
+    setShowScannerMouv(false);
+    const found = produits.find(p => p.codeBarre === code || p.nom.toLowerCase() === code.toLowerCase());
+    if (found) {
+      setMouvForm(f => ({ ...f, produitId: found.id, produitNom: found.nom }));
+      setShowProduitPicker(false);
+    } else {
+      Alert.alert('Code scanné', `Code "${code}" non trouvé parmi les produits.`);
+    }
   };
+
+  // Filtres période rapide — alimentent dateDebut/dateFin puis relancent le
+  // chargement, exactement comme filterByPeriod() sur Ionic.
+  const filterByPeriod = (period: 'today' | 'week' | 'month' | 'all') => {
+    if (period === 'all') { setDateDebut(''); setDateFin(''); chargerMouvements('', ''); return; }
+    const today = new Date();
+    const fin = todayStr();
+    let debut = fin;
+    if (period === 'week') {
+      const d = new Date(today);
+      const day = d.getDay();
+      d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+      debut = d.toISOString().split('T')[0];
+    } else if (period === 'month') {
+      debut = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+    }
+    setDateDebut(debut);
+    setDateFin(fin);
+    chargerMouvements(debut, fin);
+  };
+
+  const appliquerDatesManuelles = () => chargerMouvements(dateDebut, dateFin);
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* KPI row — fond #081648 */}
-      <View style={styles.kpiRow}>
+      <View style={[styles.kpiRow, { backgroundColor: colors.hero }]}>
         <View style={styles.kpi}>
           <Text style={styles.kpiVal}>{produits.length}</Text>
           <Text style={styles.kpiLabel}>{tr('produits', lang)}</Text>
@@ -274,6 +317,10 @@ export default function InventaireScreen() {
           <Text style={[styles.kpiVal, { color: '#f87171' }]}>{ruptures}</Text>
           <Text style={styles.kpiLabel}>{tr('ruptures', lang)}</Text>
         </View>
+        <View style={styles.kpi}>
+          <Text style={[styles.kpiVal, { color: '#34d399' }]}>{mouvements.length}</Text>
+          <Text style={styles.kpiLabel}>Mouvements</Text>
+        </View>
       </View>
 
       {/* Bandeau offline */}
@@ -284,7 +331,7 @@ export default function InventaireScreen() {
         </View>
       )}
 
-      <Text style={styles.valeur}>{tr('valeur_stock', lang)} : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
+      <Text style={[styles.valeur, { color: colors.primary }]}>{tr('valeur_stock', lang)} : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
 
       <View style={styles.filtreRow}>
         {(['tous', 'faible', 'rupture', 'niveaux', 'mouvements'] as const).map(f => (
@@ -308,36 +355,34 @@ export default function InventaireScreen() {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <MaterialCommunityIcons name="package-variant" size={64} color="#cbd5e1" />
-              <Text style={styles.emptyTitle}>Aucun produit</Text>
-              <Text style={styles.emptySub}>Aucun produit ne correspond à la recherche</Text>
+              <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>Aucun produit</Text>
+              <Text style={[styles.emptySub, { color: colors.textSecondary }]}>Aucun produit ne correspond à la recherche</Text>
             </View>
           }
           renderItem={({ item }) => (
-            <View style={styles.pnCard}>
-              <TouchableOpacity style={styles.pnHeader} onPress={() => toggleNiveaux(item)} activeOpacity={0.8}>
+            <View style={[styles.pnCard, { backgroundColor: colors.card }]}>
+              <TouchableOpacity style={[styles.pnHeader, { backgroundColor: colors.inputBg }]} onPress={() => toggleNiveaux(item)} activeOpacity={0.8}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.pnNom}>{item.nom}</Text>
-                  <Text style={styles.pnStock}>Stock : {item.quantite}</Text>
+                  <Text style={[styles.pnNom, { color: colors.text }]}>{item.nom}</Text>
+                  <Text style={[styles.pnStock, { color: colors.textSecondary }]}>Stock : {item.quantite}</Text>
                 </View>
-                <Text style={{ fontSize: 18 }}>{expanded === item.id ? '▲' : '▼'}</Text>
+                <Text style={{ fontSize: 18, color: colors.textSecondary }}>{expanded === item.id ? '▲' : '▼'}</Text>
               </TouchableOpacity>
 
               {expanded === item.id && (
-                <View style={styles.pnBody}>
+                <View style={[styles.pnBody, { borderTopColor: colors.border }]}>
                   {niveauxLoading[item.id] ? (
                     <ActivityIndicator size="small" style={{ padding: 12 }} />
                   ) : !niveauxMap[item.id]?.length ? (
-                    <Text style={styles.pnEmpty}>{tr('aucun_resultat', lang)}</Text>
+                    <Text style={[styles.pnEmpty, { color: colors.textSecondary }]}>{tr('aucun_resultat', lang)}</Text>
                   ) : (
                     niveauxMap[item.id].map((niveau, i) => (
-                      <View key={niveau.id} style={styles.niveauRow}>
+                      <View key={niveau.id} style={[styles.niveauRow, { borderBottomColor: colors.border }]}>
                         <View style={styles.niveauInfo}>
-                          <View style={[styles.niveauBadge, { backgroundColor: couleurNiveau(niveau) }]}>
-                            <Text style={styles.niveauBadgeText}>{niveau.stock ?? 0}</Text>
-                          </View>
+                          <StockBadge quantite={niveau.stock ?? 0} seuilAlerte={5} />
                           <View>
-                            <Text style={styles.niveauNom}>{niveau.nom}</Text>
-                            <Text style={styles.niveauFacteur}>
+                            <Text style={[styles.niveauNom, { color: colors.text }]}>{niveau.nom}</Text>
+                            <Text style={[styles.niveauFacteur, { color: colors.textSecondary }]}>
                               1 {i === 0 ? item.nom : niveauxMap[item.id][i - 1].nom} = {niveau.facteur} {niveau.nom}
                             </Text>
                           </View>
@@ -358,9 +403,41 @@ export default function InventaireScreen() {
       ) : filtre === 'mouvements' ? (
         /* ─── Vue Mouvements ─── */
         <View style={{ flex: 1 }}>
-          {/* Filtre type */}
-          <View style={styles.sousFiltreRow}>
-            {(['TOUS', 'ENTREE', 'SORTIE', 'AJUSTEMENT'] as TypeMouvement[]).map(t => (
+          {/* Filtres période rapide + reset */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sousFiltreRow}>
+            <Button mode="outlined" compact onPress={() => filterByPeriod('today')} style={styles.periodBtn}>Aujourd'hui</Button>
+            <Button mode="outlined" compact onPress={() => filterByPeriod('week')} style={styles.periodBtn}>Semaine</Button>
+            <Button mode="outlined" compact onPress={() => filterByPeriod('month')} style={styles.periodBtn}>Mois</Button>
+            <Button mode="text" compact onPress={() => filterByPeriod('all')} textColor={colors.textSecondary}>Réinitialiser</Button>
+          </ScrollView>
+
+          {/* Dates manuelles Du / Au */}
+          <View style={styles.datesRow}>
+            <TextInput
+              mode="outlined"
+              label="Du"
+              value={dateDebut}
+              onChangeText={setDateDebut}
+              onBlur={appliquerDatesManuelles}
+              placeholder="AAAA-MM-JJ"
+              dense
+              style={{ flex: 1 }}
+            />
+            <TextInput
+              mode="outlined"
+              label="Au"
+              value={dateFin}
+              onChangeText={setDateFin}
+              onBlur={appliquerDatesManuelles}
+              placeholder="AAAA-MM-JJ"
+              dense
+              style={{ flex: 1, marginLeft: 8 }}
+            />
+          </View>
+
+          {/* Filtre type — 10 types, comme Ionic */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sousFiltreRow}>
+            {(Object.keys(TYPE_MOUVEMENT_LABELS) as TypeMouvement[]).map(t => (
               <Chip
                 key={t}
                 selected={filtreType === t}
@@ -368,29 +445,20 @@ export default function InventaireScreen() {
                 style={[styles.filtreChip, filtreType === t && t !== 'TOUS' && { backgroundColor: couleurTypeMouvement(t) + '22' }]}
                 selectedColor={t === 'TOUS' ? '#1a56db' : couleurTypeMouvement(t)}
               >
-                {t === 'TOUS' ? 'Tous' : t}
+                {TYPE_MOUVEMENT_LABELS[t]}
               </Chip>
             ))}
-          </View>
-          {/* Filtre période */}
-          <View style={styles.sousFiltreRow}>
-            {([
-              { val: 'tout' as FiltrePeriode, label: 'Tout' },
-              { val: 'aujourd_hui' as FiltrePeriode, label: "Aujourd'hui" },
-              { val: 'semaine' as FiltrePeriode, label: 'Semaine' },
-              { val: 'mois' as FiltrePeriode, label: 'Mois' },
-              { val: 'annee' as FiltrePeriode, label: 'Année' },
-            ]).map(({ val, label }) => (
-              <Chip
-                key={val}
-                selected={filtrePeriode === val}
-                onPress={() => onChangePeriode(val)}
-                style={styles.filtreChip}
-              >
-                {label}
-              </Chip>
-            ))}
-          </View>
+          </ScrollView>
+
+          {/* Recherche */}
+          <Searchbar
+            placeholder="Rechercher (produit, motif, utilisateur...)"
+            value={searchMouvements}
+            onChangeText={setSearchMouvements}
+            style={styles.searchBar}
+          />
+
+          <Text style={[styles.compteurTxt, { color: colors.textSecondary }]}>{mouvementsFiltered.length} mouvement(s)</Text>
 
           {loadingMouvements ? (
             <ActivityIndicator style={{ flex: 1 }} size="large" />
@@ -401,15 +469,15 @@ export default function InventaireScreen() {
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
-                  onRefresh={() => { setRefreshing(true); chargerMouvements(filtrePeriode).finally(() => setRefreshing(false)); }}
+                  onRefresh={() => { setRefreshing(true); chargerMouvements(dateDebut, dateFin).finally(() => setRefreshing(false)); }}
                 />
               }
               contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <MaterialCommunityIcons name="swap-horizontal-bold" size={64} color="#cbd5e1" />
-                  <Text style={styles.emptyTitle}>{tr('aucun_mouvement', lang)}</Text>
-                  <Text style={styles.emptySub}>Aucun mouvement pour cette période</Text>
+                  <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{tr('aucun_mouvement', lang)}</Text>
+                  <Text style={[styles.emptySub, { color: colors.textSecondary }]}>Aucun mouvement pour ces filtres</Text>
                 </View>
               }
               renderItem={({ item }) => (
@@ -423,17 +491,25 @@ export default function InventaireScreen() {
                       />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.cardName} numberOfLines={1}>
-                        {item.produit?.nom || item.produitNom || '—'}
-                      </Text>
-                      <Text style={styles.cardSub}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>
+                          {item.produit?.nom || item.produitNom || '—'}
+                        </Text>
+                        {!!item.niveauNom && (
+                          <View style={[styles.niveauMouvBadge, { backgroundColor: colors.infoBg }]}>
+                            <Text style={[styles.niveauMouvBadgeText, { color: colors.info }]}>{item.niveauNom}</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[styles.cardSub, { color: colors.textSecondary }]}>
                         {item.dateMouvement ? new Date(item.dateMouvement).toLocaleDateString('fr-FR') : '—'}
+                        {(item.utilisateur?.nomComplet || item.utilisateur?.username) ? ` · ${item.utilisateur.nomComplet || item.utilisateur.username}` : ''}
                         {item.motif ? ` · ${item.motif}` : ''}
                       </Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
                       <View style={[styles.typeBadge, { backgroundColor: couleurTypeMouvement(item.typeMouvement) }]}>
-                        <Text style={styles.typeBadgeText}>{item.typeMouvement}</Text>
+                        <Text style={styles.typeBadgeText}>{TYPE_MOUVEMENT_LABELS[item.typeMouvement as TypeMouvement] || item.typeMouvement}</Text>
                       </View>
                       <Text style={{ fontWeight: 'bold', fontSize: 15, color: couleurTypeMouvement(item.typeMouvement), marginTop: 4 }}>
                         {item.typeMouvement === 'ENTREE' ? '+' : item.typeMouvement === 'SORTIE' ? '-' : ''}{item.quantite}
@@ -445,49 +521,56 @@ export default function InventaireScreen() {
             />
           )}
 
-          {/* FAB ajout mouvement */}
-          <FAB
-            icon="plus"
-            style={styles.fab}
-            onPress={() => {
-              setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '', typeSortie: 'DETAIL' });
-              setShowProduitPicker(false);
-              setShowMouvModal(true);
-            }}
-          />
+          {/* FAB ajout mouvement — admin uniquement, comme le segment "Mouvement"
+              masqué au vendeur sur Ionic (*ngIf="!isVendeur") : un vendeur ne doit
+              pas pouvoir ajuster le stock librement. */}
+          {isAdmin && (
+            <FAB
+              icon="plus"
+              style={styles.fab}
+              onPress={() => {
+                setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '', typeSortie: 'DETAIL' });
+                setShowProduitPicker(false);
+                setShowMouvModal(true);
+              }}
+            />
+          )}
 
           {/* Modal ajout mouvement */}
           <Portal>
             <Modal
               visible={showMouvModal}
               onDismiss={() => setShowMouvModal(false)}
-              contentContainerStyle={styles.modal}
+              contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}
             >
               <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('nouveau_mouvement', lang)}</Text>
+                <Text variant="titleLarge" style={{ marginBottom: 16, color: colors.text }}>{tr('nouveau_mouvement', lang)}</Text>
 
-                {/* Sélecteur produit */}
-                <TouchableOpacity
-                  style={styles.picker}
-                  onPress={() => setShowProduitPicker(v => !v)}
-                >
-                  <Text style={mouvForm.produitNom ? styles.pickerVal : styles.pickerPh}>
-                    {mouvForm.produitNom || tr('selectionner_produit', lang)}
-                  </Text>
-                  <Text style={{ color: '#94a3b8' }}>{showProduitPicker ? '▲' : '▼'}</Text>
-                </TouchableOpacity>
+                {/* Sélecteur produit + scan */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.picker, { backgroundColor: colors.inputBg, borderColor: colors.border, flex: 1 }]}
+                    onPress={() => setShowProduitPicker(v => !v)}
+                  >
+                    <Text style={[mouvForm.produitNom ? styles.pickerVal : styles.pickerPh, { color: mouvForm.produitNom ? colors.text : colors.placeholder }]}>
+                      {mouvForm.produitNom || tr('selectionner_produit', lang)}
+                    </Text>
+                    <Text style={{ color: colors.placeholder }}>{showProduitPicker ? '▲' : '▼'}</Text>
+                  </TouchableOpacity>
+                  <IconButton icon="barcode-scan" size={24} iconColor={colors.primary} onPress={() => setShowScannerMouv(true)} />
+                </View>
                 {showProduitPicker && (
-                  <View style={styles.pickerList}>
+                  <View style={[styles.pickerList, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                     {produits.map(p => (
                       <TouchableOpacity
                         key={p.id}
-                        style={styles.pickerItem}
+                        style={[styles.pickerItem, { borderBottomColor: colors.border }]}
                         onPress={() => {
                           setMouvForm({ ...mouvForm, produitId: p.id, produitNom: p.nom });
                           setShowProduitPicker(false);
                         }}
                       >
-                        <Text style={[styles.pickerItemText, mouvForm.produitId === p.id && { color: '#1a56db', fontWeight: 'bold' }]}>
+                        <Text style={[styles.pickerItemText, { color: colors.text }, mouvForm.produitId === p.id && { color: colors.primary, fontWeight: 'bold' }]}>
                           {p.nom}
                         </Text>
                       </TouchableOpacity>
@@ -496,18 +579,19 @@ export default function InventaireScreen() {
                 )}
 
                 {/* Type mouvement */}
-                <Text style={styles.inputLabel}>{tr('type_mouvement', lang)}</Text>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>{tr('type_mouvement', lang)}</Text>
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                   {(['ENTREE', 'SORTIE', 'AJUSTEMENT'] as const).map(t => (
                     <TouchableOpacity
                       key={t}
                       style={[
                         styles.typeBtn,
+                        { backgroundColor: colors.inputBg, borderColor: colors.border },
                         mouvForm.typeMouvement === t && { backgroundColor: couleurTypeMouvement(t), borderColor: couleurTypeMouvement(t) },
                       ]}
                       onPress={() => setMouvForm({ ...mouvForm, typeMouvement: t, typeSortie: 'DETAIL' })}
                     >
-                      <Text style={[styles.typeBtnText, mouvForm.typeMouvement === t && { color: '#fff' }]}>
+                      <Text style={[styles.typeBtnText, { color: colors.textSecondary }, mouvForm.typeMouvement === t && { color: '#fff' }]}>
                         {t}
                       </Text>
                     </TouchableOpacity>
@@ -517,7 +601,7 @@ export default function InventaireScreen() {
                 {/* Type de sortie — visible uniquement pour SORTIE */}
                 {mouvForm.typeMouvement === 'SORTIE' && (
                   <>
-                    <Text style={styles.inputLabel}>Type de sortie</Text>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Type de sortie</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
                       {([
                         { val: 'DETAIL', label: 'Détail' },
@@ -528,10 +612,10 @@ export default function InventaireScreen() {
                       ] as const).map(({ val, label }) => (
                         <TouchableOpacity
                           key={val}
-                          style={[styles.typeBtn, mouvForm.typeSortie === val && { backgroundColor: '#1a56db', borderColor: '#1a56db' }]}
+                          style={[styles.typeBtn, { backgroundColor: colors.inputBg, borderColor: colors.border }, mouvForm.typeSortie === val && { backgroundColor: colors.primary, borderColor: colors.primary }]}
                           onPress={() => setMouvForm({ ...mouvForm, typeSortie: val })}
                         >
-                          <Text style={[styles.typeBtnText, mouvForm.typeSortie === val && { color: '#fff' }]}>{label}</Text>
+                          <Text style={[styles.typeBtnText, { color: colors.textSecondary }, mouvForm.typeSortie === val && { color: '#fff' }]}>{label}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -559,6 +643,13 @@ export default function InventaireScreen() {
               </ScrollView>
             </Modal>
           </Portal>
+
+          <BarcodeScannerModal
+            visible={showScannerMouv}
+            title="Scanner un produit"
+            onScan={onCodeScanneMouvement}
+            onClose={() => setShowScannerMouv(false)}
+          />
         </View>
       ) : (
         /* ─── Vue stock normale ─── */
@@ -584,10 +675,10 @@ export default function InventaireScreen() {
                   size={64}
                   color="#cbd5e1"
                 />
-                <Text style={styles.emptyTitle}>
+                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>
                   {filtre === 'rupture' ? 'Aucune rupture' : filtre === 'faible' ? 'Aucun stock faible' : 'Aucun produit'}
                 </Text>
-                <Text style={styles.emptySub}>
+                <Text style={[styles.emptySub, { color: colors.textSecondary }]}>
                   {filtre === 'rupture' ? 'Tous les produits ont du stock' : 'Aucun produit disponible'}
                 </Text>
               </View>
@@ -599,8 +690,8 @@ export default function InventaireScreen() {
                     <MaterialCommunityIcons name="package-variant" size={22} color={couleurStock(item)} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardName}>{item.nom}</Text>
-                    <Text style={styles.cardSub}>
+                    <Text style={[styles.cardName, { color: colors.text }]}>{item.nom}</Text>
+                    <Text style={[styles.cardSub, { color: colors.textSecondary }]}>
                       Achat : {item.prixAchat.toLocaleString('fr-FR')} FCFA | Valeur : {(item.prixAchat * item.quantite).toLocaleString('fr-FR')} FCFA
                     </Text>
                   </View>
@@ -631,10 +722,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
 
   // KPI row — fond #081648
-  kpiRow: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  kpiRow: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 4 },
   kpi: { flex: 1, alignItems: 'center' },
-  kpiVal: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  kpiLabel: { fontSize: 11, color: '#93c5fd', marginTop: 2 },
+  kpiVal: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
+  kpiLabel: { fontSize: 10, color: '#93c5fd', marginTop: 2 },
 
   // Offline
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
@@ -642,7 +733,10 @@ const styles = StyleSheet.create({
 
   valeur: { textAlign: 'center', color: '#1a56db', fontWeight: '600', marginVertical: 8 },
   filtreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4, flexWrap: 'wrap' },
-  sousFiltreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 6, flexWrap: 'wrap' },
+  sousFiltreRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 6, alignItems: 'center' },
+  periodBtn: { marginRight: 2 },
+  datesRow: { flexDirection: 'row', paddingHorizontal: 12, marginBottom: 6 },
+  compteurTxt: { paddingHorizontal: 12, fontSize: 12, marginBottom: 4 },
   filtreChip: { borderRadius: 20 },
   searchBar: { marginHorizontal: 12, marginBottom: 4 },
 
@@ -666,6 +760,8 @@ const styles = StyleSheet.create({
   // Mouvements
   typeBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   typeBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  niveauMouvBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  niveauMouvBadgeText: { fontSize: 10, fontWeight: '700' },
 
   // Modal mouvement
   modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },

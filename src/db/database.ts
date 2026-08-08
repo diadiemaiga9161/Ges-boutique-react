@@ -64,9 +64,16 @@ export async function initDatabase(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now')),
       synced INTEGER DEFAULT 0,
       attempts INTEGER DEFAULT 0,
-      last_error TEXT
+      last_error TEXT,
+      notified_failure INTEGER DEFAULT 0
     );
   `);
+  // Migration douce pour les installations existantes créées avant l'ajout
+  // de la colonne notified_failure (SQLite ne supporte pas "ADD COLUMN IF
+  // NOT EXISTS" sur toutes les versions embarquées par expo-sqlite).
+  try {
+    await db.execAsync('ALTER TABLE operations_pending ADD COLUMN notified_failure INTEGER DEFAULT 0;');
+  } catch { /* colonne déjà existante : ignorer */ }
 }
 
 export async function saveVentePending(localId: string, vente: any): Promise<void> {
@@ -263,12 +270,19 @@ export async function saveOperation(id: string, type: string, payload: any): Pro
   );
 }
 
-export async function getOperationsPending(): Promise<{ id: string; type: string; payload: any; attempts: number }[]> {
+export async function getOperationsPending(): Promise<{ id: string; type: string; payload: any; attempts: number; lastError?: string | null; notifiedFailure: boolean }[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ id: string; type: string; payload: string; attempts: number }>(
-    'SELECT id, type, payload, attempts FROM operations_pending WHERE synced = 0 ORDER BY created_at ASC'
+  const rows = await db.getAllAsync<{ id: string; type: string; payload: string; attempts: number; last_error: string | null; notified_failure: number }>(
+    'SELECT id, type, payload, attempts, last_error, notified_failure FROM operations_pending WHERE synced = 0 ORDER BY created_at ASC'
   );
-  return rows.map(r => ({ id: r.id, type: r.type, payload: JSON.parse(r.payload), attempts: r.attempts }));
+  return rows.map(r => ({
+    id: r.id,
+    type: r.type,
+    payload: JSON.parse(r.payload),
+    attempts: r.attempts,
+    lastError: r.last_error,
+    notifiedFailure: r.notified_failure === 1,
+  }));
 }
 
 export async function markOperationSynced(id: string): Promise<void> {
@@ -284,8 +298,32 @@ export async function incrementOperationAttempts(id: string, error: string): Pro
   );
 }
 
+export async function marquerOperationEchecNotifie(id: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE operations_pending SET notified_failure = 1 WHERE id = ?', [id]);
+}
+
 export async function countOperationsPending(): Promise<number> {
   if (isWeb) return Promise.resolve(0);
   const r = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM operations_pending WHERE synced = 0');
+  return r?.count || 0;
+}
+
+// Opérations abandonnées définitivement après 5 tentatives (jamais
+// synchronisées) — permet d'afficher/consulter ce qui est resté bloqué,
+// conformément à la règle "jamais d'échec silencieux".
+export async function getOperationsEchecDefinitif(): Promise<{ id: string; type: string; attempts: number; lastError?: string | null }[]> {
+  if (isWeb) return [];
+  const rows = await db.getAllAsync<{ id: string; type: string; attempts: number; last_error: string | null }>(
+    'SELECT id, type, attempts, last_error FROM operations_pending WHERE synced = 0 AND attempts >= 5 ORDER BY created_at ASC'
+  );
+  return rows.map(r => ({ id: r.id, type: r.type, attempts: r.attempts, lastError: r.last_error }));
+}
+
+export async function countOperationsEchecDefinitif(): Promise<number> {
+  if (isWeb) return Promise.resolve(0);
+  const r = await db.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM operations_pending WHERE synced = 0 AND attempts >= 5'
+  );
   return r?.count || 0;
 }

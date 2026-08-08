@@ -1,19 +1,23 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert,
-  Modal, ScrollView, TouchableOpacity,
+  Modal, ScrollView, TouchableOpacity, TextInput as RNTextInput,
 } from 'react-native';
-import { Text, Card, Chip, Searchbar, ActivityIndicator, ProgressBar, FAB } from 'react-native-paper';
+import { Text, Card, Chip, Searchbar, ActivityIndicator, ProgressBar, FAB, RadioButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Print from 'expo-print';
+import QRCode from 'react-native-qrcode-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import {
   getVentes, getVentesJour, getVentesParPeriode,
   getVenteDetail, annulerVente, getVentesAnnulees,
+  modifierLignesVente, effectuerRetourVente,
+  getStatistiquesChiffreAffaire, getTopProduits,
+  getProduits,
 } from '../services/api.service';
 import { sauvegarderCache, lireCache } from '../services/offline.service';
+import { imprimerFactureRN } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -82,6 +86,58 @@ export default function HistoriqueVentesScreen() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [annulationEnCours, setAnnulationEnCours] = useState(false);
+  const [userId, setUserId] = useState<number>(0);
+
+  // ─── Statistiques ──────────────────────────────────────────────────────────
+  const [showStatsModal, setShowStatsModal] = useState(false);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [stats, setStats] = useState<any>(null);
+  const [topProduits, setTopProduits] = useState<any[]>([]);
+
+  // ─── Modifier une vente ────────────────────────────────────────────────────
+  const [showModifyModal, setShowModifyModal] = useState(false);
+  const [modifyLines, setModifyLines] = useState<any[]>([]);
+  const [modifyMotif, setModifyMotif] = useState('');
+  const [savingModify, setSavingModify] = useState(false);
+  const [produitsPourModif, setProduitsPourModif] = useState<any[]>([]);
+
+  // ─── Retour d'articles ─────────────────────────────────────────────────────
+  const [showRetourModal, setShowRetourModal] = useState(false);
+  const [retourLignes, setRetourLignes] = useState<any[]>([]);
+  const [retourMotif, setRetourMotif] = useState('');
+  const [savingRetour, setSavingRetour] = useState(false);
+
+  // ─── QR code facture ───────────────────────────────────────────────────────
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrUrl, setQrUrl] = useState('');
+
+  useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (!raw) return;
+      try {
+        const u = JSON.parse(raw);
+        setUserId(u?.id || 0);
+        const role: string = u?.role || '';
+        setIsAdmin(role === 'ROLE_ADMIN' || role === 'ADMIN');
+      } catch {}
+    });
+  }, []);
+
+  // En-tête : icônes statistiques + nouvelle vente, comme sur Ionic (analytics-outline, add-outline).
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={openStats} style={{ marginRight: 14 }}>
+            <MaterialCommunityIcons name="chart-box-outline" color="#fff" size={24} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate('Vente')} style={{ marginRight: 14 }}>
+            <MaterialCommunityIcons name="plus" color="#fff" size={26} />
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation]);
 
   // ─── Récupération boutiqueId ───────────────────────────────────────────────
   const getBoutiqueId = async (): Promise<number | null> => {
@@ -98,9 +154,6 @@ export default function HistoriqueVentesScreen() {
   // ─── Chargement ventes ─────────────────────────────────────────────────────
   const charger = useCallback(async (period: ActivePeriod = activePeriod) => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
-
       let res: any;
       const now = new Date();
 
@@ -211,10 +264,16 @@ export default function HistoriqueVentesScreen() {
     charger(p);
   };
 
-  // ─── Stats ─────────────────────────────────────────────────────────────────
+  // ─── Stats (mêmes calculs que sales.page.ts : caTotal/totalCredit sur la
+  // liste filtrée, caJour indépendant du filtre période comme sur Ionic) ─────
   const caTotal = filtered.reduce((s: number, v: any) => s + (v.montantTotal || 0), 0);
   const nbVentes = filtered.length;
-  const panierMoyen = nbVentes > 0 ? Math.round(caTotal / nbVentes) : 0;
+  const caJour = (() => {
+    const t = new Date().toDateString();
+    return ventes
+      .filter((v: any) => new Date(v.dateVente).toDateString() === t)
+      .reduce((s: number, v: any) => s + (v.montantTotal || 0), 0);
+  })();
   const totalCreditRestant = filtered
     .filter((v: any) => v.estCredit && !v.creditRegle)
     .reduce((s: number, v: any) => {
@@ -276,26 +335,217 @@ export default function HistoriqueVentesScreen() {
     );
   };
 
+  // Construit l'InvoiceData attendue par invoice.service.ts à partir d'une vente +
+  // son détail (mêmes 3 designs Classique/Moderne/Minimaliste que Ionic, au lieu
+  // d'un HTML basique à design unique).
+  const buildInvoiceDataVente = (vente: any, detail: any) => ({
+    numero: vente.numeroVente || `#${vente.id}`,
+    date: vente.dateVente,
+    clientNom: vente.clientNom,
+    clientPrenom: vente.clientPrenom,
+    clientTelephone: vente.clientTelephone,
+    vendeurNom: vente.vendeurNom,
+    modePaiement: vente.modePaiement,
+    referencePaiement: vente.referencePaiement,
+    estCredit: vente.estCredit,
+    creditRegle: vente.creditRegle,
+    montantVerse: vente.montantVerse,
+    montantRestant: vente.montantRestant,
+    dateEcheance: vente.dateEcheance,
+    lignes: detail?.lignes || detail?.produits || vente.lignes || vente.produits || [],
+    montantTotal: vente.montantTotal,
+    montantApresRemise: vente.montantApresRemise,
+    montantRemiseTotal: vente.montantRemiseTotal,
+    id: vente.id,
+    type: 'VENTE' as const,
+  });
+
+  const chargerBoutiqueEtDesign = async (): Promise<{ boutique: any; design: 1 | 2 | 3 }> => {
+    const raw = await AsyncStorage.getItem('boutique_info');
+    const boutique = raw ? JSON.parse(raw) : {};
+    const tpl = await AsyncStorage.getItem('facture_template');
+    const design: 1 | 2 | 3 = tpl === 'moderne' ? 2 : tpl === 'minimaliste' ? 3 : 1;
+    return { boutique, design };
+  };
+
   const handleImprimer = async (vente: any, detail: any) => {
-    const lignes: any[] = detail?.lignes || detail?.produits || [];
-    const clientNom = vente.clientNom || 'Client anonyme';
-    const dateStr = new Date(vente.dateVente).toLocaleDateString('fr-FR');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>body{font-family:Arial;padding:20px}h2{color:#1a56db}.total{font-size:18px;font-weight:bold}</style>
-</head><body>
-<h2>FACTURE ${vente.numeroVente || '#' + vente.id}</h2>
-<p>Date: ${dateStr} | Client: ${clientNom}</p>
-<hr>
-${lignes.map((l: any) => `<p>${l.produitNom} x${l.quantite} = ${l.sousTotal} FCFA</p>`).join('')}
-<hr>
-<p class="total">TOTAL: ${vente.montantTotal} FCFA</p>
-${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente.montantRestant ?? Math.max(0, vente.montantTotal - (vente.montantVerse || 0))} FCFA</p>` : ''}
-</body></html>`;
     try {
-      await Print.printAsync({ html });
+      const { boutique, design } = await chargerBoutiqueEtDesign();
+      await imprimerFactureRN(buildInvoiceDataVente(vente, detail), boutique, design);
     } catch {
       Alert.alert(tr('erreur', lang), tr('erreur', lang));
     }
+  };
+
+  // ─── Actions directement sur la carte (comme le bandeau .sale-actions
+  // d'Ionic) : le détail (lignes produits) n'est chargé qu'au moment du clic,
+  // pas au préalable pour toute la liste. ────────────────────────────────────
+  const chargerDetailVente = async (vente: any) => {
+    const res = await getVenteDetail(vente.id);
+    return res.data?.data || res.data;
+  };
+
+  const handleImprimerDepuisCarte = async (vente: any) => {
+    try {
+      const detail = await chargerDetailVente(vente);
+      await handleImprimer(vente, detail);
+    } catch {
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
+    }
+  };
+
+  const openModifyDepuisCarte = async (vente: any) => {
+    try {
+      const detail = await chargerDetailVente(vente);
+      setSelectedVente(vente);
+      openModify(vente, detail);
+    } catch {
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
+    }
+  };
+
+  const openRetourDepuisCarte = async (vente: any) => {
+    try {
+      const detail = await chargerDetailVente(vente);
+      setSelectedVente(vente);
+      openRetour(vente, detail);
+    } catch {
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
+    }
+  };
+
+  // ─── Statistiques — /ventes/statistiques/chiffre-affaire, comme
+  //     getStatistiquesChiffreAffaire() sur Ionic (PAS /rapports/jour|semaine|mois
+  //     qui n'existent pas côté backend) ───────────────────────────────────────
+  const openStats = async () => {
+    setShowStatsModal(true);
+    if (stats) return;
+    setLoadingStats(true);
+    try {
+      const [rStats, rTop] = await Promise.all([
+        getStatistiquesChiffreAffaire().catch(() => ({ data: null })),
+        getTopProduits().catch(() => ({ data: [] })),
+      ]);
+      setStats(rStats.data?.data || rStats.data);
+      setTopProduits((rTop.data?.data || rTop.data || []).slice(0, 5));
+    } catch { }
+    setLoadingStats(false);
+  };
+
+  // ─── Modifier une vente ────────────────────────────────────────────────────
+  const openModify = async (vente: any, detail: any) => {
+    setShowModal(false);
+    const lignes: any[] = (detail?.lignes || detail?.produits || []).map((l: any) => ({
+      produitId: l.produitId,
+      produitNom: l.produitNom,
+      quantite: l.quantite,
+      prixUnitaire: l.prixUnitaire,
+    }));
+    setModifyLines(lignes);
+    setModifyMotif('');
+    setShowModifyModal(true);
+    try {
+      const res = await getProduits();
+      setProduitsPourModif(res.data?.data || res.data || []);
+    } catch { }
+  };
+
+  const modifyTotal = modifyLines.reduce((s, l) => s + (l.quantite || 0) * (l.prixUnitaire || 0), 0);
+
+  const updateModifyLine = (i: number, patch: Partial<any>) => {
+    setModifyLines(prev => prev.map((l, idx) => idx === i ? { ...l, ...patch } : l));
+  };
+
+  const removeModifyLine = (i: number) => {
+    setModifyLines(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  const addModifyLine = () => {
+    if (produitsPourModif.length === 0) return;
+    const p = produitsPourModif[0];
+    setModifyLines(prev => [...prev, { produitId: p.id, produitNom: p.nom, quantite: 1, prixUnitaire: p.prixVente }]);
+  };
+
+  const saveModify = async () => {
+    if (!selectedVente || modifyLines.length === 0) {
+      Alert.alert(tr('erreur', lang), 'Ajoutez au moins un article');
+      return;
+    }
+    setSavingModify(true);
+    try {
+      await modifierLignesVente(selectedVente.id, {
+        lignes: modifyLines.map(l => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: l.prixUnitaire })),
+        utilisateurId: userId,
+        motif: modifyMotif.trim() || undefined,
+      });
+      setShowModifyModal(false);
+      charger(activePeriod);
+      Alert.alert(tr('succes', lang), 'Vente modifiée');
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || e.message || 'Modification impossible');
+    }
+    setSavingModify(false);
+  };
+
+  // ─── Retour d'articles ─────────────────────────────────────────────────────
+  const openRetour = (vente: any, detail: any) => {
+    setShowModal(false);
+    const lignes: any[] = detail?.lignes || detail?.produits || [];
+    setRetourLignes(lignes.map((l: any) => ({
+      produitId: l.produitId,
+      produitNom: l.produitNom,
+      prixUnitaire: l.prixUnitaire,
+      quantiteMax: l.quantite,
+      quantiteRetournee: 1,
+      selected: false,
+    })));
+    setRetourMotif('');
+    setShowRetourModal(true);
+  };
+
+  const totalRetour = retourLignes
+    .filter(l => l.selected)
+    .reduce((s, l) => s + l.quantiteRetournee * l.prixUnitaire, 0);
+
+  const submitRetour = async () => {
+    const lignesSelectionnees = retourLignes.filter(l => l.selected);
+    if (lignesSelectionnees.length === 0) {
+      Alert.alert(tr('erreur', lang), 'Sélectionnez au moins un article à retourner');
+      return;
+    }
+    setSavingRetour(true);
+    try {
+      await effectuerRetourVente({
+        venteId: selectedVente.id,
+        motif: retourMotif.trim() || undefined,
+        utilisateurId: userId,
+        lignes: lignesSelectionnees.map(l => ({
+          produitId: l.produitId,
+          quantiteRetournee: l.quantiteRetournee,
+          prixUnitaire: l.prixUnitaire,
+        })),
+      });
+      setShowRetourModal(false);
+      charger(activePeriod);
+      Alert.alert(tr('succes', lang), 'Retour enregistré');
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || e.message || 'Retour impossible');
+    }
+    setSavingRetour(false);
+  };
+
+  // ─── QR code facture ───────────────────────────────────────────────────────
+  const openQr = async (vente: any) => {
+    setShowModal(false);
+    try {
+      const apiUrl = (await AsyncStorage.getItem('api_url')) || '';
+      // apiUrl finit par "/api" — la page facture publique est hors de ce préfixe.
+      const base = apiUrl.replace(/\/api\/?$/, '');
+      setQrUrl(`${base}/api/public/ventes/${vente.id}/facture`);
+    } catch {
+      setQrUrl('');
+    }
+    setShowQrModal(true);
   };
 
   // ─── Rendu si chargement initial (onglet actif) ────────────────────────────
@@ -338,19 +588,28 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
       {/* ══════════════ ONGLET VENTES ══════════════ */}
       {activeTab === 'ventes' && (
         <>
-          {/* ── Hero banner ── */}
+          {/* ── Hero banner (comme .sales-hero d'Ionic : gros total à gauche,
+               2 mini-cartes Aujourd'hui / Crédits à droite) ── */}
           <View style={styles.hero}>
-            <View style={styles.heroStat}>
-              <Text style={styles.heroVal}>{nbVentes}</Text>
-              <Text style={styles.heroLbl}>Ventes</Text>
+            <View style={styles.heroLeft}>
+              <Text style={styles.heroEyebrow}>Chiffre d'affaires total</Text>
+              <Text style={styles.heroAmount} numberOfLines={1}>{money(caTotal)}</Text>
+              <View style={styles.heroSubRow}>
+                <MaterialCommunityIcons name="receipt-outline" size={13} color="#93c5fd" />
+                <Text style={styles.heroSub}>{nbVentes} vente{nbVentes > 1 ? 's' : ''}</Text>
+              </View>
             </View>
-            <View style={styles.heroStat}>
-              <Text style={styles.heroVal} numberOfLines={1}>{money(caTotal)}</Text>
-              <Text style={styles.heroLbl}>CA total</Text>
-            </View>
-            <View style={styles.heroStat}>
-              <Text style={styles.heroVal} numberOfLines={1}>{money(panierMoyen)}</Text>
-              <Text style={styles.heroLbl}>Panier moy.</Text>
+            <View style={styles.heroRight}>
+              <View style={styles.heroMiniCard}>
+                <MaterialCommunityIcons name="white-balance-sunny" size={16} color="#93c5fd" />
+                <Text style={styles.hmcLabel}>Aujourd'hui</Text>
+                <Text style={styles.hmcVal} numberOfLines={1}>{money(caJour)}</Text>
+              </View>
+              <View style={styles.heroMiniCard}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#fbbf24" />
+                <Text style={styles.hmcLabel}>Crédits</Text>
+                <Text style={[styles.hmcVal, styles.hmcValWarn]} numberOfLines={1}>{money(totalCreditRestant)}</Text>
+              </View>
             </View>
           </View>
 
@@ -488,6 +747,45 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                         />
                       </View>
                     </Card.Content>
+                  )}
+
+                  {/* Actions directement sur la carte (comme .sale-actions d'Ionic) */}
+                  {!isAnnulee && (
+                    <View style={styles.cardActions}>
+                      <TouchableOpacity style={styles.cardActionBtn} onPress={() => openModal(item)}>
+                        <MaterialCommunityIcons name="eye-outline" size={15} color="#475569" />
+                        <Text style={styles.cardActionTxt}>{tr('detail_vente', lang) || 'Détails'}</Text>
+                      </TouchableOpacity>
+
+                      {isAdmin && (
+                        <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionWarn]} onPress={() => openModifyDepuisCarte(item)}>
+                          <MaterialCommunityIcons name="pencil-outline" size={15} color="#d97706" />
+                          <Text style={[styles.cardActionTxt, styles.cardActionTxtWarn]}>{tr('modifier', lang)}</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {isAdmin && (
+                        <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionDanger]} onPress={() => handleAnnuler(item)}>
+                          <MaterialCommunityIcons name="cancel" size={15} color="#dc2626" />
+                          <Text style={[styles.cardActionTxt, styles.cardActionTxtDanger]}>{tr('annuler', lang)}</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionRetour]} onPress={() => openRetourDepuisCarte(item)}>
+                        <MaterialCommunityIcons name="keyboard-return" size={15} color="#7c3aed" />
+                        <Text style={[styles.cardActionTxt, styles.cardActionTxtRetour]}>Retour</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionPrimary]} onPress={() => handleImprimerDepuisCarte(item)}>
+                        <MaterialCommunityIcons name="download-outline" size={15} color="#fff" />
+                        <Text style={[styles.cardActionTxt, styles.cardActionTxtPrimary]}>PDF</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.cardActionBtn} onPress={() => openQr(item)}>
+                        <MaterialCommunityIcons name="qrcode" size={15} color="#475569" />
+                        <Text style={styles.cardActionTxt}>QR</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
                 </Card>
               );
@@ -702,6 +1000,33 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                 </TouchableOpacity>
               )}
 
+              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
+                <TouchableOpacity style={styles.btnQr} onPress={() => openQr(selectedVente)}>
+                  <MaterialCommunityIcons name="qrcode" size={16} color="#fff" />
+                  <Text style={styles.btnQrText}>QR</Text>
+                </TouchableOpacity>
+              )}
+
+              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && isAdmin && (
+                <TouchableOpacity
+                  style={styles.btnModify}
+                  onPress={() => openModify(selectedVente, venteDetail)}
+                >
+                  <MaterialCommunityIcons name="pencil-outline" size={16} color="#fff" />
+                  <Text style={styles.btnModifyText}>{tr('modifier', lang)}</Text>
+                </TouchableOpacity>
+              )}
+
+              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
+                <TouchableOpacity
+                  style={styles.btnRetour}
+                  onPress={() => openRetour(selectedVente, venteDetail)}
+                >
+                  <MaterialCommunityIcons name="keyboard-return" size={16} color="#fff" />
+                  <Text style={styles.btnRetourText}>Retour</Text>
+                </TouchableOpacity>
+              )}
+
               {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && isAdmin && (
                 <TouchableOpacity
                   style={[styles.btnCancel, annulationEnCours && { opacity: 0.5 }]}
@@ -714,6 +1039,251 @@ ${vente.estCredit ? `<p>Versé: ${vente.montantVerse || 0} FCFA | Reste: ${vente
                   }
                 </TouchableOpacity>
               )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── Modale Statistiques ─────────────────────────────────────────── */}
+      <Modal visible={showStatsModal} animationType="slide" transparent onRequestClose={() => setShowStatsModal(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.modalHead}>
+              <View>
+                <Text style={styles.modalTitle}>Statistiques</Text>
+                <Text style={styles.modalSub}>Chiffre d'affaires & top produits</Text>
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setShowStatsModal(false)}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {loadingStats ? (
+              <ActivityIndicator style={{ padding: 30 }} size="large" color="#1a56db" />
+            ) : (
+              <ScrollView style={styles.modalBody}>
+                <View style={styles.statCard}>
+                  <Text style={styles.statCardTitle}>Aujourd'hui</Text>
+                  {isAdmin && <Text style={styles.statCardVal}>{money(stats?.chiffreAffaireJournalier || 0)}</Text>}
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statCardTitle}>Cette semaine</Text>
+                  {isAdmin && <Text style={styles.statCardVal}>{money(stats?.chiffreAffaireHebdomadaire || 0)}</Text>}
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statCardTitle}>Ce mois</Text>
+                  {isAdmin && <Text style={styles.statCardVal}>{money(stats?.chiffreAffaireMensuel || 0)}</Text>}
+                </View>
+
+                {topProduits.length > 0 && (
+                  <View style={styles.statCard}>
+                    <Text style={styles.statCardTitle}>Top produits</Text>
+                    {topProduits.map((p, i) => (
+                      <View key={i} style={styles.topProduitRow}>
+                        <View style={styles.topProduitRank}>
+                          <Text style={styles.topProduitRankText}>{i + 1}</Text>
+                        </View>
+                        <Text style={styles.topProduitNom} numberOfLines={1}>{p.produitNom || p.nom}</Text>
+                        <Text style={styles.topProduitQte}>{p.quantiteVendue || p.quantite || 0}x</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </ScrollView>
+            )}
+
+            <View style={styles.modalFoot}>
+              <TouchableOpacity style={styles.btnClose} onPress={() => setShowStatsModal(false)}>
+                <Text style={styles.btnCloseText}>{tr('fermer', lang)}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── Modale Modifier une vente ──────────────────────────────────── */}
+      <Modal visible={showModifyModal} animationType="slide" transparent onRequestClose={() => setShowModifyModal(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.modalHead}>
+              <View>
+                <Text style={styles.modalTitle}>{tr('modifier', lang)} la vente</Text>
+                {selectedVente && (
+                  <Text style={styles.modalSub}>{selectedVente.numeroVente || `#${selectedVente.id}`}</Text>
+                )}
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setShowModifyModal(false)}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              {modifyLines.map((l, i) => (
+                <View key={i} style={styles.modifyLigneRow}>
+                  <Text style={styles.modifyLigneNom} numberOfLines={1}>{l.produitNom}</Text>
+                  <RNTextInput
+                    style={styles.modifyQtyInput}
+                    keyboardType="numeric"
+                    value={String(l.quantite)}
+                    onChangeText={(v) => updateModifyLine(i, { quantite: Number(v) || 0 })}
+                  />
+                  <RNTextInput
+                    style={styles.modifyPrixInput}
+                    keyboardType="numeric"
+                    value={String(l.prixUnitaire)}
+                    onChangeText={(v) => updateModifyLine(i, { prixUnitaire: Number(v) || 0 })}
+                  />
+                  <TouchableOpacity style={styles.modifyRemoveBtn} onPress={() => removeModifyLine(i)}>
+                    <MaterialCommunityIcons name="close" size={16} color="#dc2626" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+
+              <TouchableOpacity style={styles.modifyAddBtn} onPress={addModifyLine} disabled={produitsPourModif.length === 0}>
+                <MaterialCommunityIcons name="plus" size={16} color="#1a56db" />
+                <Text style={styles.modifyAddBtnText}>Ajouter un article</Text>
+              </TouchableOpacity>
+
+              <RNTextInput
+                style={styles.modifyMotifInput}
+                placeholder="Motif (optionnel)"
+                value={modifyMotif}
+                onChangeText={setModifyMotif}
+              />
+
+              <View style={styles.modifyTotalRow}>
+                <Text style={styles.modifyTotalLabel}>{tr('total', lang)}</Text>
+                <Text style={styles.modifyTotalVal}>{money(modifyTotal)}</Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFoot}>
+              <TouchableOpacity style={styles.btnClose} onPress={() => setShowModifyModal(false)}>
+                <Text style={styles.btnCloseText}>{tr('annuler', lang)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnSave, savingModify && { opacity: 0.5 }]}
+                onPress={saveModify}
+                disabled={savingModify}
+              >
+                {savingModify
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.btnSaveText}>{tr('enregistrer', lang)}</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── Modale Retour d'articles ───────────────────────────────────── */}
+      <Modal visible={showRetourModal} animationType="slide" transparent onRequestClose={() => setShowRetourModal(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.modalHead}>
+              <View>
+                <Text style={styles.modalTitle}>Retour d'articles</Text>
+                {selectedVente && (
+                  <Text style={styles.modalSub}>{selectedVente.numeroVente || `#${selectedVente.id}`}</Text>
+                )}
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setShowRetourModal(false)}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              {retourLignes.map((l, i) => (
+                <View key={i} style={styles.retourLigneRow}>
+                  <RadioButton
+                    value={String(i)}
+                    status={l.selected ? 'checked' : 'unchecked'}
+                    onPress={() => setRetourLignes(prev => prev.map((x, idx) => idx === i ? { ...x, selected: !x.selected } : x))}
+                  />
+                  <View style={styles.retourLigneInfo}>
+                    <Text style={styles.retourLigneNom} numberOfLines={1}>{l.produitNom}</Text>
+                    <Text style={styles.retourLigneSub}>Vendu : {l.quantiteMax} × {money(l.prixUnitaire)}</Text>
+                  </View>
+                  <RNTextInput
+                    style={styles.retourQtyInput}
+                    keyboardType="numeric"
+                    editable={l.selected}
+                    value={String(l.quantiteRetournee)}
+                    onChangeText={(v) => {
+                      const q = Math.max(1, Math.min(l.quantiteMax, Number(v) || 1));
+                      setRetourLignes(prev => prev.map((x, idx) => idx === i ? { ...x, quantiteRetournee: q } : x));
+                    }}
+                  />
+                </View>
+              ))}
+
+              <RNTextInput
+                style={styles.retourMotifInput}
+                placeholder="Motif du retour (optionnel)"
+                value={retourMotif}
+                onChangeText={setRetourMotif}
+              />
+
+              <View style={styles.retourTotalRow}>
+                <Text style={styles.retourTotalLabel}>Montant à rembourser</Text>
+                <Text style={styles.retourTotalVal}>{money(totalRetour)}</Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFoot}>
+              <TouchableOpacity style={styles.btnClose} onPress={() => setShowRetourModal(false)}>
+                <Text style={styles.btnCloseText}>{tr('annuler', lang)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnSubmitRetour, savingRetour && { opacity: 0.5 }]}
+                onPress={submitRetour}
+                disabled={savingRetour}
+              >
+                {savingRetour
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.btnSubmitRetourText}>Valider le retour</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── Modale QR code facture ─────────────────────────────────────── */}
+      <Modal visible={showQrModal} animationType="slide" transparent onRequestClose={() => setShowQrModal(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.modalHead}>
+              <View>
+                <Text style={styles.modalTitle}>QR code facture</Text>
+                {selectedVente && (
+                  <Text style={styles.modalSub}>{selectedVente.numeroVente || `#${selectedVente.id}`}</Text>
+                )}
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setShowQrModal(false)}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.qrContainer}>
+              {qrUrl ? (
+                <>
+                  <QRCode value={qrUrl} size={200} />
+                  <Text style={styles.qrUrlText}>{qrUrl}</Text>
+                </>
+              ) : (
+                <Text style={styles.qrUrlText}>Lien de facture indisponible</Text>
+              )}
+            </View>
+
+            <View style={styles.modalFoot}>
+              <TouchableOpacity style={styles.btnClose} onPress={() => setShowQrModal(false)}>
+                <Text style={styles.btnCloseText}>{tr('fermer', lang)}</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -747,11 +1317,18 @@ const styles = StyleSheet.create({
   tabBadge: { backgroundColor: '#dc2626', borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   tabBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
-  // Hero
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
-  heroStat: { flex: 1, alignItems: 'center' },
-  heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
+  // Hero (réplique de .sales-hero Ionic)
+  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 18, paddingHorizontal: 16, gap: 12 },
+  heroLeft: { flex: 1.3, justifyContent: 'center' },
+  heroEyebrow: { color: '#93c5fd', fontSize: 11, fontWeight: '600' },
+  heroAmount: { color: '#fff', fontSize: 24, fontWeight: 'bold', marginTop: 4 },
+  heroSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  heroSub: { color: '#93c5fd', fontSize: 12 },
+  heroRight: { flex: 1, gap: 8 },
+  heroMiniCard: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: 8 },
+  hmcLabel: { color: '#93c5fd', fontSize: 10, marginTop: 3 },
+  hmcVal: { color: '#fff', fontSize: 13, fontWeight: 'bold', marginTop: 1 },
+  hmcValWarn: { color: '#fbbf24' },
 
   // Offline
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
@@ -791,6 +1368,19 @@ const styles = StyleSheet.create({
   creditSection: { marginTop: 4 },
   creditInfo: { fontSize: 11, color: '#64748b', marginBottom: 4 },
   progressBar: { height: 5, borderRadius: 3, backgroundColor: '#e5e7eb' },
+
+  // Actions sur carte (réplique de .sale-actions Ionic)
+  cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 14, paddingBottom: 12, paddingTop: 4 },
+  cardActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f1f5f9', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 9 },
+  cardActionTxt: { fontSize: 11, fontWeight: '600', color: '#475569' },
+  cardActionWarn: { backgroundColor: '#fef3c7' },
+  cardActionTxtWarn: { color: '#d97706' },
+  cardActionDanger: { backgroundColor: '#fee2e2' },
+  cardActionTxtDanger: { color: '#dc2626' },
+  cardActionRetour: { backgroundColor: '#ede9fe' },
+  cardActionTxtRetour: { color: '#7c3aed' },
+  cardActionPrimary: { backgroundColor: '#1a56db' },
+  cardActionTxtPrimary: { color: '#fff' },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
@@ -847,4 +1437,54 @@ const styles = StyleSheet.create({
   btnPrintText: { color: '#fff', fontWeight: 'bold' },
   btnCancel: { flex: 1, backgroundColor: '#dc2626', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, minWidth: 100 },
   btnCancelText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  btnQr: { flex: 1, flexDirection: 'row', gap: 5, backgroundColor: '#334155', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, minWidth: 70 },
+  btnQrText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  btnModify: { flex: 1, flexDirection: 'row', gap: 5, backgroundColor: '#d97706', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, minWidth: 90 },
+  btnModifyText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  btnRetour: { flex: 1, flexDirection: 'row', gap: 5, backgroundColor: '#7c3aed', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, minWidth: 90 },
+  btnRetourText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+
+  // Statistiques
+  statCard: { backgroundColor: '#fafafa', borderRadius: 12, padding: 14, marginBottom: 10 },
+  statCardTitle: { fontWeight: 'bold', color: '#1a56db', fontSize: 13, marginBottom: 8 },
+  statCardVal: { fontSize: 22, fontWeight: 'bold', color: '#081648' },
+  statCardSub: { fontSize: 12, color: '#888', marginTop: 2 },
+  topProduitRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
+  topProduitRank: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  topProduitRankText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  topProduitNom: { flex: 1, fontSize: 13, color: '#333' },
+  topProduitQte: { fontSize: 12, color: '#888', marginRight: 8 },
+  topProduitCa: { fontSize: 13, fontWeight: '600', color: '#1a56db' },
+
+  // Modifier une vente
+  modifyLigneRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f5f5f5', gap: 8 },
+  modifyLigneNom: { flex: 1, fontSize: 13, color: '#333' },
+  modifyQtyInput: { width: 50, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 6, textAlign: 'center', fontSize: 13 },
+  modifyPrixInput: { width: 80, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 6, textAlign: 'center', fontSize: 13 },
+  modifyRemoveBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' },
+  modifyAddBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#1a56db', borderStyle: 'dashed', borderRadius: 10, paddingVertical: 10, marginTop: 8 },
+  modifyAddBtnText: { color: '#1a56db', fontWeight: '600', fontSize: 13 },
+  modifyMotifInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, marginTop: 10 },
+  modifyTotalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, marginTop: 4 },
+  modifyTotalLabel: { fontWeight: 'bold', fontSize: 14, color: '#333' },
+  modifyTotalVal: { fontWeight: 'bold', fontSize: 16, color: '#1a56db' },
+  btnSave: { flex: 1, backgroundColor: '#16a34a', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, minWidth: 100 },
+  btnSaveText: { color: '#fff', fontWeight: 'bold' },
+
+  // Retour d'articles
+  retourLigneRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f5f5f5', gap: 8 },
+  retourLigneInfo: { flex: 1 },
+  retourLigneNom: { fontSize: 13, color: '#333', fontWeight: '500' },
+  retourLigneSub: { fontSize: 11, color: '#888', marginTop: 2 },
+  retourQtyInput: { width: 50, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 6, textAlign: 'center', fontSize: 13 },
+  retourMotifInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, marginTop: 10 },
+  retourTotalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, marginTop: 4 },
+  retourTotalLabel: { fontWeight: 'bold', fontSize: 14, color: '#333' },
+  retourTotalVal: { fontWeight: 'bold', fontSize: 16, color: '#dc2626' },
+  btnSubmitRetour: { flex: 1, backgroundColor: '#7c3aed', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, minWidth: 100 },
+  btnSubmitRetourText: { color: '#fff', fontWeight: 'bold' },
+
+  // QR code
+  qrContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 24 },
+  qrUrlText: { fontSize: 11, color: '#888', marginTop: 14, textAlign: 'center', paddingHorizontal: 16 },
 });

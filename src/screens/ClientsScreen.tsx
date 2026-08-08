@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, FlatList, StyleSheet, Alert, RefreshControl,
+  View, FlatList, StyleSheet, Alert, RefreshControl, Image,
   TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import {
@@ -8,12 +8,15 @@ import {
   Portal, Modal as PaperModal, TextInput, Button,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
 import {
   getClients, updateClient, deleteClient,
-  getClientVentes, getCreditsNonRegles,
+  getClientVentes, getCreditsNonRegles, getVenteDetail,
+  createAvanceClient, getHistoriqueAvanceClient, getBackendRootUrl,
 } from '../services/api.service';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { creerClientOffline, sauvegarderCache, lireCache } from '../services/offline.service';
+import { imprimerFactureRN } from '../services/invoice.service';
+import ClientReleveModal from '../components/ClientReleveModal';
 import { Client } from '../types';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -36,6 +39,12 @@ interface CreditClient {
   montantVerse: number;
   montantRestant: number;
   estReglee?: boolean;
+  dateEcheance?: string;
+}
+
+function estEnRetard(c: CreditClient): boolean {
+  if (c.estReglee || !c.dateEcheance) return false;
+  return new Date(c.dateEcheance).getTime() < Date.now();
 }
 
 type Onglet = 'infos' | 'achats' | 'credits';
@@ -75,11 +84,26 @@ export default function ClientsScreen() {
   const [loadingVentes, setLoadingVentes] = useState(false);
   const [loadingCredits, setLoadingCredits] = useState(false);
 
+  // ── Modal relevé client (situation client) ─────────────────────────────────
+  const [showReleve, setShowReleve] = useState(false);
+
+  // ── Modal QR code client (scan → téléchargement relevé PDF, comme Ionic) ──
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [venteEnCoursImpression, setVenteEnCoursImpression] = useState<number | null>(null);
+
+  // ── Avance client (dépôt + historique) ──────────────────────────────────────
+  const [showAvanceModal, setShowAvanceModal] = useState(false);
+  const [avanceForm, setAvanceForm] = useState({ montant: '', modePaiement: 'ESPECES', referencePaiement: '', motif: '' });
+  const [savingAvance, setSavingAvance] = useState(false);
+  const [showHistoriqueAvance, setShowHistoriqueAvance] = useState(false);
+  const [loadingHistoriqueAvance, setLoadingHistoriqueAvance] = useState(false);
+  const [historiqueAvance, setHistoriqueAvance] = useState<any>(null);
+
   // ── Chargement liste ───────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
+      // Toujours tenter l'appel réel en premier — NetInfo.fetch() peut renvoyer
+      // isConnected=null au premier appel et ferait sauter l'appel réel à tort.
       const res = await getClients();
       const data: Client[] = res.data?.data || res.data || [];
       setClients(data);
@@ -216,6 +240,86 @@ export default function ClientsScreen() {
     } catch { /* ignore */ }
     setLoadingCredits(false);
   }, []);
+
+  // ── Avance client : dépôt et historique (fonction absente jusqu'ici — la
+  // vente à crédit permettait déjà d'UTILISER une avance, mais rien ne
+  // permettait d'en DÉPOSER une depuis la fiche client) ─────────────────────
+  const ouvrirAvanceModal = () => {
+    setAvanceForm({ montant: '', modePaiement: 'ESPECES', referencePaiement: '', motif: '' });
+    setShowAvanceModal(true);
+  };
+
+  const enregistrerAvanceFn = async () => {
+    if (!selectedClient) return;
+    const montant = parseFloat(avanceForm.montant);
+    if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
+    if (avanceForm.modePaiement !== 'ESPECES' && !avanceForm.referencePaiement.trim()) {
+      Alert.alert(tr('erreur', lang), 'Référence obligatoire pour ce mode de paiement');
+      return;
+    }
+    setSavingAvance(true);
+    try {
+      const raw = await AsyncStorage.getItem('user');
+      const utilisateurId = raw ? JSON.parse(raw)?.id : undefined;
+      await createAvanceClient({
+        clientNom: selectedClient.nom,
+        clientTelephone: selectedClient.telephone,
+        montant,
+        motif: avanceForm.motif.trim() || undefined,
+        utilisateurId,
+        modePaiement: avanceForm.modePaiement,
+        referencePaiement: avanceForm.referencePaiement.trim() || undefined,
+      });
+      setShowAvanceModal(false);
+      Alert.alert(tr('succes', lang), `Avance de ${money(montant)} enregistrée pour ${selectedClient.nom}`);
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Enregistrement de l\'avance impossible');
+    }
+    setSavingAvance(false);
+  };
+
+  const ouvrirHistoriqueAvance = async () => {
+    if (!selectedClient) return;
+    setShowHistoriqueAvance(true);
+    setLoadingHistoriqueAvance(true);
+    try {
+      const res = await getHistoriqueAvanceClient(selectedClient.nom, selectedClient.telephone);
+      setHistoriqueAvance(res.data);
+    } catch {
+      setHistoriqueAvance(null);
+    }
+    setLoadingHistoriqueAvance(false);
+  };
+
+  // ── Facture PDF pour une vente du client (impression native, comme
+  //     telechargerFacturePdf() sur Ionic mais via le moteur RN déjà utilisé
+  //     dans HistoriqueVentesScreen plutôt que d'ouvrir une URL navigateur) ──
+  const imprimerFactureVente = async (vente: VenteClient) => {
+    setVenteEnCoursImpression(vente.id);
+    try {
+      const res = await getVenteDetail(vente.id);
+      const detail = res.data?.data || res.data || {};
+      const raw = await AsyncStorage.getItem('boutique_info');
+      const boutique = raw ? JSON.parse(raw) : {};
+      const tpl = await AsyncStorage.getItem('facture_template');
+      const design: 1 | 2 | 3 = tpl === 'moderne' ? 2 : tpl === 'minimaliste' ? 3 : 1;
+      await imprimerFactureRN({
+        numero: vente.numeroVente || `#${vente.id}`,
+        date: vente.dateVente || new Date().toISOString(),
+        clientNom: selectedClient?.nom,
+        clientTelephone: selectedClient?.telephone,
+        modePaiement: vente.modePaiement,
+        estCredit: vente.estCredit,
+        lignes: detail?.lignes || detail?.produits || [],
+        montantTotal: vente.montantTotal || 0,
+        id: vente.id,
+        type: 'VENTE',
+      }, boutique, design);
+    } catch {
+      Alert.alert(tr('erreur', lang), 'Impossible de générer la facture PDF');
+    }
+    setVenteEnCoursImpression(null);
+  };
 
   // ── Changement d'onglet dans le détail ────────────────────────────────────
   const changerOnglet = (o: Onglet) => {
@@ -452,6 +556,30 @@ export default function ClientsScreen() {
                     </View>
                   ) : null}
 
+                  <TouchableOpacity
+                    style={styles.btnReleve}
+                    onPress={() => setShowReleve(true)}
+                  >
+                    <MaterialCommunityIcons name="file-document-outline" size={18} color="#1a56db" />
+                    <Text style={styles.btnReleveText}>Relevé complet du client</Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.actionsRow}>
+                    <TouchableOpacity style={styles.btnAvance} onPress={ouvrirAvanceModal}>
+                      <MaterialCommunityIcons name="wallet-outline" size={16} color="#0e9f6e" />
+                      <Text style={styles.btnAvanceText}>Avance</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.btnHistorique} onPress={ouvrirHistoriqueAvance}>
+                      <MaterialCommunityIcons name="clock-outline" size={16} color="#1a56db" />
+                      <Text style={styles.btnHistoriqueText}>Historique avances</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity style={styles.btnQr} onPress={() => setShowQrModal(true)}>
+                    <MaterialCommunityIcons name="qrcode" size={16} color="#7c3aed" />
+                    <Text style={styles.btnQrText}>QR Code — scanner pour télécharger le relevé</Text>
+                  </TouchableOpacity>
+
                   <View style={styles.actionsRow}>
                     <TouchableOpacity
                       style={styles.btnModifier}
@@ -497,10 +625,24 @@ export default function ClientsScreen() {
                               ) : null}
                               <Text style={styles.venteMontant}>{money(v.montantTotal ?? 0)}</Text>
                             </View>
-                            <Text style={styles.venteMode}>
-                              {v.modePaiement ?? 'ESPECES'}
-                              {v.numeroVente ? `  ·  N° ${v.numeroVente}` : ''}
-                            </Text>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={styles.venteMode}>
+                                {v.modePaiement ?? 'ESPECES'}
+                                {v.numeroVente ? `  ·  N° ${v.numeroVente}` : ''}
+                              </Text>
+                              <TouchableOpacity
+                                style={styles.btnPdfVente}
+                                onPress={() => imprimerFactureVente(v)}
+                                disabled={venteEnCoursImpression === v.id}
+                              >
+                                {venteEnCoursImpression === v.id ? (
+                                  <ActivityIndicator size={12} color="#1a56db" />
+                                ) : (
+                                  <MaterialCommunityIcons name="file-pdf-box" size={14} color="#1a56db" />
+                                )}
+                                <Text style={styles.btnPdfVenteText}>Facture PDF</Text>
+                              </TouchableOpacity>
+                            </View>
                           </View>
                         ))
                       )}
@@ -534,13 +676,14 @@ export default function ClientsScreen() {
                           const pct = c.montantTotal > 0
                             ? Math.min(1, c.montantVerse / c.montantTotal)
                             : 0;
+                          const retard = estEnRetard(c);
                           return (
-                            <View key={c.venteId} style={[styles.creditItem, c.estReglee && styles.creditItemRegle]}>
+                            <View key={c.venteId} style={[styles.creditItem, c.estReglee && styles.creditItemRegle, retard && styles.creditItemRetard]}>
                               <View style={styles.creditTop}>
                                 <Text style={styles.creditNum}>{c.numeroVente ?? `Vente #${c.venteId}`}</Text>
-                                <View style={[styles.statutBadge, c.estReglee ? styles.statutRegle : styles.statutEnCours]}>
-                                  <Text style={[styles.statutText, c.estReglee ? { color: '#16a34a' } : { color: '#d97706' }]}>
-                                    {c.estReglee ? 'Solde' : 'En cours'}
+                                <View style={[styles.statutBadge, c.estReglee ? styles.statutRegle : retard ? styles.statutRetard : styles.statutEnCours]}>
+                                  <Text style={[styles.statutText, c.estReglee ? { color: '#16a34a' } : retard ? { color: '#dc2626' } : { color: '#d97706' }]}>
+                                    {c.estReglee ? 'Solde' : retard ? 'En retard' : 'En cours'}
                                   </Text>
                                 </View>
                               </View>
@@ -557,8 +700,13 @@ export default function ClientsScreen() {
                               </View>
 
                               {!c.estReglee && (
-                                <Text style={styles.creditRestant}>
+                                <Text style={[styles.creditRestant, retard && { color: '#dc2626' }]}>
                                   Restant : {money(c.montantRestant)}
+                                </Text>
+                              )}
+                              {!c.estReglee && !!c.dateEcheance && (
+                                <Text style={[styles.creditEcheance, retard && { color: '#dc2626' }]}>
+                                  Échéance : {fdate(c.dateEcheance)}
                                 </Text>
                               )}
                             </View>
@@ -577,6 +725,185 @@ export default function ClientsScreen() {
                 <Text style={styles.btnFermerText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          MODAL QR CODE CLIENT — le client scanne pour télécharger son relevé
+          PDF, comme showQrCode() sur Ionic (endpoint public /api/clients/{id}/qrcode
+          qui encode l'URL /api/clients/{id}/releve-pdf).
+      ════════════════════════════════════════════════════════════════════════ */}
+      <Modal visible={showQrModal} animationType="slide" transparent onRequestClose={() => setShowQrModal(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.detailHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.detailNom}>QR Code · {selectedClient?.nom}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowQrModal(false)} style={styles.closeBtn}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ padding: 20, alignItems: 'center' }}>
+              <Text style={{ color: '#64748b', fontSize: 12, textAlign: 'center', marginBottom: 16 }}>
+                Le client scanne ce QR code pour télécharger son relevé de compte PDF
+              </Text>
+              {selectedClient?.id ? (
+                <Image
+                  source={{ uri: `${getBackendRootUrl()}/api/clients/${selectedClient.id}/qrcode` }}
+                  style={{ width: 200, height: 200, borderRadius: 12, borderWidth: 2, borderColor: '#e2e8f0' }}
+                  resizeMode="contain"
+                />
+              ) : null}
+              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 12 }}>{selectedClient?.nom}</Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          MODAL RELEVÉ CLIENT (situation client)
+      ════════════════════════════════════════════════════════════════════════ */}
+      <ClientReleveModal
+        visible={showReleve}
+        client={selectedClient}
+        onClose={() => setShowReleve(false)}
+      />
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          MODAL DÉPÔT AVANCE
+      ════════════════════════════════════════════════════════════════════════ */}
+      <Modal visible={showAvanceModal} animationType="slide" transparent onRequestClose={() => setShowAvanceModal(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={styles.overlay}>
+            <View style={styles.sheet}>
+              <View style={styles.handle} />
+              <View style={styles.detailHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.detailNom}>Avance · {selectedClient?.nom}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowAvanceModal(false)} style={styles.closeBtn}>
+                  <Text style={styles.closeBtnText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.detailBody} contentContainerStyle={{ paddingBottom: 20 }}>
+                <TextInput
+                  label="Montant *"
+                  value={avanceForm.montant}
+                  onChangeText={v => setAvanceForm(f => ({ ...f, montant: v }))}
+                  keyboardType="numeric"
+                  mode="outlined"
+                  style={styles.input}
+                />
+                <Text style={{ marginBottom: 6, fontSize: 12, fontWeight: '600', color: '#64748b' }}>Mode de paiement</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  {['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'].map(m => (
+                    <TouchableOpacity
+                      key={m}
+                      style={[styles.modeChip, avanceForm.modePaiement === m && styles.modeChipActive]}
+                      onPress={() => setAvanceForm(f => ({ ...f, modePaiement: m }))}
+                    >
+                      <Text style={[styles.modeChipText, avanceForm.modePaiement === m && styles.modeChipTextActive]}>
+                        {m.replace('_', ' ')}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {avanceForm.modePaiement !== 'ESPECES' && (
+                  <TextInput
+                    label="Référence"
+                    value={avanceForm.referencePaiement}
+                    onChangeText={v => setAvanceForm(f => ({ ...f, referencePaiement: v }))}
+                    mode="outlined"
+                    style={styles.input}
+                  />
+                )}
+                <TextInput
+                  label="Motif (optionnel)"
+                  value={avanceForm.motif}
+                  onChangeText={v => setAvanceForm(f => ({ ...f, motif: v }))}
+                  mode="outlined"
+                  multiline
+                  style={styles.input}
+                />
+                <Button
+                  mode="contained"
+                  onPress={enregistrerAvanceFn}
+                  loading={savingAvance}
+                  disabled={savingAvance}
+                  style={{ marginTop: 8, backgroundColor: '#0e9f6e' }}
+                >
+                  Enregistrer l'avance
+                </Button>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          MODAL HISTORIQUE AVANCES
+      ════════════════════════════════════════════════════════════════════════ */}
+      <Modal visible={showHistoriqueAvance} animationType="slide" transparent onRequestClose={() => setShowHistoriqueAvance(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.detailHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.detailNom}>Avances · {selectedClient?.nom}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowHistoriqueAvance(false)} style={styles.closeBtn}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {loadingHistoriqueAvance ? (
+              <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#1a56db" />
+            ) : (
+              <ScrollView style={styles.detailBody} contentContainerStyle={{ paddingBottom: 20 }}>
+                {historiqueAvance ? (
+                  <>
+                    <View style={styles.avanceKpiRow}>
+                      <View style={[styles.avanceKpi, { backgroundColor: '#dcfce7' }]}>
+                        <Text style={[styles.avanceKpiLabel, { color: '#15803d' }]}>Disponible</Text>
+                        <Text style={[styles.avanceKpiVal, { color: '#15803d' }]}>{money(historiqueAvance.soldeDisponible || 0)}</Text>
+                      </View>
+                      <View style={[styles.avanceKpi, { backgroundColor: '#dbeafe' }]}>
+                        <Text style={[styles.avanceKpiLabel, { color: '#1d4ed8' }]}>Déposé</Text>
+                        <Text style={[styles.avanceKpiVal, { color: '#1d4ed8' }]}>{money(historiqueAvance.totalDepose || 0)}</Text>
+                      </View>
+                      <View style={[styles.avanceKpi, { backgroundColor: '#fef3c7' }]}>
+                        <Text style={[styles.avanceKpiLabel, { color: '#b45309' }]}>Utilisé</Text>
+                        <Text style={[styles.avanceKpiVal, { color: '#b45309' }]}>{money(historiqueAvance.totalUtilise || 0)}</Text>
+                      </View>
+                    </View>
+
+                    {(historiqueAvance.historique || []).length === 0 ? (
+                      <Text style={styles.emptyOnglet}>Aucune avance enregistrée</Text>
+                    ) : (
+                      (historiqueAvance.historique || []).map((a: any) => (
+                        <View key={a.id} style={styles.venteItem}>
+                          <View style={styles.venteTop}>
+                            <Text style={styles.venteMontant}>{money(a.montant)}</Text>
+                            <View style={[styles.statutBadge, a.statut === 'EPUISEE' ? styles.statutRegle : styles.statutEnCours]}>
+                              <Text style={[styles.statutText, { color: a.statut === 'EPUISEE' ? '#16a34a' : '#d97706' }]}>{a.statut}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.venteMode}>{fdate(a.dateDepot)}</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                            <Text style={{ fontSize: 12, color: '#16a34a' }}>Disponible : {money(a.montantDisponible)}</Text>
+                            <Text style={{ fontSize: 12, color: '#d97706' }}>Utilisé : {money(a.montantUtilise)}</Text>
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </>
+                ) : (
+                  <Text style={styles.emptyOnglet}>Aucune donnée</Text>
+                )}
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -682,6 +1009,56 @@ const styles = StyleSheet.create({
   },
   alertCreditText: { color: '#dc2626', fontWeight: 'bold', fontSize: 15 },
 
+  // Bouton relevé complet
+  btnReleve: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#eff6ff', borderRadius: 10, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#bfdbfe', marginBottom: 14,
+  },
+  btnReleveText: { color: '#1a56db', fontWeight: 'bold', fontSize: 14 },
+
+  // Boutons avance
+  btnAvance: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#ecfdf5', borderRadius: 10, paddingVertical: 11,
+    borderWidth: 1, borderColor: '#a7f3d0',
+  },
+  btnAvanceText: { color: '#0e9f6e', fontWeight: 'bold', fontSize: 13 },
+  btnHistorique: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#eff6ff', borderRadius: 10, paddingVertical: 11,
+    borderWidth: 1, borderColor: '#bfdbfe',
+  },
+  btnHistoriqueText: { color: '#1a56db', fontWeight: 'bold', fontSize: 13 },
+
+  // Bouton QR code
+  btnQr: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#f5f3ff', borderRadius: 10, paddingVertical: 12,
+    borderWidth: 1, borderColor: '#ddd6fe', marginTop: 10,
+  },
+  btnQrText: { color: '#7c3aed', fontWeight: 'bold', fontSize: 13 },
+
+  // Bouton facture PDF par vente
+  btnPdfVente: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  btnPdfVenteText: { color: '#1a56db', fontSize: 10, fontWeight: '700' },
+
+  // Chips mode paiement (modal avance)
+  modeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
+  modeChipActive: { backgroundColor: '#0e9f6e', borderColor: '#0e9f6e' },
+  modeChipText: { fontSize: 12, color: '#555' },
+  modeChipTextActive: { color: '#fff', fontWeight: '600' },
+
+  // KPI historique avances
+  avanceKpiRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  avanceKpi: { flex: 1, borderRadius: 12, padding: 10, alignItems: 'center' },
+  avanceKpiLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  avanceKpiVal: { fontSize: 14, fontWeight: 'bold', marginTop: 4 },
+
   // Actions infos
   actionsRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   btnModifier: {
@@ -726,13 +1103,16 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#e2e8f0',
   },
   creditItemRegle: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  creditItemRetard: { backgroundColor: '#fef2f2', borderColor: '#fca5a5' },
   creditTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   creditNum: { flex: 1, fontWeight: '600', color: '#334155', fontSize: 13 },
   statutBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
   statutRegle: { backgroundColor: '#dcfce7' },
   statutEnCours: { backgroundColor: '#fef3c7' },
+  statutRetard: { backgroundColor: '#fee2e2' },
   statutText: { fontSize: 11, fontWeight: '600' },
   creditRestant: { color: '#dc2626', fontWeight: 'bold', fontSize: 13, marginTop: 4 },
+  creditEcheance: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
 
   // Progression
   progressWrap: { marginVertical: 6 },

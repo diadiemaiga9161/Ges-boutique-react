@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Animated, Image, StyleSheet } from 'react-native';
+import { useColors } from '../theme/colors';
 
 interface Props {
   ready?: boolean;
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function SplashLoadingScreen({ ready = false, onComplete }: Props) {
+  const colors = useColors();
   const dot1 = useRef(new Animated.Value(0.4)).current;
   const dot2 = useRef(new Animated.Value(0.4)).current;
   const dot3 = useRef(new Animated.Value(0.4)).current;
@@ -73,7 +75,7 @@ export default function SplashLoadingScreen({ ready = false, onComplete }: Props
   }, [animDone, ready]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.hero }]}>
       {/* Décors lumineux */}
       <View style={styles.glow1} />
       <View style={styles.glow2} />
@@ -106,7 +108,7 @@ export default function SplashLoadingScreen({ ready = false, onComplete }: Props
                   transform: [{ scale: dot.interpolate({ inputRange: [0.4, 1], outputRange: [0.6, 1.1] }) }],
                   backgroundColor: dot.interpolate({
                     inputRange: [0.4, 1],
-                    outputRange: ['rgba(255,255,255,0.4)', '#1a56db'],
+                    outputRange: ['rgba(255,255,255,0.4)', colors.primary],
                   }),
                 },
               ]}

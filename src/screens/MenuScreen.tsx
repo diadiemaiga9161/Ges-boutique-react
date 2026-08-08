@@ -4,6 +4,8 @@ import { Text, List, Divider, Avatar } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
+import { removeStoredToken } from '../services/api.service';
 
 const getMenuItems = (lang: string) => [
   { icon: 'home-outline', label: 'Accueil', screen: 'Home' },
@@ -26,6 +28,7 @@ const getMenuItems = (lang: string) => [
   { icon: 'translate', label: 'Langue', screen: 'Langue' },
   { icon: 'tag-multiple', label: 'Promotions', screen: 'Promotions' },
   { icon: 'robot', label: 'IA Boutique', screen: 'IA' },
+  { icon: 'chat-question', label: 'Assistant IA (chat)', screen: 'AssistantIA' },
   { icon: 'receipt-text-edit', label: tr('modele_facture', lang), screen: 'FactureDesign' },
   { icon: 'swap-horizontal-bold', label: tr('config_transferts', lang), screen: 'ConfigTransferts' },
   { icon: 'account-hard-hat', label: 'Employés', screen: 'Employes' },
@@ -33,9 +36,11 @@ const getMenuItems = (lang: string) => [
   { icon: 'bank', label: 'Comptes bancaires', screen: 'Comptes' },
   { icon: 'target', label: 'Objectifs fournisseurs', screen: 'ObjectifsFournisseur' },
   { icon: 'account-tie', label: 'Vendeurs', screen: 'Vendeurs' },
+  { icon: 'chart-bar', label: 'Historique vendeur', screen: 'HistoriqueVendeur' },
   { icon: 'cash-remove', label: 'Annulation paiements', screen: 'AnnulationPaiements' },
   { icon: 'help-circle', label: tr('aide_ressources', lang), screen: 'Resources' },
   { icon: 'store-settings', label: tr('parametres_boutique', lang), screen: 'BoutiqueSettings' },
+  { icon: 'cog-outline', label: 'Paramètres (données)', screen: 'Parametres', adminOnly: true },
   { icon: 'account', label: tr('mon_profil', lang), screen: 'Profil' },
 ];
 
@@ -43,6 +48,7 @@ export default function MenuScreen({ navigation, onLogout }: any) {
   const [user, setUser] = React.useState<any>(null);
   const [boutique, setBoutique] = React.useState<any>({});
   const { lang } = useLang();
+  const colors = useColors();
 
   React.useEffect(() => {
     AsyncStorage.getItem('user').then(raw => raw && setUser(JSON.parse(raw)));
@@ -54,18 +60,21 @@ export default function MenuScreen({ navigation, onLogout }: any) {
       { text: tr('annuler', lang) },
       { text: tr('oui', lang), onPress: async () => {
         await AsyncStorage.removeItem('user');
-        await AsyncStorage.removeItem('token');
+        await removeStoredToken();
         onLogout?.();
       }},
     ]);
   };
 
-  const menuItems = getMenuItems(lang);
+  const isAdmin = user?.role === 'ADMIN';
+  // Les entrées marquées adminOnly (ex: Paramètres — réinitialisation/suppression
+  // de données) ne sont visibles que pour les administrateurs.
+  const menuItems = getMenuItems(lang).filter(item => !item.adminOnly || isAdmin);
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header profil */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.hero }]}>
         <Avatar.Text size={56} label={(user?.nomComplet || user?.username || 'U')[0].toUpperCase()} />
         <View style={{ marginLeft: 16 }}>
           <Text variant="titleMedium" style={{ color: '#fff' }}>{user?.nomComplet || user?.username || 'Utilisateur'}</Text>
@@ -75,21 +84,22 @@ export default function MenuScreen({ navigation, onLogout }: any) {
       </View>
 
       {/* Navigation */}
-      <View style={styles.list}>
+      <View style={[styles.list, { backgroundColor: colors.card }]}>
         {menuItems.map((item, i) => (
           <React.Fragment key={item.screen}>
             <List.Item
               title={item.label}
-              left={props => <List.Icon {...props} icon={item.icon} />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
+              titleStyle={{ color: colors.text }}
+              left={props => <List.Icon {...props} icon={item.icon} color={colors.textSecondary} />}
+              right={props => <List.Icon {...props} icon="chevron-right" color={colors.textSecondary} />}
               onPress={() => navigation.navigate(item.screen)}
               style={styles.item}
             />
-            {i < menuItems.length - 1 && <Divider />}
+            {i < menuItems.length - 1 && <Divider style={{ backgroundColor: colors.border }} />}
           </React.Fragment>
         ))}
 
-        <Divider style={{ marginTop: 8 }} />
+        <Divider style={{ marginTop: 8, backgroundColor: colors.border }} />
         <List.Item
           title={tr('deconnexion', lang)}
           titleStyle={{ color: '#f44336' }}

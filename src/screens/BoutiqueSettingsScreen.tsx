@@ -44,6 +44,16 @@ export default function BoutiqueSettingsScreen() {
     await AsyncStorage.setItem('feat_conditionnement', String(v));
   };
 
+  // Comme reset() sur Ionic : purement local, aucun appel réseau — remet le
+  // formulaire aux valeurs par défaut de l'app (pas un reset serveur).
+  const DEFAULT_BOUTIQUE = { nom: 'Ma Boutique', devise: 'FCFA' };
+  const reinitialiser = () => {
+    Alert.alert('Réinitialiser les paramètres ?', 'Le formulaire reviendra aux valeurs par défaut (non enregistré tant que vous n\'appuyez pas sur Enregistrer).', [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: 'Réinitialiser', style: 'destructive', onPress: () => setForm(DEFAULT_BOUTIQUE) },
+    ]);
+  };
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
 
   return (
@@ -56,7 +66,13 @@ export default function BoutiqueSettingsScreen() {
       <TextInput label={tr('email', lang)} value={form.email || ''} onChangeText={t => setForm({ ...form, email: t })} mode="outlined" style={styles.input} />
       <TextInput label={tr('adresse', lang)} value={form.adresse || ''} onChangeText={t => setForm({ ...form, adresse: t })} mode="outlined" style={styles.input} />
       <TextInput label={tr('ville', lang)} value={form.ville || ''} onChangeText={t => setForm({ ...form, ville: t })} mode="outlined" style={styles.input} />
+      <TextInput label="Pays" value={form.pays || ''} onChangeText={t => setForm({ ...form, pays: t })} mode="outlined" style={styles.input} />
       <TextInput label={tr('devise', lang)} value={form.devise || 'FCFA'} onChangeText={t => setForm({ ...form, devise: t })} mode="outlined" style={styles.input} />
+
+      <Text variant="titleMedium" style={styles.section}>Informations légales</Text>
+      <TextInput label="Numéro RC (Registre du commerce)" value={form.numeroRc || ''} onChangeText={t => setForm({ ...form, numeroRc: t })} mode="outlined" style={styles.input} />
+      <TextInput label="Numéro IFU (Identifiant fiscal)" value={form.numeroIfu || ''} onChangeText={t => setForm({ ...form, numeroIfu: t })} mode="outlined" style={styles.input} />
+      <TextInput label="Description" value={form.description || ''} onChangeText={t => setForm({ ...form, description: t })} mode="outlined" multiline numberOfLines={3} style={styles.input} />
 
       <Text variant="titleMedium" style={styles.section}>Fonctionnalités</Text>
       <View style={styles.switchRow}>
@@ -66,6 +82,9 @@ export default function BoutiqueSettingsScreen() {
 
       <Button mode="contained" onPress={sauvegarder} loading={saving} style={styles.btn}>
         {tr('enregistrer', lang)}
+      </Button>
+      <Button mode="outlined" onPress={reinitialiser} style={[styles.btn, { borderColor: '#94a3b8' }]} textColor="#64748b">
+        Réinitialiser
       </Button>
     </ScrollView>
   );

@@ -4,7 +4,6 @@ import { Text, Button, ActivityIndicator, Modal, Portal, Divider, Checkbox, Card
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import {
@@ -158,8 +157,6 @@ export default function CommandesScreen() {
   const charger = async (event?: any) => {
     setLoading(true);
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const r: any = await getCommandes();
       const data: Commande[] = r.data || [];
       setCommandes(data);

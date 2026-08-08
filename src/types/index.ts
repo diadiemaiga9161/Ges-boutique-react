@@ -32,9 +32,27 @@ export interface Produit {
   prixVente: number;
   quantite: number;
   seuilAlerte?: number;
-  categorie?: string;
+  // Le backend renvoie un objet ({id, nom, description, dateCreation}), pas une
+  // simple chaîne — ne jamais l'afficher directement (`{produit.categorie}`),
+  // toujours passer par `.nom`.
+  categorie?: { id: number; nom: string; description?: string } | null;
+  categorieId?: number;
+  fournisseur?: { id: number; nom: string } | null;
+  fournisseurId?: number;
   imageUrl?: string;
-  codeBarres?: string;
+  codeBarre?: string;
+  datePeremption?: string;
+  bio?: boolean;
+  typeVente?: string;
+  stockFaible?: boolean;
+  perime?: boolean;
+  prochePeremption?: boolean;
+}
+
+export interface Categorie {
+  id: number;
+  nom: string;
+  description?: string;
 }
 
 export interface LigneVenteRequest {

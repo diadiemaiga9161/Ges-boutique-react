@@ -3,7 +3,6 @@ import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, ScrollVie
 import { Text, Card, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getSorties } from '../services/api.service';
 import { sauvegarderCache, lireCache } from '../services/offline.service';
@@ -76,8 +75,6 @@ export default function SortiesScreen() {
   const charger = useCallback(async (periode: Periode = selectedPeriod) => {
     setLoading(true);
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const params = getPeriodeDates(periode);
       const res: any = await getSorties(params);
       const data: SortieStock[] = res.data?.data || res.data || [];

@@ -5,8 +5,7 @@ import {
 } from 'react-native';
 import { Text, Card, Chip, ActivityIndicator, FAB, Searchbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
-import api, { getBoutiques, getProduits, createTransfert } from '../services/api.service';
+import api, { getBoutiques, getProduits, createTransfert, getTransfertsEnvoyes, getTransfertsRecus, accepterTransfert, rejeterTransfert } from '../services/api.service';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -16,6 +15,14 @@ const TYPES_PAIEMENT = [
   { value: 'IMMEDIAT', label: 'Paiement immédiat' },
   { value: 'CREDIT', label: 'Crédit' },
 ] as const;
+
+const MODES_PAIEMENT = [
+  { v: 'ESPECES', l: 'Espèces' },
+  { v: 'ORANGE_MONEY', l: 'Orange Money' },
+  { v: 'MOOV_MONEY', l: 'Moov Money' },
+  { v: 'WAVE_MONEY', l: 'Wave Money' },
+  { v: 'VIREMENT', l: 'Virement' },
+];
 
 type TypePaiement = typeof TYPES_PAIEMENT[number]['value'];
 
@@ -40,12 +47,35 @@ export default function TransfertsScreen() {
   const [typePaiement, setTypePaiement] = useState<TypePaiement>('SANS_PAIEMENT');
   const [searchProduit, setSearchProduit] = useState('');
   const [etape, setEtape] = useState<'src' | 'dest' | 'produit' | 'confirm'>('src');
+  const [onglet, setOnglet] = useState<'tous' | 'envoyes' | 'recus'>('tous');
+  const [transfertsEnvoyes, setTransfertsEnvoyes] = useState<any[]>([]);
+  const [transfertsRecus, setTransfertsRecus] = useState<any[]>([]);
+  const [nbEnAttente, setNbEnAttente] = useState(0);
+
+  // ── Modal accusé de réception ──
+  const [transfertsEnAttente, setTransfertsEnAttente] = useState<any[]>([]);
+  const [transfertEnCours, setTransfertEnCours] = useState<any>(null);
+  const [showAccuseModal, setShowAccuseModal] = useState(false);
+  const [showMotifRejet, setShowMotifRejet] = useState(false);
+  const [motifRejet, setMotifRejet] = useState('');
+  const [actionEnCours, setActionEnCours] = useState(false);
+
+  // ── Produits boutique dest ──
+  const [produitsBoutiqueDest, setProduitsBoutiqueDest] = useState<any[]>([]);
+  const [loadingProduitsDest, setLoadingProduitsDest] = useState(false);
+
+  // ── Modal détail transfert ──
+  const [detailTransfert, setDetailTransfert] = useState<any>(null);
+  const [paiements, setPaiements] = useState<any[]>([]);
+  const [loadingPaiements, setLoadingPaiements] = useState(false);
+  const [showPaiementForm, setShowPaiementForm] = useState(false);
+  const [montantPaiement, setMontantPaiement] = useState('');
+  const [modePaiement, setModePaiement] = useState('ESPECES');
+  const [notesPaiement, setNotesPaiement] = useState('');
 
   const charger = async (event?: any) => {
     setLoading(true);
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/transferts');
       const data = res.data?.data || res.data || [];
       setTransferts(data);
@@ -61,7 +91,124 @@ export default function TransfertsScreen() {
     if (event?.target?.complete) event.target.complete();
   };
 
-  useEffect(() => { charger(); }, []);
+  const chargerOnglets = async () => {
+    try {
+      const [rEnv, rRec] = await Promise.all([
+        getTransfertsEnvoyes().catch(() => ({ data: [] })),
+        getTransfertsRecus().catch(() => ({ data: [] })),
+      ]);
+      const envoyes = rEnv.data?.data || rEnv.data || [];
+      const recus = rRec.data?.data || rRec.data || [];
+      setTransfertsEnvoyes(envoyes);
+      setTransfertsRecus(recus);
+      setNbEnAttente(recus.filter((t: any) =>
+        t.statut === 'EN_ATTENTE_CONFIRMATION' || t.statut === 'EN_ATTENTE'
+      ).length);
+    } catch {}
+  };
+
+  useEffect(() => { charger(); chargerOnglets(); verifierTransfertsEnAttente(); }, []);
+
+  const handleAccepter = (t: any) => {
+    Alert.alert(
+      'Accepter ce transfert ?',
+      'Les produits seront ajoutés à votre stock.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Accepter',
+          onPress: async () => {
+            try {
+              await accepterTransfert(t.id);
+              charger();
+              chargerOnglets();
+              Alert.alert('Succès', 'Transfert accepté, stock mis à jour.');
+            } catch (e: any) {
+              Alert.alert('Erreur', e?.response?.data?.message || 'Erreur');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleRejeter = (t: any) => {
+    Alert.alert(
+      'Rejeter ce transfert ?',
+      'Le transfert sera marqué comme rejeté.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Rejeter',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await rejeterTransfert(t.id);
+              charger();
+              chargerOnglets();
+            } catch (e: any) {
+              Alert.alert('Erreur', e?.response?.data?.message || 'Erreur');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const verifierTransfertsEnAttente = async () => {
+    try {
+      const rRec = await getTransfertsRecus().catch(() => ({ data: [] }));
+      const recus: any[] = rRec.data?.data || rRec.data || [];
+      const enAttente = recus.filter((t: any) =>
+        t.statut === 'EN_ATTENTE_CONFIRMATION' || t.statut === 'EN_ATTENTE' || t.statut === 'CREE'
+      );
+      setTransfertsEnAttente(enAttente);
+      if (enAttente.length > 0) {
+        setTransfertEnCours(enAttente[0]);
+        setShowAccuseModal(true);
+      }
+    } catch { }
+  };
+
+  const accepterTransfertModal = async (id: number) => {
+    setActionEnCours(true);
+    try {
+      await accepterTransfert(id);
+      setShowAccuseModal(false);
+      setActionEnCours(false);
+      Alert.alert('Succès', 'Transfert accepté, stock mis à jour.');
+      charger();
+      chargerOnglets();
+    } catch (e: any) {
+      setActionEnCours(false);
+      Alert.alert('Erreur', e?.response?.data?.message || 'Erreur');
+    }
+  };
+
+  const confirmerRejet = async () => {
+    if (!transfertEnCours) return;
+    setActionEnCours(true);
+    try {
+      await rejeterTransfert(transfertEnCours.id, motifRejet.trim() || undefined);
+      setShowAccuseModal(false);
+      setShowMotifRejet(false);
+      setMotifRejet('');
+      setActionEnCours(false);
+      charger();
+      chargerOnglets();
+    } catch (e: any) {
+      setActionEnCours(false);
+      Alert.alert('Erreur', e?.response?.data?.message || 'Erreur');
+    }
+  };
+
+  const statutColor = (statut: string) => {
+    const map: Record<string, string> = {
+      CREE: '#3b82f6', EN_ATTENTE_CONFIRMATION: '#f59e0b', EN_ATTENTE: '#f59e0b',
+      CONFIRME: '#10b981', ACCEPTE: '#10b981', REJETE: '#ef4444', COMPLETE: '#8b5cf6', ANNULE: '#6b7280'
+    };
+    return map[statut] || '#6b7280';
+  };
 
   const ouvrirCreate = async () => {
     setBoutiqueSrc(null);
@@ -125,6 +272,52 @@ export default function TransfertsScreen() {
     return '#ef4444';
   };
 
+  const chargerProduitsBoutiqueDest = async (partenaire: any) => {
+    if (!partenaire?.id) return;
+    setLoadingProduitsDest(true);
+    try {
+      const res = await api.get(`/transferts/partenaires/${partenaire.id}/produits`);
+      setProduitsBoutiqueDest(res.data?.data || res.data || []);
+    } catch {
+      setProduitsBoutiqueDest([]);
+    }
+    setLoadingProduitsDest(false);
+  };
+
+  const voirDetail = async (t: any) => {
+    setDetailTransfert(t);
+    setPaiements([]);
+    setShowPaiementForm(false);
+    setMontantPaiement('');
+    setNotesPaiement('');
+    setModePaiement('ESPECES');
+    setLoadingPaiements(true);
+    try {
+      const res = await api.get(`/transferts/${t.id}/paiements`);
+      setPaiements(res.data?.data || res.data || []);
+    } catch { setPaiements([]); }
+    setLoadingPaiements(false);
+  };
+
+  const enregistrerPaiement = async () => {
+    if (!detailTransfert || !montantPaiement) return;
+    try {
+      await api.post(`/transferts/${detailTransfert.id}/paiements`, {
+        montant: parseFloat(montantPaiement),
+        modePaiement,
+        notes: notesPaiement.trim() || undefined,
+      });
+      setMontantPaiement('');
+      setNotesPaiement('');
+      setShowPaiementForm(false);
+      const res = await api.get(`/transferts/${detailTransfert.id}/paiements`);
+      setPaiements(res.data?.data || res.data || []);
+      Alert.alert('Succès', 'Paiement enregistré');
+    } catch (e: any) {
+      Alert.alert('Erreur', e?.response?.data?.message || 'Erreur');
+    }
+  };
+
   const montantTotal = transferts.reduce((sum, t) => sum + (t.montant || t.montantTotal || 0), 0);
 
   const filtered = transferts.filter(t =>
@@ -169,13 +362,42 @@ export default function TransfertsScreen() {
         inputStyle={{ fontSize: 13 }}
       />
 
+      {/* Sélecteur onglet */}
+      <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 4 }}>
+        {(['tous', 'envoyes', 'recus'] as const).map(o => (
+          <TouchableOpacity
+            key={o}
+            onPress={() => { setOnglet(o); if (o !== 'tous') chargerOnglets(); }}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 6,
+              borderRadius: 16,
+              backgroundColor: onglet === o ? '#4f46e5' : '#e5e7eb',
+              position: 'relative'
+            }}
+          >
+            <Text style={{ color: onglet === o ? '#fff' : '#374151', fontSize: 12 }}>
+              {o === 'tous' ? 'Tous' : o === 'envoyes' ? 'Envoyés' : 'Reçus'}
+            </Text>
+            {o === 'recus' && nbEnAttente > 0 && (
+              <View style={{
+                position: 'absolute', top: -4, right: -4,
+                backgroundColor: '#f59e0b', borderRadius: 8,
+                minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center'
+              }}>
+                <Text style={{ color: '#fff', fontSize: 9 }}>{nbEnAttente}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+
       <FlatList
-        data={filtered}
+        data={onglet === 'envoyes' ? transfertsEnvoyes : onglet === 'recus' ? transfertsRecus : filtered}
         keyExtractor={t => String(t.id)}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); charger(); }}
+            onRefresh={() => { setRefreshing(true); charger(); chargerOnglets(); }}
           />
         }
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 90, paddingTop: 8 }}
@@ -192,18 +414,39 @@ export default function TransfertsScreen() {
                 <Text style={styles.cardSub}>{item.produitNom} — {item.quantite} unité(s)</Text>
               </View>
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                <Chip compact style={{ backgroundColor: couleurStatut(item.statut) }}>
+                <Chip compact style={{ backgroundColor: statutColor(item.statut) }}>
                   <Text style={{ color: '#fff', fontSize: 10 }}>
-                    {item.statut?.replace('_', ' ')}
+                    {item.statut?.replace(/_/g, ' ')}
                   </Text>
                 </Chip>
-                <Text style={styles.cardDate}>
-                  {item.dateTransfert
-                    ? new Date(item.dateTransfert).toLocaleDateString('fr-FR')
-                    : ''}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.cardDate}>
+                    {item.dateTransfert
+                      ? new Date(item.dateTransfert).toLocaleDateString('fr-FR')
+                      : ''}
+                  </Text>
+                  <TouchableOpacity onPress={() => voirDetail(item)} style={{ padding: 4 }}>
+                    <MaterialCommunityIcons name="eye-outline" size={18} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
               </View>
             </Card.Content>
+            {onglet === 'recus' && (item.statut === 'EN_ATTENTE_CONFIRMATION' || item.statut === 'EN_ATTENTE') && (
+              <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
+                <TouchableOpacity
+                  onPress={() => handleAccepter(item)}
+                  style={{ flex: 1, backgroundColor: '#10b981', padding: 8, borderRadius: 8, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12 }}>Accepter</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleRejeter(item)}
+                  style={{ flex: 1, backgroundColor: '#ef4444', padding: 8, borderRadius: 8, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12 }}>Rejeter</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </Card>
         )}
         ListEmptyComponent={
@@ -220,6 +463,206 @@ export default function TransfertsScreen() {
         style={styles.fab}
         onPress={ouvrirCreate}
       />
+
+      {/* ── Modal détail transfert ── */}
+      <Modal visible={!!detailTransfert} animationType="slide" onRequestClose={() => setDetailTransfert(null)}>
+        <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+          <View style={[styles.modalHeader, { flexDirection: 'row', justifyContent: 'space-between' }]}>
+            <Text style={styles.modalTitle}>Détail du transfert</Text>
+            <TouchableOpacity onPress={() => setDetailTransfert(null)}>
+              <Text style={styles.modalClose}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+            {detailTransfert && (
+              <>
+                {/* Infos générales */}
+                <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  {([
+                    ['N°', detailTransfert.numeroTransfert],
+                    ['Source', detailTransfert.boutiqueSourceNom || detailTransfert.boutiqueSrcNom],
+                    ['Destination', detailTransfert.boutiqueDestNom],
+                    ['Statut', detailTransfert.statut?.replace(/_/g, ' ')],
+                    ['Paiement', detailTransfert.typePaiement],
+                    ['Notes', detailTransfert.notes || '—'],
+                  ] as [string, string][]).map(([label, val]) => (
+                    <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                      <Text style={{ color: '#64748b', fontSize: 13 }}>{label}</Text>
+                      <Text style={{ fontWeight: '600', fontSize: 13, color: '#0f172a', flex: 1, textAlign: 'right' }}>{val}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Lignes produits */}
+                {(detailTransfert.lignes || []).length > 0 && (
+                  <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                    <Text style={{ fontWeight: '700', marginBottom: 8, color: '#0f172a' }}>Produits</Text>
+                    {(detailTransfert.lignes || []).map((l: any, i: number) => (
+                      <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                        <Text style={{ fontSize: 13, color: '#0f172a' }}>{l.produitNom}</Text>
+                        <Text style={{ fontSize: 13, color: '#1a56db', fontWeight: '600' }}>{l.quantite} unités</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Paiements inter-boutiques */}
+                <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Text style={{ fontWeight: '700', color: '#0f172a', flex: 1 }}>Paiements inter-boutiques</Text>
+                    <TouchableOpacity
+                      onPress={() => setShowPaiementForm(!showPaiementForm)}
+                      style={{ backgroundColor: '#f0fdf4', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}
+                    >
+                      <Text style={{ color: '#16a34a', fontSize: 12, fontWeight: '600' }}>+ Ajouter</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {showPaiementForm && (
+                    <View style={{ backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                      <TextInput
+                        style={styles.input}
+                        value={montantPaiement}
+                        onChangeText={setMontantPaiement}
+                        placeholder="Montant"
+                        keyboardType="numeric"
+                        placeholderTextColor="#94a3b8"
+                      />
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                        {MODES_PAIEMENT.map(m => (
+                          <TouchableOpacity
+                            key={m.v}
+                            onPress={() => setModePaiement(m.v)}
+                            style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, backgroundColor: modePaiement === m.v ? '#1a56db' : '#e2e8f0' }}
+                          >
+                            <Text style={{ fontSize: 11, color: modePaiement === m.v ? '#fff' : '#374151' }}>{m.l}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      <TextInput
+                        style={styles.input}
+                        value={notesPaiement}
+                        onChangeText={setNotesPaiement}
+                        placeholder="Notes (optionnel)"
+                        placeholderTextColor="#94a3b8"
+                      />
+                      <TouchableOpacity onPress={enregistrerPaiement} style={styles.saveBtn}>
+                        <Text style={styles.saveBtnTxt}>Enregistrer le paiement</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {loadingPaiements ? (
+                    <ActivityIndicator color="#1a56db" />
+                  ) : paiements.length > 0 ? (
+                    paiements.map((p: any) => (
+                      <View key={p.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#0f172a' }}>{p.modePaiement?.replace(/_/g, ' ')}</Text>
+                          <Text style={{ fontSize: 11, color: '#64748b' }}>{p.notes || ''} {p.enregistrePar || ''}</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#16a34a' }}>{(p.montant || 0).toLocaleString('fr-FR')} F</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', paddingVertical: 8 }}>Aucun paiement enregistré</Text>
+                  )}
+                </View>
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* ── Modal accusé de réception transfert entrant ── */}
+      <Modal visible={showAccuseModal} animationType="slide" transparent onRequestClose={() => {}}>
+        <View style={accuseStyles.overlay}>
+          <View style={accuseStyles.card}>
+            <View style={accuseStyles.header}>
+              <Text style={accuseStyles.icon}>📦</Text>
+              <Text style={accuseStyles.titre}>Transfert reçu !</Text>
+              <Text style={accuseStyles.soustitre}>
+                De {transfertEnCours?.boutiqueSrcNom || transfertEnCours?.boutiqueSourceNom || 'Boutique partenaire'}
+              </Text>
+            </View>
+
+            <ScrollView style={accuseStyles.body} showsVerticalScrollIndicator={false}>
+              {transfertEnCours?.dateTransfert && (
+                <View style={accuseStyles.infoRow}>
+                  <Text style={accuseStyles.infoLabel}>Date</Text>
+                  <Text style={accuseStyles.infoValue}>
+                    {new Date(transfertEnCours.dateTransfert).toLocaleDateString('fr-FR')}
+                  </Text>
+                </View>
+              )}
+              {transfertEnCours?.notes && (
+                <View style={accuseStyles.infoRow}>
+                  <Text style={accuseStyles.infoLabel}>Notes</Text>
+                  <Text style={accuseStyles.infoValue}>{transfertEnCours.notes}</Text>
+                </View>
+              )}
+              <Text style={accuseStyles.sectionTitre}>Produits envoyés :</Text>
+              {(transfertEnCours?.lignes && transfertEnCours.lignes.length > 0)
+                ? transfertEnCours.lignes.map((ligne: any, idx: number) => (
+                  <View key={idx} style={accuseStyles.produit}>
+                    <Text style={accuseStyles.produitNom}>{ligne.produitNom}</Text>
+                    <View style={accuseStyles.produitBadge}>
+                      <Text style={accuseStyles.produitQte}>x {ligne.quantite}</Text>
+                    </View>
+                  </View>
+                ))
+                : transfertEnCours?.produitNom ? (
+                  <View style={accuseStyles.produit}>
+                    <Text style={accuseStyles.produitNom}>{transfertEnCours.produitNom}</Text>
+                    <View style={accuseStyles.produitBadge}>
+                      <Text style={accuseStyles.produitQte}>x {transfertEnCours.quantite}</Text>
+                    </View>
+                  </View>
+                ) : null
+              }
+              {showMotifRejet && (
+                <TextInput
+                  placeholder="Motif du rejet (optionnel)"
+                  value={motifRejet}
+                  onChangeText={setMotifRejet}
+                  style={accuseStyles.motifInput}
+                  multiline
+                  numberOfLines={3}
+                  placeholderTextColor="#94a3b8"
+                />
+              )}
+            </ScrollView>
+
+            <View style={accuseStyles.actions}>
+              {!showMotifRejet && (
+                <TouchableOpacity
+                  style={[accuseStyles.btnAccepter, actionEnCours && accuseStyles.btnDisabled]}
+                  onPress={() => accepterTransfertModal(transfertEnCours?.id)}
+                  disabled={actionEnCours}>
+                  <Text style={accuseStyles.btnTexte}>
+                    {actionEnCours ? '...' : 'Accepter'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[accuseStyles.btnRejeter, actionEnCours && accuseStyles.btnDisabled]}
+                onPress={() => showMotifRejet ? confirmerRejet() : setShowMotifRejet(true)}
+                disabled={actionEnCours}>
+                <Text style={accuseStyles.btnTexte}>
+                  {showMotifRejet ? 'Confirmer rejet' : 'Rejeter'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {showMotifRejet && (
+              <TouchableOpacity
+                onPress={() => setShowMotifRejet(false)}
+                style={{ padding: 12, alignItems: 'center' }}>
+                <Text style={{ color: '#6b7280', fontSize: 13 }}>Annuler</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Modal création transfert ── */}
       <Modal visible={showCreate} animationType="slide" onRequestClose={() => setShowCreate(false)}>
@@ -286,7 +729,7 @@ export default function TransfertsScreen() {
                 <TouchableOpacity
                   key={b.id}
                   style={[styles.boutiqueItem, boutiqueDest?.id === b.id && styles.boutiqueItemSelected]}
-                  onPress={() => { setBoutiqueDest(b); setEtape('produit'); }}
+                  onPress={() => { setBoutiqueDest(b); chargerProduitsBoutiqueDest(b); setEtape('produit'); }}
                 >
                   <MaterialCommunityIcons name="store" size={20} color={boutiqueDest?.id === b.id ? '#fff' : '#1a56db'} />
                   <Text style={[styles.boutiqueNom, boutiqueDest?.id === b.id && { color: '#fff' }]}>{b.nom}</Text>
@@ -307,6 +750,33 @@ export default function TransfertsScreen() {
                 <MaterialCommunityIcons name="bank-transfer" size={16} color="#0e9f6e" />
                 <Text style={styles.recapTxt}>{boutiqueSrc?.nom} → {boutiqueDest?.nom}</Text>
               </View>
+              {/* Stock boutique destinataire */}
+              {boutiqueDest && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={[styles.stepLabel, { color: '#0891b2' }]}>
+                    Stock actuel chez {boutiqueDest.nom} :
+                  </Text>
+                  {loadingProduitsDest ? (
+                    <ActivityIndicator color="#0891b2" />
+                  ) : produitsBoutiqueDest.length > 0 ? (
+                    <View style={{ backgroundColor: '#f0f9ff', borderRadius: 10, padding: 8, borderWidth: 1, borderColor: '#bae6fd' }}>
+                      {produitsBoutiqueDest.map((p: any) => (
+                        <View key={p.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#e0f2fe' }}>
+                          <Text style={{ fontSize: 13, color: '#0c4a6e', flex: 1 }}>{p.nom}</Text>
+                          <Text style={{ fontSize: 13, color: '#0891b2', fontWeight: '600' }}>
+                            Stock: {p.quantite ?? p.stock ?? 0}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>
+                      Connexion impossible ou boutique vide
+                    </Text>
+                  )}
+                </View>
+              )}
+
               <Text style={styles.stepLabel}>Rechercher un produit :</Text>
               <TextInput
                 style={styles.searchInput}
@@ -506,4 +976,85 @@ const styles = StyleSheet.create({
   typePaiementBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
   typePaiementBtnText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   typePaiementBtnTextActive: { color: '#fff' },
+});
+
+const accuseStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    width: '100%',
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  header: {
+    backgroundColor: '#1a56db',
+    padding: 24,
+    alignItems: 'center',
+  },
+  icon: { fontSize: 44, marginBottom: 8 },
+  titre: { fontSize: 18, fontWeight: '700', color: '#fff', textAlign: 'center' },
+  soustitre: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
+  body: { padding: 16, maxHeight: 300 },
+  infoRow: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  infoLabel: { fontSize: 11, color: '#6b7280', fontWeight: '600', textTransform: 'uppercase' },
+  infoValue: { fontSize: 13, color: '#111827', marginTop: 2 },
+  sectionTitre: { fontWeight: '700', fontSize: 13, marginBottom: 8, color: '#374151' },
+  produit: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#f0f4ff',
+    borderRadius: 10,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#1a56db',
+  },
+  produitNom: { fontWeight: '600', fontSize: 13, color: '#1e40af', flex: 1 },
+  produitBadge: {
+    backgroundColor: '#1a56db',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+  },
+  produitQte: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  actions: { flexDirection: 'row', padding: 12, gap: 10 },
+  btnAccepter: {
+    flex: 1,
+    backgroundColor: '#059669',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+  },
+  btnRejeter: {
+    flex: 1,
+    backgroundColor: '#dc2626',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+  },
+  btnTexte: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  btnDisabled: { opacity: 0.6 },
+  motifInput: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 8,
+    minHeight: 60,
+    textAlignVertical: 'top',
+    color: '#374151',
+  },
 });

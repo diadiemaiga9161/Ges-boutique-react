@@ -22,7 +22,36 @@ import {
   saveClientPending, getClientsPending, marquerClientPendingSynced,
   saveCommandePending, getCommandesPending, marquerCommandePendingSynced,
   saveOperation, getOperationsPending, markOperationSynced, incrementOperationAttempts, countOperationsPending,
+  marquerOperationEchecNotifie, getOperationsEchecDefinitif, countOperationsEchecDefinitif,
 } from '../db/database';
+import { showToast } from './toast.service';
+
+// Libellés lisibles pour les types d'opérations de la file générique —
+// utilisés dans les notifications d'échec définitif (point utilisateur).
+const LABELS_OPERATION: Record<string, string> = {
+  fournisseur_create: 'Création fournisseur', fournisseur_update: 'Modification fournisseur',
+  achat_fournisseur: 'Achat fournisseur', paiement_fournisseur: 'Paiement fournisseur',
+  bonus_fournisseur: 'Bonus fournisseur',
+  mouvement_entree: 'Entrée stock', mouvement_sortie: 'Sortie stock', mouvement_ajustement: 'Ajustement stock',
+  caisse_ouvrir: 'Ouverture caisse', caisse_fermer: 'Fermeture caisse',
+  caisse_entree: 'Entrée caisse', caisse_sortie: 'Sortie caisse',
+  credit_reglement: 'Règlement crédit', credit_commande_payer: 'Paiement crédit commande',
+  depot_create: 'Dépôt garde', depot_retrait: 'Retrait dépôt garde',
+  transfert_create: 'Transfert', promotion_create: 'Création promotion', promotion_update: 'Modification promotion',
+  commande_valider: 'Validation commande', commande_annuler: 'Annulation commande',
+  employe_create: 'Création employé', employe_update: 'Modification employé',
+  employe_toggle: 'Statut employé', employe_delete: 'Suppression employé',
+  paiement_employe: 'Paiement employé',
+  dette_create: 'Dette ancienne', dette_delete: 'Suppression dette', dette_reglement: 'Règlement dette',
+  compte_create: 'Création compte', compte_update: 'Modification compte', compte_delete: 'Suppression compte',
+  compte_versement: 'Versement compte', compte_retrait: 'Retrait compte',
+  objectif_create: 'Création objectif', objectif_delete: 'Suppression objectif',
+  vendeur_create: 'Création vendeur', vendeur_update: 'Modification vendeur', vendeur_toggle: 'Statut vendeur',
+};
+
+function libelleOperation(type: string): string {
+  return LABELS_OPERATION[type] || type;
+}
 
 let syncInProgress = false;
 
@@ -32,21 +61,27 @@ export function genererLocalId(): string {
 
 // ─── Ventes ─────────────────────────────────────────────────────────────────
 
-export async function enregistrerVente(vente: any): Promise<{ success: boolean; offline: boolean }> {
+export async function enregistrerVente(vente: any): Promise<{ success: boolean; offline: boolean; error?: string }> {
   const state = await NetInfo.fetch();
-  if (state.isConnected) {
-    try {
-      await createVente(vente);
-      return { success: true, offline: false };
-    } catch {
+  if (!state.isConnected) {
+    const localId = genererLocalId();
+    await saveVentePending(localId, vente);
+    return { success: true, offline: true };
+  }
+  try {
+    await createVente(vente);
+    return { success: true, offline: false };
+  } catch (e: any) {
+    // Pas de statut HTTP exploitable = le serveur n'a jamais répondu (coupure, timeout) :
+    // à ne jamais confondre avec une vraie erreur métier (stock, validation...), sous
+    // peine de perdre le message d'erreur réel ou, à l'inverse, de mettre en file une
+    // vente invalide qui échouera indéfiniment à la synchronisation.
+    if (!e?.response?.status) {
       const localId = genererLocalId();
       await saveVentePending(localId, vente);
       return { success: true, offline: true };
     }
-  } else {
-    const localId = genererLocalId();
-    await saveVentePending(localId, vente);
-    return { success: true, offline: true };
+    return { success: false, offline: false, error: e.response?.data?.message || "Erreur lors de l'enregistrement de la vente" };
   }
 }
 
@@ -347,8 +382,17 @@ export async function syncOperationsPending(): Promise<number> {
   if (!net.isConnected) return 0;
   let synced = 0;
   const pending = await getOperationsPending();
+  const echecsAnnoncer: { type: string }[] = [];
   for (const op of pending) {
-    if (op.attempts >= 5) continue; // Abandon après 5 tentatives
+    if (op.attempts >= 5) {
+      // Abandon après 5 tentatives — ne JAMAIS échouer silencieusement :
+      // on notifie une seule fois l'utilisateur (skill offline-first).
+      if (!op.notifiedFailure) {
+        echecsAnnoncer.push({ type: op.type });
+        await marquerOperationEchecNotifie(op.id);
+      }
+      continue;
+    }
     try {
       await executerOperation(op.type, op.payload);
       await markOperationSynced(op.id);
@@ -357,11 +401,30 @@ export async function syncOperationsPending(): Promise<number> {
       await incrementOperationAttempts(op.id, String(e));
     }
   }
+  if (echecsAnnoncer.length > 0) {
+    const detail = echecsAnnoncer.map(e => libelleOperation(e.type)).join(', ');
+    const msg = echecsAnnoncer.length === 1
+      ? `Une opération n'a pas pu être synchronisée après plusieurs tentatives (${detail}). Elle reste enregistrée localement — contactez le support si besoin.`
+      : `${echecsAnnoncer.length} opérations n'ont pas pu être synchronisées après plusieurs tentatives (${detail}). Elles restent enregistrées localement — contactez le support si besoin.`;
+    showToast(msg, 'error');
+  }
   return synced;
 }
 
 export async function getNombreOperationsPending(): Promise<number> {
   return countOperationsPending();
+}
+
+// ─── Opérations bloquées (échec définitif) ──────────────────────────────────
+// Permet à un écran (ex: Home, Notifications) d'afficher ce qui n'a jamais
+// pu être synchronisé — jamais de perte silencieuse.
+export async function getNombreOperationsBloquees(): Promise<number> {
+  return countOperationsEchecDefinitif();
+}
+
+export async function getOperationsBloquees(): Promise<{ id: string; type: string; libelle: string; attempts: number; lastError?: string | null }[]> {
+  const rows = await getOperationsEchecDefinitif();
+  return rows.map(r => ({ ...r, libelle: libelleOperation(r.type) }));
 }
 
 // ─── Cache générique AsyncStorage ───────────────────────────────────────────

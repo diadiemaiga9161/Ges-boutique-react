@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types';
-import { clearAuthToken } from '../services/api.service';
+import { clearAuthToken, getStoredToken, setStoredToken, removeStoredToken } from '../services/api.service';
 
 function decodeJwt(token: string): any {
   try {
@@ -25,27 +25,30 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    AsyncStorage.multiGet(['user', 'token']).then(([[, rawUser], [, token]]) => {
+    (async () => {
+      const rawUser = await AsyncStorage.getItem('user');
+      const token = await getStoredToken();
       if (rawUser && isTokenValid(token)) {
         setUser(JSON.parse(rawUser));
       } else if (rawUser && !isTokenValid(token)) {
         // Token expiré : nettoyer
-        AsyncStorage.multiRemove(['user', 'token']);
+        await AsyncStorage.removeItem('user');
+        await removeStoredToken();
       }
       setLoading(false);
-    });
+    })();
   }, []);
 
   const saveUser = async (u: User) => {
     await AsyncStorage.setItem('user', JSON.stringify(u));
-    await AsyncStorage.setItem('token', u.token);
+    await setStoredToken(u.token);
     setUser(u);
   };
 
   const logout = async () => {
     clearAuthToken();
     await AsyncStorage.removeItem('user');
-    await AsyncStorage.removeItem('token');
+    await removeStoredToken();
     setUser(null);
   };
 

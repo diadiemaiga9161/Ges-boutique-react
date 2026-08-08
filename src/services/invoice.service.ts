@@ -113,6 +113,15 @@ export function buildInvoiceHtml(inv: InvoiceData, shop: ShopInfo, design: Desig
     <tr class="subtotal-row"><td colspan="4" class="td-right" style="color:#d97706">Reste à payer</td><td class="td-right" style="color:#d97706;font-weight:800">${formatPrice(inv.montantRestant || 0)}</td></tr>
     ` : ''}`;
 
+  const qrInfo = encodeURIComponent(
+    `FACTURE ${inv.numero}\nDate: ${formatDate(inv.date)}\nClient: ${inv.clientNom || 'Client divers'}\nTotal: ${formatPrice(totalFinal)}`
+  );
+  const qrBlock = `<div style="margin-top:10px;text-align:center">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${qrInfo}"
+         width="72" height="72" style="border-radius:6px;background:#fff;padding:3px" alt="QR" onerror="this.style.display='none'">
+    <p style="font-size:9px;margin-top:2px;opacity:.65">Scanner pour vérifier</p>
+  </div>`;
+
   // Couleurs selon design
   const acc      = design === 2 ? '#f59e0b' : design === 3 ? '#18181b' : '#1a56db';
   const accLight = design === 2 ? '#fef3c7' : design === 3 ? '#f4f4f5' : '#eff6ff';
@@ -209,6 +218,7 @@ export function buildInvoiceHtml(inv: InvoiceData, shop: ShopInfo, design: Desig
         ${inv.dateEcheance ? `<div style="font-size:11px;opacity:.85">Échéance : ${formatDate(inv.dateEcheance)}</div>` : ''}
         <div style="font-size:11px;font-weight:700;margin-top:2px">${inv.creditRegle ? '✓ Réglé' : 'En cours'}</div>
       </div>` : ''}
+      ${qrBlock}
     </div>
   </div>
 
@@ -266,6 +276,108 @@ export async function partagerFactureRN(inv: InvoiceData, shop: ShopInfo, design
   const html = buildInvoiceHtml(inv, shop, design);
   const { uri } = await Print.printToFileAsync({ html });
   await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `Facture ${inv.numero}`, UTI: 'com.adobe.pdf' });
+}
+
+// ─── Export PDF "document générique" (rapports, situations...) ───────────────
+// Port EXACT de genererHTMLDocument() / ouvrirDocumentPDF() dans facture.service.ts
+// (Ionic) — même gabarit générique réutilisé pour tous les documents non-facture,
+// avec les mêmes 3 designs (Classique #1a56db / Moderne doré #b8860b sur fond
+// marine #1a1a2e / Minimaliste noir #1a1a1a sur fond gris clair #f8f8f8) que
+// imprimerFactureRN. Pas de nom de boutique dans l'en-tête — le gabarit Ionic
+// n'en affiche pas non plus ici (uniquement titre/sous-titre), à la différence
+// du template facture qui, lui, est dédié et affiche l'identité boutique.
+
+export interface DocumentPdfConfig {
+  titre: string;
+  sousTitre?: string;
+  colonnes: string[];
+  lignes: string[][];
+  totaux?: string[];
+  pied?: string;
+}
+
+function buildDocumentPdfHtml(config: DocumentPdfConfig, design: DesignFacture = 1): string {
+  const couleur = design === 2 ? '#b8860b' : design === 3 ? '#1a1a1a' : '#1a56db';
+  const fond = design === 2 ? '#1a1a2e' : design === 3 ? '#f8f8f8' : '#1e3a5f';
+
+  const entetes = config.colonnes.map(c => `<th style="background:${couleur};color:#fff;padding:8px;text-align:left;border:1px solid #ddd">${c}</th>`).join('');
+  const lignes = config.lignes.map((row, i) =>
+    `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">${row.map(cell => `<td style="padding:7px 8px;border:1px solid #eee;font-size:12px">${cell}</td>`).join('')}</tr>`
+  ).join('');
+  const totaux = config.totaux?.map(t => `<div style="text-align:right;font-weight:600;font-size:13px;padding:4px 0">${t}</div>`).join('') || '';
+  const pied = config.pied ? `<p style="font-size:11px;color:#888;margin-top:16px;text-align:center">${config.pied}</p>` : '';
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${config.titre}</title>
+    <style>
+      body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f0f4f8}
+      .doc{background:#fff;border-radius:8px;padding:24px;max-width:900px;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+      .header{background:${fond};color:#fff;padding:16px 24px;border-radius:6px;margin-bottom:20px}
+      .header h1{margin:0;font-size:20px;color:${couleur}}
+      .header p{margin:4px 0 0;font-size:12px;opacity:.85}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      .totaux{margin-top:14px;border-top:2px solid ${couleur};padding-top:10px}
+      @media print{@page{size:A4;margin:8mm}body{background:#fff;padding:0}.doc{box-shadow:none}}
+    </style></head><body>
+    <div class="doc">
+      <div class="header">
+        <h1>${config.titre}</h1>
+        ${config.sousTitre ? `<p>${config.sousTitre}</p>` : ''}
+      </div>
+      <table>
+        <thead><tr>${entetes}</tr></thead>
+        <tbody>${lignes}</tbody>
+      </table>
+      <div class="totaux">${totaux}</div>
+      ${pied}
+      <p style="font-size:11px;color:#aaa;text-align:right;margin-top:12px">Généré le ${new Date().toLocaleDateString('fr-FR')} · Ges-Boutique</p>
+    </div>
+    </body></html>`;
+}
+
+export async function imprimerDocumentPdfRN(config: DocumentPdfConfig, design: DesignFacture = 1): Promise<void> {
+  const html = buildDocumentPdfHtml(config, design);
+  await Print.printAsync({ html });
+}
+
+export async function partagerDocumentPdfRN(config: DocumentPdfConfig, design: DesignFacture = 1): Promise<void> {
+  const html = buildDocumentPdfHtml(config, design);
+  const { uri } = await Print.printToFileAsync({ html });
+  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: config.titre, UTI: 'com.adobe.pdf' });
+}
+
+// ─── Export PDF rapport (jour/semaine/mois/personnalisé) ─────────────────────
+// Équivalent RN de rapport.service.ts → exporterRapportPDF() sur Ionic, qui
+// construit un DocumentPdfConfig (titre/sous-titre/colonnes Produit-Quantité-CA)
+// puis appelle ouvrirDocumentPDF() — reproduit ici à l'identique.
+
+export interface RapportPdfData {
+  titre: string;
+  chiffreAffaireTotal: number;
+  nombreVentes: number;
+  topProduits: { nom: string; quantite: number; chiffreAffaire: number }[];
+}
+
+function rapportToDocumentConfig(r: RapportPdfData): DocumentPdfConfig {
+  const topProduits = r.topProduits.slice(0, 10);
+  const lignes = topProduits.map(p => [p.nom, String(p.quantite), formatPrice(p.chiffreAffaire)]);
+  return {
+    titre: r.titre,
+    sousTitre: `CA : ${formatPrice(r.chiffreAffaireTotal)} · Ventes : ${r.nombreVentes}`,
+    colonnes: topProduits.length > 0 ? ['Produit', 'Quantité', 'CA'] : ['Données'],
+    lignes: topProduits.length > 0 ? lignes : [['Aucun produit dans ce rapport']],
+    totaux: [
+      `Chiffre d'affaires : ${formatPrice(r.chiffreAffaireTotal)}`,
+      `Nombre de ventes : ${r.nombreVentes}`,
+    ],
+  };
+}
+
+export async function imprimerRapportPdfRN(r: RapportPdfData, design: DesignFacture = 1): Promise<void> {
+  await imprimerDocumentPdfRN(rapportToDocumentConfig(r), design);
+}
+
+export async function partagerRapportPdfRN(r: RapportPdfData, design: DesignFacture = 1): Promise<void> {
+  await partagerDocumentPdfRN(rapportToDocumentConfig(r), design);
 }
 
 // ─── Reçus paiement fournisseur & règlement crédit ───────────────────────────

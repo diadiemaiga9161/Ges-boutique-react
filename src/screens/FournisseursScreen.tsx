@@ -3,7 +3,6 @@ import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
   ScrollView, TouchableOpacity,
 } from 'react-native';
-import NetInfo from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import {
@@ -17,7 +16,7 @@ import {
   getSituationFournisseur, creerAchatFournisseur, payerFournisseur,
   getProduits, annulerAchatFournisseur,
   getAvancesFournisseur, creerAvanceFournisseur,
-  getComptes,
+  getComptes, getAchatsNonPayesFournisseur,
 } from '../services/api.service';
 import { buildRecuPaiementFournisseurHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
@@ -30,6 +29,67 @@ const STATUT_COLOR: Record<string, string> = {
 
 function money(v: number) { return (v || 0).toLocaleString('fr-FR') + ' FCFA'; }
 function fdate(d?: string) { if (!d) return '—'; return new Date(d).toLocaleDateString('fr-FR'); }
+
+// Ligne d'achat envoyée au backend — nouveauPrixAchat est optionnel : il n'est
+// inclus que si le CUMP a été recalculé ET confirmé par l'utilisateur.
+interface LigneAchatFournisseur {
+  produitId: number;
+  quantite: number;
+  prixAchatUnitaire: number;
+  prixVente: number;
+  nouveauPrixAchat?: number;
+}
+
+// Coût moyen pondéré : (stock actuel × ancien prix d'achat + qté entrée × prix d'achat entrée) / (stock actuel + qté entrée)
+// Si le stock actuel est à 0 (ou le diviseur nul), on retombe simplement sur le prix d'achat de l'entrée.
+function calculerCump(stockActuel: number, ancienPrixAchat: number, quantiteEntree: number, prixAchatEntree: number): number {
+  if (!stockActuel || stockActuel <= 0) return prixAchatEntree;
+  const diviseur = stockActuel + quantiteEntree;
+  if (!diviseur) return prixAchatEntree;
+  return (stockActuel * ancienPrixAchat + quantiteEntree * prixAchatEntree) / diviseur;
+}
+
+// Popup de confirmation avant d'appliquer le nouveau prix d'achat issu du CUMP.
+// Alert.alert n'est pas basé sur une Promise nativement — on le wrap pour pouvoir
+// faire un await dans le flux de soumission du formulaire d'achat.
+function confirmerRecalculCump(
+  produitNom: string,
+  stockActuel: number,
+  ancienPrixAchat: number,
+  quantiteEntree: number,
+  prixAchatEntree: number,
+  nouveauPrix: number,
+): Promise<boolean> {
+  return new Promise(resolve => {
+    const message =
+      `${produitNom}\n\n` +
+      `Prix d'achat saisi (${money(prixAchatEntree)}) différent du prix d'achat actuel (${money(ancienPrixAchat)}).\n\n` +
+      `Stock actuel : ${stockActuel} × ${money(ancienPrixAchat)} = ${money(stockActuel * ancienPrixAchat)}\n` +
+      `Entrée : ${quantiteEntree} × ${money(prixAchatEntree)} = ${money(quantiteEntree * prixAchatEntree)}\n\n` +
+      `CUMP = (${stockActuel} × ${ancienPrixAchat} + ${quantiteEntree} × ${prixAchatEntree}) / (${stockActuel} + ${quantiteEntree})\n\n` +
+      `Nouveau prix d'achat proposé : ${money(nouveauPrix)}\n\n` +
+      `Appliquer ce nouveau prix d'achat au produit ?`;
+
+    Alert.alert(
+      'Recalcul du prix d\'achat',
+      message,
+      [
+        { text: 'Ne pas modifier', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Appliquer', onPress: () => resolve(true) },
+      ],
+      { cancelable: false },
+    );
+  });
+}
+
+type PeriodePreset = 'jour' | 'semaine' | 'mois' | 'personnalise' | 'tout';
+
+function toLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const j = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${j}`;
+}
 
 function buildFicheFournisseurHtml(fournisseur: any, achats: any[], paiements: any[], situation: any) {
   const achatsActifs = achats.filter(a => a.statut !== 'ANNULE');
@@ -124,6 +184,12 @@ export default function FournisseursScreen() {
   const [situation, setSituation] = useState<any>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [expandedAchat, setExpandedAchat] = useState<number | null>(null);
+  const [achatsNonPayes, setAchatsNonPayes] = useState<any[]>([]);
+
+  // Filtre période (achats / paiements / situation)
+  const [periodePreset, setPeriodePreset] = useState<PeriodePreset>('tout');
+  const [filtreDateDebut, setFiltreDateDebut] = useState('');
+  const [filtreDateFin, setFiltreDateFin] = useState('');
 
   // Avances
   const [avances, setAvances] = useState<any[]>([]);
@@ -144,8 +210,6 @@ export default function FournisseursScreen() {
 
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await getFournisseurs();
       const data = res.data?.data || res.data || [];
       setFournisseurs(data); setFiltered(data);
@@ -171,14 +235,15 @@ export default function FournisseursScreen() {
     ));
   }, [search, fournisseurs]);
 
-  const chargerDetail = async (id: number) => {
+  const chargerDetail = async (id: number, dateDebut?: string, dateFin?: string) => {
     setLoadingDetail(true);
     try {
-      const [ra, rp, rs, rv] = await Promise.all([
-        getHistoriqueAchatsFournisseur(id),
-        getHistoriquePaiementsFournisseur(id),
-        getSituationFournisseur(id),
+      const [ra, rp, rs, rv, rnp] = await Promise.all([
+        getHistoriqueAchatsFournisseur(id, dateDebut, dateFin),
+        getHistoriquePaiementsFournisseur(id, dateDebut, dateFin),
+        getSituationFournisseur(id, dateDebut, dateFin),
         getAvancesFournisseur(id),
+        getAchatsNonPayesFournisseur(id).catch(() => ({ data: { achats: [] } })),
       ]);
       setAchats(ra.data?.achats || []);
       setPaiements(rp.data?.paiements || []);
@@ -186,19 +251,70 @@ export default function FournisseursScreen() {
       const avancesData: any[] = rv.data?.avances || rv.data || [];
       setAvances(avancesData);
       setSoldeAvance(avancesData.reduce((s: number, a: any) => s + (a.montant || 0), 0));
+      setAchatsNonPayes(rnp.data?.achats || []);
     } catch {}
     setLoadingDetail(false);
   };
 
+  // Calcule les bornes de dates pour un préréglage de période donné
+  const calculerPeriode = (preset: PeriodePreset): { dateDebut?: string; dateFin?: string } => {
+    const now = new Date();
+    if (preset === 'jour') {
+      const d = toLocalDate(now);
+      return { dateDebut: d, dateFin: d };
+    }
+    if (preset === 'semaine') {
+      const debut = new Date(now);
+      debut.setDate(now.getDate() - 6);
+      return { dateDebut: toLocalDate(debut), dateFin: toLocalDate(now) };
+    }
+    if (preset === 'mois') {
+      const debut = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { dateDebut: toLocalDate(debut), dateFin: toLocalDate(now) };
+    }
+    if (preset === 'personnalise') {
+      return { dateDebut: filtreDateDebut || undefined, dateFin: filtreDateFin || undefined };
+    }
+    return {}; // 'tout' — pas de filtre, historique complet
+  };
+
+  // Change le préréglage et recharge aussitôt (sauf 'personnalise' qui attend la saisie + validation)
+  const appliquerPeriode = (preset: PeriodePreset) => {
+    setPeriodePreset(preset);
+    if (preset === 'personnalise') return;
+    if (!selected) return;
+    const { dateDebut, dateFin } = calculerPeriode(preset);
+    chargerDetail(selected.id, dateDebut, dateFin);
+  };
+
+  // Valide et applique une période personnalisée saisie manuellement
+  const appliquerPeriodePersonnalisee = () => {
+    if (!filtreDateDebut || !filtreDateFin) {
+      Alert.alert(tr('erreur', lang), 'Renseignez les deux dates (AAAA-MM-JJ)');
+      return;
+    }
+    if (!selected) return;
+    chargerDetail(selected.id, filtreDateDebut, filtreDateFin);
+  };
+
+  // Recharge le détail du fournisseur sélectionné en conservant le préréglage de période actif
+  const rechargerDetailCourant = () => {
+    if (!selected) return;
+    const { dateDebut, dateFin } = calculerPeriode(periodePreset);
+    chargerDetail(selected.id, dateDebut, dateFin);
+  };
+
   const selectionner = (f: any) => {
     setSelected(f); setTab('achats'); setMode('detail');
+    setPeriodePreset('tout'); setFiltreDateDebut(''); setFiltreDateFin('');
     chargerDetail(f.id);
   };
 
   const retourListe = () => {
     setMode('list'); setSelected(null);
     setAchats([]); setPaiements([]); setSituation(null);
-    setAvances([]); setSoldeAvance(0);
+    setAvances([]); setSoldeAvance(0); setAchatsNonPayes([]);
+    setPeriodePreset('tout'); setFiltreDateDebut(''); setFiltreDateFin('');
   };
 
   const ajouterFournisseur = async () => {
@@ -234,14 +350,40 @@ export default function FournisseursScreen() {
     if (!achatForm.produitId) { Alert.alert(tr('erreur', lang), 'Sélectionnez un produit'); return; }
     if (!achatForm.quantite || !achatForm.prixAchatUnitaire) { Alert.alert(tr('erreur', lang), 'Quantité et prix obligatoires'); return; }
     try {
+      const quantite = parseFloat(achatForm.quantite);
+      const prixAchatUnitaire = parseFloat(achatForm.prixAchatUnitaire);
+
+      const ligne: LigneAchatFournisseur = {
+        produitId: achatForm.produitId,
+        quantite,
+        prixAchatUnitaire,
+        prixVente: parseFloat(achatForm.prixVente || '0'),
+      };
+
+      // Le produit sélectionné dans ce formulaire provient toujours du catalogue existant
+      // (pas de création de produit à la volée ici) — on peut donc comparer directement
+      // le prix d'achat saisi avec le prix d'achat actuellement enregistré.
+      const produitExistant = produits.find((p: any) => p.id === achatForm.produitId);
+      if (
+        produitExistant
+        && produitExistant.prixAchat != null
+        && !isNaN(prixAchatUnitaire)
+        && prixAchatUnitaire !== Number(produitExistant.prixAchat)
+      ) {
+        const stockActuel = Number(produitExistant.quantite) || 0;
+        const ancienPrixAchat = Number(produitExistant.prixAchat) || 0;
+        const nouveauPrixAchat = Math.round(calculerCump(stockActuel, ancienPrixAchat, quantite, prixAchatUnitaire));
+        const confirme = await confirmerRecalculCump(
+          produitExistant.nom, stockActuel, ancienPrixAchat, quantite, prixAchatUnitaire, nouveauPrixAchat,
+        );
+        if (confirme) {
+          ligne.nouveauPrixAchat = nouveauPrixAchat;
+        }
+      }
+
       const payload = {
         fournisseurId: selected.id,
-        lignes: [{
-          produitId: achatForm.produitId,
-          quantite: parseFloat(achatForm.quantite),
-          prixAchatUnitaire: parseFloat(achatForm.prixAchatUnitaire),
-          prixVente: parseFloat(achatForm.prixVente || '0'),
-        }],
+        lignes: [ligne],
         montantPaye: parseFloat(achatForm.montantPaye || '0'),
         commentaire: achatForm.commentaire,
       };
@@ -250,7 +392,7 @@ export default function FournisseursScreen() {
       if (res.offline) {
         Alert.alert('Sauvegardé', 'Achat sauvegardé hors ligne — sync au retour connexion');
       } else {
-        chargerDetail(selected.id);
+        rechargerDetailCourant();
       }
     } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'achat'); }
   };
@@ -274,7 +416,7 @@ export default function FournisseursScreen() {
       if (res.offline) {
         Alert.alert('Sauvegardé', 'Paiement sauvegardé hors ligne — sync au retour connexion');
       } else {
-        chargerDetail(selected.id);
+        rechargerDetailCourant();
       }
     } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer le paiement'); }
   };
@@ -291,7 +433,7 @@ export default function FournisseursScreen() {
           onPress: async () => {
             try {
               await annulerAchatFournisseur(achat.id);
-              chargerDetail(selected.id);
+              rechargerDetailCourant();
             } catch {
               Alert.alert(tr('erreur', lang), 'Impossible d\'annuler cet achat');
             }
@@ -318,7 +460,7 @@ export default function FournisseursScreen() {
       });
       setShowAvanceModal(false);
       setAvanceForm({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
-      chargerDetail(selected.id);
+      rechargerDetailCourant();
     } catch {
       Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'avance');
     }
@@ -364,6 +506,54 @@ export default function FournisseursScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* ── Filtre période (achats / paiements / situation) ── */}
+        {tab !== 'avances' && (
+          <View style={styles.periodBar}>
+            <View style={styles.periodRow}>
+              {([
+                ['tout', 'Tout'],
+                ['jour', 'Jour'],
+                ['semaine', 'Semaine'],
+                ['mois', 'Mois'],
+                ['personnalise', 'Personnalisé'],
+              ] as [PeriodePreset, string][]).map(([p, label]) => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.periodBtn, periodePreset === p && styles.periodBtnActive]}
+                  onPress={() => appliquerPeriode(p)}
+                >
+                  <Text style={[styles.periodBtnText, periodePreset === p && styles.periodBtnTextActive]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {periodePreset === 'personnalise' && (
+              <View style={styles.customDateRow}>
+                <TextInput
+                  mode="outlined"
+                  dense
+                  value={filtreDateDebut}
+                  onChangeText={setFiltreDateDebut}
+                  placeholder="Du (AAAA-MM-JJ)"
+                  style={styles.dateInput}
+                />
+                <TextInput
+                  mode="outlined"
+                  dense
+                  value={filtreDateFin}
+                  onChangeText={setFiltreDateFin}
+                  placeholder="Au (AAAA-MM-JJ)"
+                  style={styles.dateInput}
+                />
+                <TouchableOpacity style={styles.applyBtn} onPress={appliquerPeriodePersonnalisee}>
+                  <Text style={styles.applyBtnText}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
 
         {loadingDetail ? (
           <ActivityIndicator style={{ flex: 1 }} size="large" />
@@ -514,6 +704,59 @@ export default function FournisseursScreen() {
             )}
             {tab === 'situation' && !situation && (
               <Text style={styles.empty}>Situation non disponible</Text>
+            )}
+
+            {/* ── ACHATS NON PAYÉS ── */}
+            {tab === 'situation' && (
+              <>
+                <Text style={[styles.sitTitle, { marginTop: 16, marginBottom: 8 }]}>
+                  Achats non soldés {achatsNonPayes.length > 0 ? `(${achatsNonPayes.length})` : ''}
+                </Text>
+                {achatsNonPayes.length === 0 ? (
+                  <Text style={styles.empty}>Aucun achat non soldé</Text>
+                ) : (
+                  achatsNonPayes.map((a: any) => (
+                    <Card key={a.id} style={styles.card}>
+                      <Card.Content>
+                        <View style={styles.row}>
+                          <Text style={styles.achatDate}>{fdate(a.dateAchat)}</Text>
+                          <Text style={[styles.statutBadge, { backgroundColor: STATUT_COLOR[a.statut] || '#d97706' }]}>
+                            {a.statut}
+                          </Text>
+                        </View>
+                        <View style={[styles.row, { marginTop: 6 }]}>
+                          <Text style={styles.moneyLabel}>Total</Text>
+                          <Text style={styles.moneyVal}>{money(a.montantTotal)}</Text>
+                        </View>
+                        <View style={styles.row}>
+                          <Text style={styles.moneyLabel}>Payé</Text>
+                          <Text style={[styles.moneyVal, { color: '#16a34a' }]}>{money(a.montantPaye)}</Text>
+                        </View>
+                        <View style={styles.row}>
+                          <Text style={styles.moneyLabel}>Restant</Text>
+                          <Text style={[styles.moneyVal, { color: '#dc2626' }]}>{money(a.montantRestant)}</Text>
+                        </View>
+                        {a.commentaire ? <Text style={styles.sub}>{a.commentaire}</Text> : null}
+                        <TouchableOpacity
+                          style={styles.payerBtn}
+                          onPress={() => {
+                            setPaiForm({
+                              montant: String(a.montantRestant || 0),
+                              modePaiement: 'ESPECES',
+                              reference: '',
+                              observation: `Règlement achat du ${fdate(a.dateAchat)}`,
+                              compteId: undefined,
+                            });
+                            setShowPaiementModal(true);
+                          }}
+                        >
+                          <Text style={styles.payerBtnText}>Payer</Text>
+                        </TouchableOpacity>
+                      </Card.Content>
+                    </Card>
+                  ))
+                )}
+              </>
             )}
 
             {/* ── AVANCES ── */}
@@ -765,6 +1008,21 @@ const styles = StyleSheet.create({
   tabBtnActive: { borderBottomWidth: 3, borderBottomColor: '#1e88e5' },
   tabLabel: { color: '#6b7280', fontSize: 13, fontWeight: '500' },
   tabLabelActive: { color: '#1e88e5', fontWeight: 'bold' },
+
+  // Filtre période
+  periodBar: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', paddingVertical: 8, paddingHorizontal: 8 },
+  periodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  periodBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: '#f0f4f8', borderWidth: 1, borderColor: '#dde3ed' },
+  periodBtnActive: { backgroundColor: '#1e88e5', borderColor: '#1e88e5' },
+  periodBtnText: { fontSize: 12, color: '#666', fontWeight: '600' },
+  periodBtnTextActive: { color: '#fff' },
+  customDateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  dateInput: { flex: 1, backgroundColor: '#fff', height: 40 },
+  applyBtn: { backgroundColor: '#1e88e5', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  applyBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  // Achats non payés
+  payerBtn: { backgroundColor: '#ecfdf5', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: '#a7f3d0' },
+  payerBtnText: { color: '#16a34a', fontSize: 12, fontWeight: '600' },
   // Achats
   achatDate: { color: '#475569', fontSize: 13, fontWeight: '500' },
   statutBadge: { color: '#fff', fontSize: 11, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, overflow: 'hidden' },

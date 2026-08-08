@@ -1,22 +1,36 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert, Modal,
   ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity,
 } from 'react-native';
 import {
-  Text, Card, FAB, Searchbar, Chip, ActivityIndicator,
-  TextInput, Button, IconButton, Divider,
+  Text, Card, Searchbar, Chip, ActivityIndicator,
+  TextInput, Button, IconButton, Divider, Switch,
 } from 'react-native-paper';
 import * as Print from 'expo-print';
-import { getProduits, deleteProduit } from '../services/api.service';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import {
+  getProduits, deleteProduit, getCategories, createCategorie, updateCategorie, deleteCategorie,
+  getStatistiquesStock, getFournisseurs,
+} from '../services/api.service';
 import { cacheProduits, getProduitsCache } from '../db/database';
 import { creerProduitOffline, modifierProduitOffline, getNombreProduitsPending } from '../services/offline.service';
-import NetInfo from '@react-native-community/netinfo';
-import { Produit } from '../types';
+import { Produit, Categorie } from '../types';
 import { getNiveaux, creerNiveau, modifierNiveau, supprimerNiveau, decomposer, ProduitNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import { SkeletonCard } from '../components/SkeletonLoader';
+import { StockBadge } from '../components/StockBadge';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
+
+type Segment = 'all' | 'low' | 'expired' | 'bio';
+const TYPES_VENTE = ['UNITE', 'KG', 'LITRE', 'COMPTANT_UNIQUEMENT'] as const;
+const TYPE_VENTE_LABELS: Record<string, string> = {
+  UNITE: 'Unité', KG: 'Kg', LITRE: 'Litre', COMPTANT_UNIQUEMENT: 'Comptant uniquement',
+};
 
 interface FormProduit {
   nom: string;
@@ -24,30 +38,93 @@ interface FormProduit {
   prixVente: string;
   quantite: string;
   seuilAlerte: string;
-  categorie: string;
+  categorieId: string;
+  fournisseurId: string;
   description: string;
-  codeBarres: string;
+  codeBarre: string;
+  datePeremption: string;
+  bio: boolean;
+  typeVente: string;
 }
 
 const emptyForm = (): FormProduit => ({
   nom: '', prixAchat: '', prixVente: '', quantite: '0',
-  seuilAlerte: '5', categorie: '', description: '', codeBarres: '',
+  seuilAlerte: '5', categorieId: '', fournisseurId: '', description: '', codeBarre: '',
+  datePeremption: '', bio: false, typeVente: 'UNITE',
 });
 
 export default function ProduitsScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const navigation = useNavigation<any>();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
+  const [segment, setSegment] = useState<Segment>('all');
+  const [selectedCategorieId, setSelectedCategorieId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [offline, setOffline] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Produit | null>(null);
   const [form, setForm] = useState<FormProduit>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [categories, setCategories] = useState<Categorie[]>([]);
+  const [fournisseurs, setFournisseurs] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+
+  // Catégories (gestion)
+  const [showCategoriesModal, setShowCategoriesModal] = useState(false);
+  const [categoryName, setCategoryName] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+
+  // Stats
+  const [showStatsModal, setShowStatsModal] = useState(false);
+
+  useEffect(() => {
+    getCategories().then(res => setCategories(res.data?.data || res.data || [])).catch(() => {});
+    getFournisseurs().then(res => setFournisseurs(res.data?.data || res.data || [])).catch(() => {});
+    AsyncStorage.getItem('user').then(raw => {
+      if (!raw) return;
+      try {
+        const role: string = JSON.parse(raw)?.role || '';
+        const admin = role === 'ROLE_ADMIN' || role === 'ADMIN';
+        setIsAdmin(admin);
+        if (admin) {
+          getStatistiquesStock().then(res => setStats(res.data?.data || res.data?.statistiques || res.data)).catch(() => {});
+        }
+      } catch {}
+    });
+  }, []);
+
+  // En-tête : PDF stock, gestion catégories, statistiques (admin), nouveau produit —
+  // comme la barre d'icônes d'Ionic (document-text/pricetags/bar-chart/add).
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={genererPdfStock} style={{ marginRight: 12 }}>
+            <MaterialCommunityIcons name="file-document-outline" color="#fff" size={22} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowCategoriesModal(true)} style={{ marginRight: 12 }}>
+            <MaterialCommunityIcons name="tag-multiple-outline" color="#fff" size={22} />
+          </TouchableOpacity>
+          {stats && (
+            <TouchableOpacity onPress={() => setShowStatsModal(true)} style={{ marginRight: 12 }}>
+              <MaterialCommunityIcons name="chart-bar" color="#fff" size={22} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={ouvrirCreation} style={{ marginRight: 14 }}>
+            <MaterialCommunityIcons name="plus-circle-outline" color="#fff" size={24} />
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation, stats]);
 
   const [showScanner, setShowScanner] = useState(false);
 
@@ -62,25 +139,17 @@ export default function ProduitsScreen() {
   const [formEditNiveau, setFormEditNiveau] = useState({ nom: '', parentId: '' as string, facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
 
   const charger = useCallback(async () => {
-    const state = await NetInfo.fetch();
-    if (state.isConnected) {
-      try {
-        const res = await getProduits();
-        const data = res.data?.data || res.data || [];
-        setProduits(data);
-        setFiltered(data);
-        await cacheProduits(data);
-        setOffline(false);
-      } catch {
-        const cached = await getProduitsCache();
-        setProduits(cached);
-        setFiltered(cached);
-        setOffline(true);
-      }
-    } else {
+    // On tente toujours l'appel réel en premier — NetInfo.fetch() peut renvoyer
+    // isConnected=null au premier appel et ferait sauter l'appel réel à tort.
+    try {
+      const res = await getProduits();
+      const data = res.data?.data || res.data || [];
+      setProduits(data);
+      await cacheProduits(data);
+      setOffline(false);
+    } catch {
       const cached = await getProduitsCache();
       setProduits(cached);
-      setFiltered(cached);
       setOffline(true);
     }
     const n = await getNombreProduitsPending();
@@ -91,11 +160,32 @@ export default function ProduitsScreen() {
 
   useEffect(() => { charger(); }, [charger]);
 
+  // Filtre combiné : catégorie sélectionnée + segment (tous/faible/périmés/bio) + recherche
+  // texte — comme applyFilter() d'Ionic.
   useEffect(() => {
-    if (!search) { setFiltered(produits); return; }
-    const q = search.toLowerCase();
-    setFiltered(produits.filter(p => p.nom.toLowerCase().includes(q)));
-  }, [search, produits]);
+    let result = [...produits];
+
+    if (selectedCategorieId) {
+      result = result.filter(p => p.categorie?.id === selectedCategorieId || p.categorieId === selectedCategorieId);
+    }
+
+    if (segment === 'low') result = result.filter(p => p.stockFaible || p.quantite <= (p.seuilAlerte || 5));
+    else if (segment === 'expired') result = result.filter(p => p.perime || p.prochePeremption);
+    else if (segment === 'bio') result = result.filter(p => p.bio);
+
+    const term = search.trim().toLowerCase();
+    if (term) {
+      result = result.filter(p =>
+        [p.nom, p.codeBarre, p.categorie?.nom, p.fournisseur?.nom]
+          .filter(Boolean).some(v => `${v}`.toLowerCase().includes(term))
+      );
+    }
+
+    setFiltered(result);
+  }, [search, produits, segment, selectedCategorieId]);
+
+  const countByCategorie = (categorieId: number) =>
+    produits.filter(p => p.categorie?.id === categorieId || p.categorieId === categorieId).length;
 
   const ouvrirCreation = () => {
     setEditing(null);
@@ -111,9 +201,13 @@ export default function ProduitsScreen() {
       prixVente: String(p.prixVente),
       quantite: String(p.quantite),
       seuilAlerte: String(p.seuilAlerte || 5),
-      categorie: p.categorie || '',
+      categorieId: p.categorie?.id ? String(p.categorie.id) : (p.categorieId ? String(p.categorieId) : ''),
+      fournisseurId: p.fournisseur?.id ? String(p.fournisseur.id) : (p.fournisseurId ? String(p.fournisseurId) : ''),
       description: p.description || '',
-      codeBarres: p.codeBarres || '',
+      codeBarre: p.codeBarre || '',
+      datePeremption: p.datePeremption || '',
+      bio: !!p.bio,
+      typeVente: p.typeVente || 'UNITE',
     });
     setShowModal(true);
   };
@@ -123,16 +217,24 @@ export default function ProduitsScreen() {
   const sauvegarder = async () => {
     if (!form.nom.trim()) { Alert.alert('Erreur', 'Le nom est obligatoire'); return; }
     if (!form.prixVente || Number(form.prixVente) <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
+    if (!form.categorieId) { Alert.alert('Erreur', 'La catégorie est obligatoire'); return; }
     setSaving(true);
+    // Le backend attend "categorieId" (identifiant numérique d'une catégorie
+    // existante), pas un nom de catégorie en texte libre — un champ inconnu
+    // dans le JSON fait rejeter toute la requête (parsing strict côté serveur).
     const data = {
       nom: form.nom.trim(),
       prixAchat: Number(form.prixAchat) || 0,
       prixVente: Number(form.prixVente),
       quantite: Number(form.quantite) || 0,
       seuilAlerte: Number(form.seuilAlerte) || 5,
-      categorie: form.categorie.trim() || undefined,
+      categorieId: Number(form.categorieId),
+      fournisseurId: form.fournisseurId ? Number(form.fournisseurId) : undefined,
       description: form.description.trim() || undefined,
-      codeBarres: form.codeBarres.trim() || undefined,
+      codeBarre: form.codeBarre.trim() || undefined,
+      datePeremption: form.datePeremption.trim() || undefined,
+      bio: form.bio,
+      typeVente: form.typeVente,
     };
     try {
       if (editing) {
@@ -312,27 +414,21 @@ export default function ProduitsScreen() {
     ]);
   };
 
-  const stockColor = (p: Produit) => {
-    if (p.quantite === 0) return '#f44336';
-    if (p.quantite <= (p.seuilAlerte || 5)) return '#ff9800';
-    return '#4caf50';
-  };
-
   const genererPdfStock = async () => {
     const liste = filtered.length > 0 ? filtered : produits;
     const totalArticles = liste.reduce((s, p) => s + (p.quantite || 0), 0);
-    const valeurTotale = liste.reduce((s, p) => s + (p.quantite || 0) * (p.prixVente || 0), 0);
+    const valeurTotale = liste.reduce((s, p) => s + (p.quantite || 0) * (p.prixAchat || 0), 0);
     const date = new Date().toLocaleDateString('fr-FR');
     const lignes = liste.map((p, i) => {
       const qColor = p.quantite === 0 ? '#ef4444' : (p.quantite <= (p.seuilAlerte || 5) ? '#d97706' : '#16a34a');
       const qLabel = p.quantite === 0 ? 'Rupture' : (p.quantite <= (p.seuilAlerte || 5) ? 'Faible' : 'OK');
       return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;font-weight:600">${p.nom}</td>
-        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;color:#64748b">${p.categorie || '—'}</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;color:#64748b">${p.categorie?.nom || '—'}</td>
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:center"><span style="background:${qColor}22;color:${qColor};border-radius:4px;padding:2px 8px;font-weight:700;font-size:11px">${p.quantite || 0} · ${qLabel}</span></td>
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right">${(p.prixAchat || 0).toLocaleString('fr-FR')} FCFA</td>
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${(p.prixVente || 0).toLocaleString('fr-FR')} FCFA</td>
-        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;color:#1d4ed8">${((p.quantite || 0) * (p.prixVente || 0)).toLocaleString('fr-FR')} FCFA</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;color:#1d4ed8">${((p.quantite || 0) * (p.prixAchat || 0)).toLocaleString('fr-FR')} FCFA</td>
       </tr>`;
     }).join('');
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Stock Produits</title>
@@ -367,10 +463,81 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     try { await Print.printAsync({ html }); } catch { Alert.alert('Erreur', 'Impossible de générer le PDF'); }
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+  // ==================== CATÉGORIES ====================
+  const creerCategorie = async () => {
+    if (!categoryName.trim()) return;
+    try {
+      const res = await createCategorie({ nom: categoryName.trim() });
+      const cat = res.data?.data || res.data;
+      setCategories(prev => [...prev, cat]);
+      setForm(f => ({ ...f, categorieId: String(cat.id) }));
+      setCategoryName('');
+    } catch (e: any) {
+      Alert.alert('Erreur', e.response?.data?.message || 'Création catégorie impossible');
+    }
+  };
+
+  const demarrerEditionCategorie = (cat: Categorie) => {
+    setEditingCategoryId(cat.id);
+    setEditingCategoryName(cat.nom);
+  };
+
+  const sauvegarderEditionCategorie = async () => {
+    if (!editingCategoryId || !editingCategoryName.trim()) return;
+    try {
+      const res = await updateCategorie(editingCategoryId, { nom: editingCategoryName.trim() });
+      const updated = res.data?.data || res.data;
+      setCategories(prev => prev.map(c => c.id === updated.id ? updated : c));
+      setEditingCategoryId(null);
+      setEditingCategoryName('');
+    } catch (e: any) {
+      Alert.alert('Erreur', e.response?.data?.message || 'Modification impossible');
+    }
+  };
+
+  const confirmerSuppressionCategorie = (cat: Categorie) => {
+    const count = countByCategorie(cat.id);
+    Alert.alert(
+      'Supprimer la catégorie',
+      count > 0 ? `Cette catégorie contient ${count} produit(s). Supprimer quand même ?` : `Supprimer "${cat.nom}" ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer', style: 'destructive', onPress: async () => {
+            try {
+              await deleteCategorie(cat.id);
+              setCategories(prev => prev.filter(c => c.id !== cat.id));
+            } catch (e: any) {
+              Alert.alert('Erreur', e.response?.data?.message || 'Suppression impossible');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const getStockClass = (p: Produit): 'ok' | 'bas' | 'rupture' => {
+    if (p.quantite <= 0) return 'rupture';
+    if (p.stockFaible || p.quantite <= (p.seuilAlerte || 5)) return 'bas';
+    return 'ok';
+  };
+
+  const getProduitAlerteMessage = (p: Produit): string => {
+    if (p.quantite <= 0) return 'Rupture de stock';
+    if (p.perime) return 'Produit périmé';
+    if (p.prochePeremption) return 'Péremption proche';
+    if (p.stockFaible || p.quantite <= (p.seuilAlerte || 5)) return 'Stock faible';
+    return '';
+  };
+
+  if (loading) return (
+    <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ padding: 12 }}>
+      <SkeletonCard count={6} />
+    </ScrollView>
+  );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Bannière hors ligne */}
       {offline && (
         <View style={styles.offlineBanner}>
@@ -386,58 +553,131 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         </View>
       )}
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
+      {/* Cartes KPI (admin), comme .color-cards Ionic */}
+      {stats && (
+        <View style={styles.colorCards}>
+          <View style={[styles.colorCard, { backgroundColor: '#dbeafe' }]}>
+            <MaterialCommunityIcons name="cube-outline" size={16} color="#1d4ed8" />
+            <Text style={[styles.ccLabel, { color: '#1d4ed8' }]}>Produits</Text>
+            <Text style={[styles.ccValue, { color: '#1d4ed8' }]}>{stats.totalProduits}</Text>
+          </View>
+          <View style={[styles.colorCard, { backgroundColor: '#dcfce7' }]}>
+            <MaterialCommunityIcons name="trending-up" size={16} color="#15803d" />
+            <Text style={[styles.ccLabel, { color: '#15803d' }]}>Valeur stock</Text>
+            <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('fr-FR')} F</Text>
+          </View>
+          <View style={[styles.colorCard, { backgroundColor: '#fef3c7' }]}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#b45309" />
+            <Text style={[styles.ccLabel, { color: '#b45309' }]}>Stock faible</Text>
+            <Text style={[styles.ccValue, { color: '#b45309' }]}>{stats.produitsStockFaible}</Text>
+          </View>
+          <View style={[styles.colorCard, { backgroundColor: '#fee2e2' }]}>
+            <MaterialCommunityIcons name="close-circle-outline" size={16} color="#b91c1c" />
+            <Text style={[styles.ccLabel, { color: '#b91c1c' }]}>Rupture</Text>
+            <Text style={[styles.ccValue, { color: '#b91c1c' }]}>{stats.produitsRupture}</Text>
+          </View>
+        </View>
+      )}
+
+      <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
         <Searchbar
           placeholder={tr('recherche_produit', lang)}
           value={search}
           onChangeText={setSearch}
-          style={[styles.search, { flex: 1, margin: 0 }]}
+          style={[styles.search, { margin: 0 }]}
         />
-        <TouchableOpacity
-          onPress={genererPdfStock}
-          style={{ backgroundColor: '#1d4ed8', borderRadius: 8, padding: 10 }}
-        >
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>PDF</Text>
-        </TouchableOpacity>
+
+        {categories.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Chip compact selected={selectedCategorieId === null} onPress={() => setSelectedCategorieId(null)}>
+                Toutes catégories
+              </Chip>
+              {categories.map(c => (
+                <Chip key={c.id} compact selected={selectedCategorieId === c.id} onPress={() => setSelectedCategorieId(c.id)}>
+                  {c.nom}
+                </Chip>
+              ))}
+            </View>
+          </ScrollView>
+        )}
+
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          {([
+            ['all', 'cube-outline', 'Tous'],
+            ['low', 'alert-outline', 'Stock faible'],
+            ['expired', 'calendar-outline', 'Péremption'],
+            ['bio', 'leaf', 'Bio'],
+          ] as [Segment, string, string][]).map(([seg, icon, label]) => (
+            <TouchableOpacity
+              key={seg}
+              style={[styles.segChip, segment === seg && styles.segChipActive]}
+              onPress={() => setSegment(seg)}
+            >
+              <MaterialCommunityIcons name={icon as any} size={13} color={segment === seg ? '#fff' : '#555'} />
+              <Text style={[styles.segChipText, segment === seg && styles.segChipTextActive]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={styles.sectionLabel}>{filtered.length} article(s)</Text>
       </View>
 
       <FlatList
         data={filtered}
         keyExtractor={p => String(p.id)}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
-        contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
-        renderItem={({ item }) => (
-          <Card style={[styles.card, item.id < 0 && styles.cardPending]}>
-            <Card.Content>
-              <View style={styles.row}>
-                <Text variant="titleMedium" style={{ flex: 1 }}>{item.nom}</Text>
-                <View style={[styles.stockBadge, { backgroundColor: stockColor(item) }]}>
-                  <Text style={styles.stockText}>{item.quantite}</Text>
+        contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
+        renderItem={({ item }) => {
+          const alerte = getProduitAlerteMessage(item);
+          return (
+            <Card style={[styles.card, item.id < 0 && styles.cardPending]}>
+              <Card.Content>
+                <View style={styles.row}>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text variant="titleMedium" style={{ color: colors.text }} numberOfLines={1}>{item.nom}</Text>
+                    {item.bio && (
+                      <View style={styles.bioBadge}><Text style={styles.bioBadgeText}>Bio</Text></View>
+                    )}
+                  </View>
+                  <StockBadge quantite={item.quantite} seuilAlerte={item.seuilAlerte || 5} />
                 </View>
-              </View>
-              <View style={styles.row}>
-                <Text style={styles.prix}>Vente : {item.prixVente} FCFA</Text>
-                <Text style={styles.prixAchat}>Achat : {item.prixAchat} FCFA</Text>
-              </View>
-              {item.categorie ? <Chip compact style={styles.chip}>{item.categorie}</Chip> : null}
-              {item.id < 0 && <Text style={styles.pendingLabel}>⏳ En attente de sync</Text>}
-            </Card.Content>
-            <Card.Actions style={styles.actions}>
-              <IconButton icon="pencil" size={20} iconColor="#1a56db" onPress={() => ouvrirEdition(item)} />
-              <IconButton icon="delete" size={20} iconColor="#f44336" onPress={() => confirmerSuppression(item)} />
-              <IconButton icon="layers" size={20} iconColor="#7c3aed" onPress={() => ouvrirNiveaux(item)} />
-            </Card.Actions>
-          </Card>
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucun produit trouvé</Text>}
-      />
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                  {item.categorie?.nom || 'Sans catégorie'}{item.fournisseur?.nom ? ` · ${item.fournisseur.nom}` : ''}
+                </Text>
 
-      <FAB
-        icon="plus"
-        label={tr('nouveau_produit', lang)}
-        style={styles.fab}
-        color="#fff"
-        onPress={ouvrirCreation}
+                <View style={styles.row}>
+                  <Text style={styles.prix}>Vente : {item.prixVente} FCFA</Text>
+                  {isAdmin && <Text style={styles.prixAchat}>Achat : {item.prixAchat} FCFA</Text>}
+                  <Text style={styles.prixAchat}>Seuil : {item.seuilAlerte || 5}</Text>
+                </View>
+
+                {(item.perime || item.prochePeremption) && (
+                  <View style={[styles.peremptionBadge, item.perime && { backgroundColor: '#fee2e2' }]}>
+                    <MaterialCommunityIcons name="clock-outline" size={12} color={item.perime ? '#b91c1c' : '#b45309'} />
+                    <Text style={{ fontSize: 11, color: item.perime ? '#b91c1c' : '#b45309', fontWeight: '600' }}>
+                      {item.perime ? 'Périmé' : 'Proche péremption'}{item.datePeremption ? ` · ${item.datePeremption}` : ''}
+                    </Text>
+                  </View>
+                )}
+                {!!item.codeBarre && <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>Code: {item.codeBarre}</Text>}
+                {!!alerte && (
+                  <Text style={styles.alerteMsg}>
+                    <MaterialCommunityIcons name="alert-outline" size={12} color="#d97706" /> {alerte}
+                  </Text>
+                )}
+
+                {item.id < 0 && <Text style={styles.pendingLabel}>⏳ En attente de sync</Text>}
+              </Card.Content>
+              <Card.Actions style={styles.actions}>
+                <IconButton icon="pencil" size={20} iconColor="#1a56db" onPress={() => ouvrirEdition(item)} />
+                <IconButton icon="delete" size={20} iconColor="#f44336" onPress={() => confirmerSuppression(item)} />
+                <IconButton icon="layers" size={20} iconColor="#7c3aed" onPress={() => ouvrirNiveaux(item)} />
+              </Card.Actions>
+            </Card>
+          );
+        }}
+        ListEmptyComponent={<Text style={styles.empty}>Aucun produit trouvé</Text>}
       />
 
       {/* Modal créer / modifier */}
@@ -474,15 +714,81 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 onChangeText={v => setForm(f => ({ ...f, seuilAlerte: v }))}
                 keyboardType="numeric" style={[styles.input, { flex: 1 }]} mode="outlined" />
             </View>
-            <TextInput label={tr('categorie', lang)} value={form.categorie}
-              onChangeText={v => setForm(f => ({ ...f, categorie: v }))}
-              style={styles.input} mode="outlined" />
+            <Text style={{ marginTop: 8, marginBottom: 6, fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
+              {tr('categorie', lang)} *
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {categories.map(c => (
+                  <Chip
+                    key={c.id}
+                    selected={form.categorieId === String(c.id)}
+                    onPress={() => setForm(f => ({ ...f, categorieId: String(c.id) }))}
+                    style={form.categorieId === String(c.id) ? { backgroundColor: colors.primary + '33' } : undefined}
+                  >
+                    {c.nom}
+                  </Chip>
+                ))}
+              </View>
+            </ScrollView>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <TextInput label="Nouvelle catégorie" value={categoryName}
+                onChangeText={setCategoryName}
+                style={[styles.input, { flex: 1, marginBottom: 0 }]} mode="outlined" dense />
+              <IconButton icon="plus-circle" size={26} iconColor="#1a56db" onPress={creerCategorie} />
+            </View>
+
+            {fournisseurs.length > 0 && (
+              <>
+                <Text style={{ marginBottom: 6, fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
+                  {tr('fournisseur', lang) || 'Fournisseur'}
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <Chip compact selected={!form.fournisseurId} onPress={() => setForm(f => ({ ...f, fournisseurId: '' }))}>
+                      Aucun
+                    </Chip>
+                    {fournisseurs.map((f: any) => (
+                      <Chip
+                        key={f.id}
+                        compact
+                        selected={form.fournisseurId === String(f.id)}
+                        onPress={() => setForm(prev => ({ ...prev, fournisseurId: String(f.id) }))}
+                      >
+                        {f.nom}
+                      </Chip>
+                    ))}
+                  </View>
+                </ScrollView>
+              </>
+            )}
+
+            <Text style={{ marginBottom: 6, fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
+              Type de vente
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {TYPES_VENTE.map(t => (
+                <Chip key={t} compact selected={form.typeVente === t} onPress={() => setForm(f => ({ ...f, typeVente: t }))}>
+                  {TYPE_VENTE_LABELS[t]}
+                </Chip>
+              ))}
+            </View>
+
+            <TextInput label="Date de péremption (AAAA-MM-JJ)" value={form.datePeremption}
+              onChangeText={v => setForm(f => ({ ...f, datePeremption: v }))}
+              style={styles.input} mode="outlined" placeholder="2026-12-31" />
+
+            <View style={styles.bioRow}>
+              <Text style={{ color: colors.text, fontWeight: '600' }}>Produit bio</Text>
+              <Switch value={form.bio} onValueChange={v => setForm(f => ({ ...f, bio: v }))} color={colors.primary} />
+            </View>
+
             <TextInput label="Description" value={form.description}
               onChangeText={v => setForm(f => ({ ...f, description: v }))}
               style={styles.input} mode="outlined" multiline numberOfLines={3} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <TextInput label={tr('code_barres', lang)} value={form.codeBarres}
-                onChangeText={v => setForm(f => ({ ...f, codeBarres: v }))}
+              <TextInput label={tr('code_barres', lang)} value={form.codeBarre}
+                onChangeText={v => setForm(f => ({ ...f, codeBarre: v }))}
                 style={[styles.input, { flex: 1 }]} mode="outlined"
                 keyboardType="default" placeholder="Ex: 3017620422003" />
               <IconButton icon="barcode-scan" size={28} iconColor="#1a56db"
@@ -503,9 +809,102 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       <BarcodeScannerModal
         visible={showScanner}
         title="Scanner le code-barres produit"
-        onScan={code => setForm(f => ({ ...f, codeBarres: code }))}
+        onScan={code => setForm(f => ({ ...f, codeBarre: code }))}
         onClose={() => setShowScanner(false)}
       />
+
+      {/* Modal gestion catégories */}
+      <Modal visible={showCategoriesModal} animationType="slide" onRequestClose={() => setShowCategoriesModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalHeader}>
+            <Text variant="titleLarge" style={styles.modalTitle}>Catégories</Text>
+            <IconButton icon="close" onPress={() => setShowCategoriesModal(false)} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <TextInput label="Nom de la catégorie" value={categoryName} onChangeText={setCategoryName}
+                style={[styles.input, { flex: 1, marginBottom: 0 }]} mode="outlined" />
+              <Button mode="contained" onPress={creerCategorie} buttonColor="#1a56db">Ajouter</Button>
+            </View>
+
+            <Text style={{ fontWeight: '700', color: colors.text, marginBottom: 8 }}>
+              {categories.length} catégorie(s)
+            </Text>
+
+            {categories.map(cat => (
+              <View key={cat.id} style={styles.catRow}>
+                {editingCategoryId === cat.id ? (
+                  <>
+                    <TextInput value={editingCategoryName} onChangeText={setEditingCategoryName}
+                      style={{ flex: 1, marginRight: 8 }} mode="outlined" dense
+                      onSubmitEditing={sauvegarderEditionCategorie} />
+                    <IconButton icon="check" size={20} iconColor="#16a34a" onPress={sauvegarderEditionCategorie} />
+                    <IconButton icon="close" size={20} iconColor="#64748b" onPress={() => setEditingCategoryId(null)} />
+                  </>
+                ) : (
+                  <>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontWeight: '600' }}>{cat.nom}</Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{countByCategorie(cat.id)} article(s)</Text>
+                    </View>
+                    <IconButton icon="pencil" size={20} iconColor="#1a56db" onPress={() => demarrerEditionCategorie(cat)} />
+                    <IconButton icon="delete" size={20} iconColor="#f44336" onPress={() => confirmerSuppressionCategorie(cat)} />
+                  </>
+                )}
+              </View>
+            ))}
+            {categories.length === 0 && (
+              <Text style={{ textAlign: 'center', color: colors.textSecondary, marginTop: 20 }}>Aucune catégorie</Text>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Modal statistiques */}
+      <Modal visible={showStatsModal} animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
+        <View style={styles.modalHeader}>
+          <Text variant="titleLarge" style={styles.modalTitle}>Statistiques stock</Text>
+          <IconButton icon="close" onPress={() => setShowStatsModal(false)} />
+        </View>
+        {stats && (
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <View style={styles.colorCards}>
+              <View style={[styles.colorCard, { backgroundColor: '#dbeafe' }]}>
+                <MaterialCommunityIcons name="cube-outline" size={16} color="#1d4ed8" />
+                <Text style={[styles.ccLabel, { color: '#1d4ed8' }]}>Produits</Text>
+                <Text style={[styles.ccValue, { color: '#1d4ed8' }]}>{stats.totalProduits}</Text>
+              </View>
+              <View style={[styles.colorCard, { backgroundColor: '#dcfce7' }]}>
+                <MaterialCommunityIcons name="trending-up" size={16} color="#15803d" />
+                <Text style={[styles.ccLabel, { color: '#15803d' }]}>Valeur stock</Text>
+                <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('fr-FR')} F</Text>
+              </View>
+              <View style={[styles.colorCard, { backgroundColor: '#fef3c7' }]}>
+                <MaterialCommunityIcons name="alert-outline" size={16} color="#b45309" />
+                <Text style={[styles.ccLabel, { color: '#b45309' }]}>Stock faible</Text>
+                <Text style={[styles.ccValue, { color: '#b45309' }]}>{stats.produitsStockFaible}</Text>
+              </View>
+              <View style={[styles.colorCard, { backgroundColor: '#fee2e2' }]}>
+                <MaterialCommunityIcons name="close-circle-outline" size={16} color="#b91c1c" />
+                <Text style={[styles.ccLabel, { color: '#b91c1c' }]}>Rupture</Text>
+                <Text style={[styles.ccValue, { color: '#b91c1c' }]}>{stats.produitsRupture}</Text>
+              </View>
+            </View>
+            {stats.produitsPerimes !== undefined && (
+              <View style={styles.statRow}>
+                <Text style={{ color: colors.text }}>Produits périmés</Text>
+                <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>{stats.produitsPerimes}</Text>
+              </View>
+            )}
+            {stats.totalFournisseurs !== undefined && (
+              <View style={styles.statRow}>
+                <Text style={{ color: colors.text }}>Fournisseurs</Text>
+                <Text style={{ color: colors.text, fontWeight: 'bold' }}>{stats.totalFournisseurs}</Text>
+              </View>
+            )}
+          </ScrollView>
+        )}
+      </Modal>
 
       {/* Modal Niveaux */}
       <Modal visible={showNiveauxModal} animationType="slide" onRequestClose={() => setShowNiveauxModal(false)}>
@@ -837,7 +1236,31 @@ const styles = StyleSheet.create({
   offlineText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   syncBanner: { backgroundColor: '#1a56db', padding: 8, alignItems: 'center' },
   syncText: { color: '#fff', fontSize: 12 },
-  fab: { position: 'absolute', right: 16, bottom: 16, backgroundColor: '#1a56db', borderRadius: 16 },
+
+  // Cartes KPI (comme .color-cards Ionic)
+  colorCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 12, backgroundColor: '#fff' },
+  colorCard: { flexBasis: '47%', flexGrow: 1, borderRadius: 12, padding: 10, alignItems: 'flex-start' },
+  ccLabel: { fontSize: 11, fontWeight: '600', marginTop: 4 },
+  ccValue: { fontSize: 14, fontWeight: 'bold', marginTop: 2 },
+
+  // Chips segment (Tous/Stock faible/Péremption/Bio)
+  segChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f0f4f8', borderWidth: 1, borderColor: '#e2e8f0' },
+  segChipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
+  segChipText: { fontSize: 12, color: '#555', fontWeight: '600' },
+  segChipTextActive: { color: '#fff' },
+  sectionLabel: { fontSize: 12, color: '#64748b', marginTop: 10, marginBottom: 2 },
+
+  // Badges carte produit
+  bioBadge: { backgroundColor: '#dcfce7', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1 },
+  bioBadgeText: { color: '#15803d', fontWeight: '700', fontSize: 10 },
+  peremptionBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fef3c7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, alignSelf: 'flex-start', marginTop: 6 },
+  alerteMsg: { color: '#d97706', fontSize: 12, marginTop: 6, fontWeight: '600' },
+
+  // Modal catégories / stats
+  catRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  bioRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12 },
+
   modalHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 48, paddingBottom: 8,

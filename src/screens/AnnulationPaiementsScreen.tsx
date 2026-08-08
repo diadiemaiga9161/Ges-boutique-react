@@ -81,31 +81,20 @@ export default function AnnulationPaiementsScreen() {
 
       const range = getDateRange(period);
       const params = range.dateDebut ? range : undefined;
-      const net = await NetInfo.fetch();
+      // Toujours tenter l'appel réel en premier — NetInfo.fetch() peut renvoyer
+      // isConnected=null au premier appel et ferait sauter l'appel réel à tort.
 
       try {
         if (onglet === 'fournisseur') {
-          if (net.isConnected) {
-            const res = await getPaiementsFournisseur(params);
-            setPaiements(res.data);
-            await sauvegarderCache(CACHE_PAIEMENTS, res.data);
-            setFromCache(false);
-          } else {
-            const cached = await lireCache<any>(CACHE_PAIEMENTS);
-            setPaiements(cached);
-            setFromCache(true);
-          }
+          const res = await getPaiementsFournisseur(params);
+          setPaiements(res.data);
+          await sauvegarderCache(CACHE_PAIEMENTS, res.data);
+          setFromCache(false);
         } else {
-          if (net.isConnected) {
-            const res = await getReglements(params);
-            setReglements(res.data);
-            await sauvegarderCache(CACHE_REGLEMENTS, res.data);
-            setFromCache(false);
-          } else {
-            const cached = await lireCache<any>(CACHE_REGLEMENTS);
-            setReglements(cached);
-            setFromCache(true);
-          }
+          const res = await getReglements(params);
+          setReglements(res.data);
+          await sauvegarderCache(CACHE_REGLEMENTS, res.data);
+          setFromCache(false);
         }
       } catch {
         if (onglet === 'fournisseur') {

@@ -1,53 +1,48 @@
 import { useEffect, useState } from 'react';
-import { View, ScrollView, StyleSheet, RefreshControl } from 'react-native';
-import { Text, Card, ActivityIndicator, Divider } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
+import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import { getRapportMois, getDepenses } from '../services/api.service';
-import { useLang } from '../i18n/LangContext';
-import { tr } from '../i18n';
+import { getResultatJournalier, getResultatMensuel, getResultatAnnuel } from '../services/api.service';
+
+type Periode = 'JOURNALIER' | 'MENSUEL' | 'ANNUEL';
+
+const MOIS = [
+  { v: 1, l: 'Jan' }, { v: 2, l: 'Fév' }, { v: 3, l: 'Mar' }, { v: 4, l: 'Avr' },
+  { v: 5, l: 'Mai' }, { v: 6, l: 'Jun' }, { v: 7, l: 'Jul' }, { v: 8, l: 'Aoû' },
+  { v: 9, l: 'Sep' }, { v: 10, l: 'Oct' }, { v: 11, l: 'Nov' }, { v: 12, l: 'Déc' },
+];
+const ANNEES = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+
+const money = (v: number) => `${(v || 0).toLocaleString('fr-FR')} FCFA`;
+
+interface ResultatNet {
+  periode: string; dateDebut: string; dateFin: string;
+  benefices: number; bonusFournisseurs: number; depenses: number; resultatNet: number;
+  etat: 'GAIN' | 'PERTE';
+}
 
 export default function ResultatNetScreen() {
-  const { lang } = useLang();
-  const [rapport, setRapport] = useState<any>(null);
-  const [depenses, setDepenses] = useState<any[]>([]);
+  const [periodeActive, setPeriodeActive] = useState<Periode>('MENSUEL');
+  const [dateJour, setDateJour] = useState(new Date().toISOString().split('T')[0]);
+  const [moisSelect, setMoisSelect] = useState(new Date().getMonth() + 1);
+  const [anneeSelect, setAnneeSelect] = useState(new Date().getFullYear());
+  const [data, setData] = useState<ResultatNet | null>(null);
   const [loading, setLoading] = useState(true);
+  const [erreur, setErreur] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [fromCache, setFromCache] = useState(false);
 
-  const charger = async () => {
+  const charger = async (p: Periode = periodeActive) => {
     setLoading(true);
+    setErreur('');
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
-      const [r, d] = await Promise.all([getRapportMois(), getDepenses()]);
-      const rapportData = r.data?.data || r.data;
-      const deps = d.data?.data || d.data || [];
-      const mois = new Date().getMonth();
-      const annee = new Date().getFullYear();
-      const depensesFiltrees = deps.filter((dep: any) => {
-        if (!dep.date) return true;
-        const dt = new Date(dep.date);
-        return dt.getMonth() === mois && dt.getFullYear() === annee;
-      });
-      setRapport(rapportData);
-      setDepenses(depensesFiltrees);
-      setFromCache(false);
-      AsyncStorage.setItem(
-        'cache_resultat_net',
-        JSON.stringify({ rapport: rapportData, depenses: depensesFiltrees }),
-      ).catch(() => {});
-    } catch {
-      try {
-        const s = await AsyncStorage.getItem('cache_resultat_net');
-        if (s) {
-          const cached = JSON.parse(s);
-          setRapport(cached.rapport);
-          setDepenses(cached.depenses || []);
-          setFromCache(true);
-        }
-      } catch {}
+      let res;
+      if (p === 'JOURNALIER') res = await getResultatJournalier(dateJour);
+      else if (p === 'MENSUEL') res = await getResultatMensuel(moisSelect, anneeSelect);
+      else res = await getResultatAnnuel(anneeSelect);
+      setData(res.data?.data || res.data || null);
+    } catch (e: any) {
+      setErreur(e.response?.data?.message || 'Erreur résultat');
+      setData(null);
     }
     setLoading(false);
     setRefreshing(false);
@@ -55,165 +50,190 @@ export default function ResultatNetScreen() {
 
   useEffect(() => { charger(); }, []);
 
-  const ca = rapport?.chiffreAffaireTotal || 0;
-  const beneficeBrut = rapport?.beneficeTotal || 0;
-  const totalDepenses = depenses.reduce((s: number, d: any) => s + (d.montant || 0), 0);
-  const resultatNet = beneficeBrut - totalDepenses;
+  const selectionner = (p: Periode) => { setPeriodeActive(p); charger(p); };
 
-  if (loading && !refreshing) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
+  const totalPositif = data ? data.benefices + data.bonusFournisseurs : 0;
+  const pctBonus = data && totalPositif > 0 ? Math.round((data.bonusFournisseurs / totalPositif) * 100) : 0;
+  const pctDepenses = data && totalPositif > 0 ? Math.round((data.depenses / totalPositif) * 100) : 0;
+  const pctBenefices = data && totalPositif > 0 ? Math.round((data.benefices / totalPositif) * 100) : 0;
+  const isGain = data?.etat === 'GAIN';
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        contentContainerStyle={{ paddingBottom: 24 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); charger(); }}
-          />
-        }
-      >
-        {/* Hero banner */}
-        <View style={styles.hero}>
-          <View style={styles.heroStat}>
-            <Text style={styles.heroVal} numberOfLines={1} adjustsFontSizeToFit>
-              {ca.toLocaleString('fr-FR')}
+      {/* Onglets période */}
+      <View style={styles.periodTabs}>
+        {(['JOURNALIER', 'MENSUEL', 'ANNUEL'] as Periode[]).map(p => (
+          <TouchableOpacity key={p} style={[styles.periodBtn, periodeActive === p && styles.periodBtnActive]} onPress={() => selectionner(p)}>
+            <Text style={[styles.periodBtnText, periodeActive === p && styles.periodBtnTextActive]}>
+              {p === 'JOURNALIER' ? 'Jour' : p === 'MENSUEL' ? 'Mois' : 'Année'}
             </Text>
-            <Text style={styles.heroLbl}>CA Mois (FCFA)</Text>
-          </View>
-          <View style={styles.heroSep} />
-          <View style={styles.heroStat}>
-            <Text style={styles.heroVal} numberOfLines={1} adjustsFontSizeToFit>
-              {totalDepenses.toLocaleString('fr-FR')}
-            </Text>
-            <Text style={styles.heroLbl}>Charges (FCFA)</Text>
-          </View>
-          <View style={styles.heroSep} />
-          <View style={styles.heroStat}>
-            <Text
-              style={[styles.heroVal, { color: resultatNet >= 0 ? '#4ade80' : '#f87171' }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {resultatNet.toLocaleString('fr-FR')}
-            </Text>
-            <Text style={styles.heroLbl}>Résultat net (FCFA)</Text>
-          </View>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Filtres */}
+      {periodeActive === 'JOURNALIER' && (
+        <View style={styles.filterCard}>
+          <Text style={styles.filterLabel}>Date</Text>
+          <RNTextInput style={styles.dateInput} value={dateJour} onChangeText={setDateJour} onBlur={() => charger()} placeholder="AAAA-MM-JJ" />
         </View>
+      )}
+      {periodeActive === 'MENSUEL' && (
+        <View style={styles.filterCard}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+            {MOIS.map(m => (
+              <TouchableOpacity key={m.v} style={[styles.chip, moisSelect === m.v && styles.chipActive]} onPress={() => { setMoisSelect(m.v); charger(); }}>
+                <Text style={[styles.chipText, moisSelect === m.v && styles.chipTextActive]}>{m.l}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 6 }}>
+            {ANNEES.map(a => (
+              <TouchableOpacity key={a} style={[styles.chip, anneeSelect === a && styles.chipActive]} onPress={() => { setAnneeSelect(a); charger(); }}>
+                <Text style={[styles.chipText, anneeSelect === a && styles.chipTextActive]}>{a}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+      {periodeActive === 'ANNUEL' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ ...styles.filterCard, gap: 6 }}>
+          {ANNEES.map(a => (
+            <TouchableOpacity key={a} style={[styles.chip, anneeSelect === a && styles.chipActive]} onPress={() => { setAnneeSelect(a); charger(); }}>
+              <Text style={[styles.chipText, anneeSelect === a && styles.chipTextActive]}>{a}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
-        {/* Bandeau offline */}
-        {fromCache && (
-          <View style={styles.offlineBanner}>
-            <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-            <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-          </View>
-        )}
-
-        {/* Card synthèse calcul */}
-        <Card style={styles.card}>
-          <Card.Content>
-            <Text variant="titleMedium" style={styles.sectionTitle}>Calcul du résultat</Text>
-
-            <View style={styles.detailRow}>
-              <View style={[styles.avatar, { backgroundColor: '#1a56db22' }]}>
-                <MaterialCommunityIcons name="cash-multiple" size={22} color="#1a56db" />
+      {loading && !refreshing ? (
+        <ActivityIndicator style={{ flex: 1 }} size="large" />
+      ) : erreur ? (
+        <View style={styles.errorCard}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#dc2626" />
+          <Text style={styles.errorTxt}>{erreur}</Text>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
+        >
+          {data && (
+            <>
+              {/* Carte principale GAIN/PERTE */}
+              <View style={[styles.resultatCard, isGain ? styles.resultatCardGain : styles.resultatCardPerte]}>
+                <View style={[styles.resultatBadge, { backgroundColor: isGain ? '#16a34a' : '#dc2626' }]}>
+                  <MaterialCommunityIcons name={isGain ? 'trending-up' : 'trending-down'} size={14} color="#fff" />
+                  <Text style={styles.resultatBadgeText}>{data.etat}</Text>
+                </View>
+                <Text style={[styles.resultatMontant, { color: isGain ? '#16a34a' : '#dc2626' }]}>{money(data.resultatNet)}</Text>
+                <Text style={styles.resultatPeriode}>{data.periode} · {data.dateDebut} → {data.dateFin}</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>{tr('chiffre_affaires', lang)}</Text>
-              </View>
-              <Text style={[styles.cardAmt, { color: '#16a34a' }]}>{ca.toLocaleString('fr-FR')} F</Text>
-            </View>
 
-            <View style={styles.detailRow}>
-              <View style={[styles.avatar, { backgroundColor: '#1a56db22' }]}>
-                <MaterialCommunityIcons name="trending-up" size={22} color="#1a56db" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>{tr('benefice_brut', lang)}</Text>
-              </View>
-              <Text style={[styles.cardAmt, { color: '#16a34a' }]}>{beneficeBrut.toLocaleString('fr-FR')} F</Text>
-            </View>
-
-            <Divider style={{ marginVertical: 8 }} />
-
-            <View style={styles.detailRow}>
-              <View style={[styles.avatar, { backgroundColor: '#dc262622' }]}>
-                <MaterialCommunityIcons name="minus-circle" size={22} color="#dc2626" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>{tr('total', lang)} {tr('depenses', lang)}</Text>
-              </View>
-              <Text style={[styles.cardAmt, { color: '#dc2626' }]}>
-                - {totalDepenses.toLocaleString('fr-FR')} F
-              </Text>
-            </View>
-
-            <Divider style={{ marginVertical: 8 }} />
-
-            <View style={styles.detailRow}>
-              <View style={[styles.avatar, { backgroundColor: resultatNet >= 0 ? '#16a34a22' : '#dc262622' }]}>
-                <MaterialCommunityIcons
-                  name={resultatNet >= 0 ? 'check-circle' : 'alert-circle'}
-                  size={22}
-                  color={resultatNet >= 0 ? '#16a34a' : '#dc2626'}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cardName, { fontWeight: 'bold' }]}>{tr('resultat_net', lang)}</Text>
-              </View>
-              <Text style={[styles.cardAmt, { color: resultatNet >= 0 ? '#16a34a' : '#dc2626', fontSize: 16 }]}>
-                {resultatNet.toLocaleString('fr-FR')} F
-              </Text>
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Liste des dépenses du mois */}
-        {depenses.length > 0 && (
-          <>
-            <Text style={styles.sectionLabel}>Dépenses du mois ({depenses.length})</Text>
-            {depenses.map((dep, i) => (
-              <Card key={dep.id ?? i} style={styles.card}>
-                <Card.Content style={styles.cardRow}>
-                  <View style={[styles.avatar, { backgroundColor: '#dc262622' }]}>
-                    <MaterialCommunityIcons name="cash-minus" size={22} color="#dc2626" />
+              {/* Décomposition */}
+              <View style={styles.detailCard}>
+                <View style={styles.detailRow}>
+                  <View style={[styles.detailIcon, { backgroundColor: '#16a34a22' }]}>
+                    <MaterialCommunityIcons name="trending-up" size={18} color="#16a34a" />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardName}>{dep.libelle || dep.motif || 'Dépense'}</Text>
-                    <Text style={styles.cardSub}>
-                      {dep.date ? new Date(dep.date).toLocaleDateString('fr-FR') : '—'}
-                      {dep.categorie ? ` · ${dep.categorie}` : ''}
-                    </Text>
+                    <Text style={styles.detailLabel}>Bénéfices ventes</Text>
                   </View>
-                  <Text style={[styles.cardAmt, { color: '#dc2626' }]}>
-                    {(dep.montant || 0).toLocaleString('fr-FR')} F
-                  </Text>
-                </Card.Content>
-              </Card>
-            ))}
-          </>
-        )}
-      </ScrollView>
+                  <Text style={[styles.detailValue, { color: '#16a34a' }]}>{money(data.benefices)}</Text>
+                </View>
+                <Text style={styles.detailSep}>+</Text>
+                <View style={styles.detailRow}>
+                  <View style={[styles.detailIcon, { backgroundColor: '#1a56db22' }]}>
+                    <MaterialCommunityIcons name="gift-outline" size={18} color="#1a56db" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailLabel}>Bonus fournisseurs</Text>
+                  </View>
+                  <Text style={[styles.detailValue, { color: '#1a56db' }]}>{money(data.bonusFournisseurs)} <Text style={styles.detailPct}>({pctBonus}%)</Text></Text>
+                </View>
+                <Text style={styles.detailSep}>−</Text>
+                <View style={styles.detailRow}>
+                  <View style={[styles.detailIcon, { backgroundColor: '#dc262622' }]}>
+                    <MaterialCommunityIcons name="trending-down" size={18} color="#dc2626" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailLabel}>Dépenses</Text>
+                  </View>
+                  <Text style={[styles.detailValue, { color: '#dc2626' }]}>{money(data.depenses)} <Text style={styles.detailPct}>({pctDepenses}%)</Text></Text>
+                </View>
+                <View style={[styles.detailTotal, { borderTopColor: isGain ? '#16a34a' : '#dc2626' }]}>
+                  <Text style={styles.detailTotalEq}>=</Text>
+                  <Text style={styles.detailTotalLabel}>Résultat Net</Text>
+                  <Text style={[styles.detailTotalValue, { color: isGain ? '#16a34a' : '#dc2626' }]}>{money(data.resultatNet)}</Text>
+                </View>
+              </View>
+
+              {/* Barres */}
+              <View style={styles.barsCard}>
+                <View style={styles.barRow}>
+                  <Text style={[styles.barLabel, { color: '#16a34a' }]}>Bénéfices</Text>
+                  <View style={styles.barTrack}><View style={[styles.barFill, { width: `${pctBenefices}%` as any, backgroundColor: '#16a34a' }]} /></View>
+                </View>
+                <View style={styles.barRow}>
+                  <Text style={[styles.barLabel, { color: '#1a56db' }]}>Bonus</Text>
+                  <View style={styles.barTrack}><View style={[styles.barFill, { width: `${pctBonus}%` as any, backgroundColor: '#1a56db' }]} /></View>
+                </View>
+                <View style={styles.barRow}>
+                  <Text style={[styles.barLabel, { color: '#dc2626' }]}>Dépenses</Text>
+                  <View style={styles.barTrack}><View style={[styles.barFill, { width: `${pctDepenses}%` as any, backgroundColor: '#dc2626' }]} /></View>
+                </View>
+              </View>
+            </>
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
-  heroStat: { flex: 1, alignItems: 'center' },
-  heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2, textAlign: 'center' },
-  heroSep: { width: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 4 },
-  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
-  offlineTxt: { color: '#92400e', fontSize: 12 },
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
-  sectionTitle: { fontWeight: 'bold', color: '#1a56db', marginBottom: 12 },
-  sectionLabel: { fontSize: 13, fontWeight: '600', color: '#64748b', marginHorizontal: 16, marginTop: 8, marginBottom: 4 },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
-  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
-  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
-  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 14 },
+
+  periodTabs: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12 },
+  periodBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#fff', alignItems: 'center' },
+  periodBtnActive: { backgroundColor: '#1a56db' },
+  periodBtnText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  periodBtnTextActive: { color: '#fff' },
+
+  filterCard: { marginHorizontal: 12, marginTop: 10, backgroundColor: '#fff', borderRadius: 10, padding: 10 },
+  filterLabel: { fontSize: 11, color: '#64748b', marginBottom: 4 },
+  dateInput: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
+  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#f1f5f9' },
+  chipActive: { backgroundColor: '#1a56db' },
+  chipText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
+  chipTextActive: { color: '#fff' },
+
+  errorCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fef2f2', margin: 12, padding: 14, borderRadius: 10 },
+  errorTxt: { color: '#dc2626', fontSize: 13, flex: 1 },
+
+  resultatCard: { alignItems: 'center', borderRadius: 16, padding: 20, marginBottom: 12, borderWidth: 1.5 },
+  resultatCardGain: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  resultatCardPerte: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  resultatBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8 },
+  resultatBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  resultatMontant: { fontSize: 26, fontWeight: 'bold' },
+  resultatPeriode: { fontSize: 11, color: '#64748b', marginTop: 6 },
+
+  detailCard: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 12, elevation: 1 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
+  detailIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  detailLabel: { fontSize: 13, color: '#334155' },
+  detailValue: { fontSize: 13, fontWeight: '700' },
+  detailPct: { fontSize: 11, fontWeight: '400', color: '#94a3b8' },
+  detailSep: { textAlign: 'center', color: '#94a3b8', fontSize: 14, fontWeight: 'bold' },
+  detailTotal: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 2, marginTop: 8, paddingTop: 10 },
+  detailTotalEq: { fontSize: 14, fontWeight: 'bold', color: '#94a3b8' },
+  detailTotalLabel: { flex: 1, fontSize: 13, fontWeight: '700', color: '#1e293b' },
+  detailTotalValue: { fontSize: 15, fontWeight: 'bold' },
+
+  barsCard: { backgroundColor: '#fff', borderRadius: 14, padding: 14, elevation: 1 },
+  barRow: { marginBottom: 10 },
+  barLabel: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  barTrack: { height: 8, backgroundColor: '#f1f5f9', borderRadius: 4, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 4 },
 });

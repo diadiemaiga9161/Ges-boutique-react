@@ -11,7 +11,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildRecuReglementCreditHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
-import NetInfo from '@react-native-community/netinfo';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -218,8 +217,8 @@ export default function CreditsScreen() {
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
+      // Toujours tenter l'appel réel en premier — NetInfo.fetch() peut renvoyer
+      // isConnected=null au premier appel et ferait sauter l'appel réel à tort.
       const [resNonRegles, resRegles, resVentes] = await Promise.all([
         api.get('/caisse/credits/non-regles').catch(() => ({ data: [] })),
         api.get('/caisse/credits/regles').catch(() => ({ data: [] })),

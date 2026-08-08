@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
@@ -14,34 +14,32 @@ import { tr } from '../i18n';
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Compte {
   id: number;
-  nom: string;
-  numero?: string;
-  banque?: string;
-  type: 'COURANT' | 'EPARGNE' | 'CAISSE';
-  solde: number;
+  nomBanque: string;
+  numeroCompte?: string;
+  agence?: string;
+  titulaire?: string;
+  soldeInitial: number;
+  soldeActuel: number;
+  actif: boolean;
+  description?: string;
 }
+
+type TypeOperationCompte = 'VERSEMENT' | 'RETRAIT' | 'CHEQUE' | 'FRAIS' | 'BON_CAISSE' | 'PAIEMENT_FOURNISSEUR' | 'AVANCE_FOURNISSEUR';
 
 interface OperationCompte {
   id: number;
-  date: string;
-  description: string;
+  type: TypeOperationCompte;
   montant: number;
-  type: 'CREDIT' | 'DEBIT';
+  soldeAvant: number;
+  soldeApres: number;
+  motif?: string;
+  reference?: string;
+  dateOperation: string;
 }
 
-// ─── Constantes ──────────────────────────────────────────────────────────────
-const TYPES_COMPTE = ['COURANT', 'EPARGNE', 'CAISSE'] as const;
-
-const TYPE_CONFIG: Record<Compte['type'], {
-  label: string;
-  icon: 'bank-outline' | 'piggy-bank-outline' | 'cash-multiple';
-  color: string;
-  bg: string;
-}> = {
-  COURANT: { label: 'Courant', icon: 'bank-outline',       color: '#1d4ed8', bg: '#eff6ff' },
-  EPARGNE: { label: 'Épargne', icon: 'piggy-bank-outline', color: '#7c3aed', bg: '#f5f3ff' },
-  CAISSE:  { label: 'Caisse',  icon: 'cash-multiple',      color: '#047857', bg: '#ecfdf5' },
-};
+// Types d'opération qui augmentent le solde — le reste (retrait, chèque,
+// frais, paiement/avance fournisseur) le diminue.
+const TYPES_CREDIT: TypeOperationCompte[] = ['VERSEMENT'];
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v ?? 0).toLocaleString('fr-FR') + ' FCFA';
@@ -75,28 +73,28 @@ export default function ComptesScreen() {
   const [opMontant, setOpMontant] = useState('');
   const [opDescription, setOpDescription] = useState('');
   const [savingOp, setSavingOp] = useState(false);
+  const [userId, setUserId] = useState<number>(0);
 
   // Formulaire compte
-  const [formNom, setFormNom] = useState('');
-  const [formNumero, setFormNumero] = useState('');
-  const [formBanque, setFormBanque] = useState('');
-  const [formType, setFormType] = useState<Compte['type']>('COURANT');
-  const [formSolde, setFormSolde] = useState('');
+  const [formNomBanque, setFormNomBanque] = useState('');
+  const [formNumeroCompte, setFormNumeroCompte] = useState('');
+  const [formAgence, setFormAgence] = useState('');
+  const [formTitulaire, setFormTitulaire] = useState('');
+  const [formSoldeInitial, setFormSoldeInitial] = useState('');
+  const [formDescription, setFormDescription] = useState('');
   const [savingForm, setSavingForm] = useState(false);
 
   // ─── Stats ────────────────────────────────────────────────────────────────
-  const totalSolde = useMemo(() => comptes.reduce((s, c) => s + c.solde, 0), [comptes]);
+  const totalSolde = useMemo(() => comptes.reduce((s, c) => s + c.soldeActuel, 0), [comptes]);
 
   const compteMax = useMemo(
-    () => comptes.reduce<Compte | null>((max, c) => (!max || c.solde > max.solde ? c : max), null),
+    () => comptes.reduce<Compte | null>((max, c) => (!max || c.soldeActuel > max.soldeActuel ? c : max), null),
     [comptes]
   );
 
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/comptes');
       const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       setComptes(liste);
@@ -111,14 +109,19 @@ export default function ComptesScreen() {
     setRefreshing(false);
   }, [lang]);
 
-  useEffect(() => { charger(); }, []);
+  useEffect(() => {
+    charger();
+    AsyncStorage.getItem('user').then(raw => {
+      if (raw) { try { setUserId(JSON.parse(raw)?.id || 0); } catch {} }
+    });
+  }, []);
 
   // ─── Actions ─────────────────────────────────────────────────────────────
   const openOperation = (compte: Compte, type: 'depot' | 'retrait') => {
     setSelectedCompte(compte);
     setOperationType(type);
     setOpMontant('');
-    setOpDescription(type === 'depot' ? 'Dépôt' : 'Retrait');
+    setOpDescription('');
     setShowOperation(true);
   };
 
@@ -136,40 +139,25 @@ export default function ComptesScreen() {
   const openFormNouveau = () => {
     setIsEditing(false);
     setSelectedCompte(null);
-    setFormNom('');
-    setFormNumero('');
-    setFormBanque('');
-    setFormType('COURANT');
-    setFormSolde('');
+    setFormNomBanque('');
+    setFormNumeroCompte('');
+    setFormAgence('');
+    setFormTitulaire('');
+    setFormSoldeInitial('');
+    setFormDescription('');
     setShowForm(true);
   };
 
   const openFormModifier = (compte: Compte) => {
     setIsEditing(true);
     setSelectedCompte(compte);
-    setFormNom(compte.nom);
-    setFormNumero(compte.numero || '');
-    setFormBanque(compte.banque || '');
-    setFormType(compte.type);
-    setFormSolde(String(compte.solde));
+    setFormNomBanque(compte.nomBanque);
+    setFormNumeroCompte(compte.numeroCompte || '');
+    setFormAgence(compte.agence || '');
+    setFormTitulaire(compte.titulaire || '');
+    setFormSoldeInitial(String(compte.soldeInitial));
+    setFormDescription(compte.description || '');
     setShowForm(true);
-  };
-
-  const supprimerCompte = (compte: Compte) => {
-    Alert.alert('Supprimer', `Supprimer le compte "${compte.nom}" ?`, [
-      { text: tr('annuler', lang), style: 'cancel' },
-      {
-        text: tr('supprimer', lang), style: 'destructive',
-        onPress: async () => {
-          try {
-            await executerOuMettreEnFile('compte_delete', { id: compte.id }, () => api.delete(`/comptes/${compte.id}`));
-            charger();
-          } catch {
-            Alert.alert(tr('erreur', lang), 'Suppression impossible');
-          }
-        },
-      },
-    ]);
   };
 
   const effectuerOperation = async () => {
@@ -179,16 +167,24 @@ export default function ComptesScreen() {
       Alert.alert(tr('erreur', lang), 'Montant invalide');
       return;
     }
-    if (operationType === 'retrait' && montant > selectedCompte.solde) {
-      Alert.alert(tr('erreur', lang), `Solde insuffisant : ${money(selectedCompte.solde)}`);
+    if (operationType === 'retrait' && montant > selectedCompte.soldeActuel) {
+      Alert.alert(tr('erreur', lang), `Solde insuffisant : ${money(selectedCompte.soldeActuel)}`);
       return;
     }
     setSavingOp(true);
-    const opType = operationType === 'depot' ? 'compte_versement' : 'compte_retrait';
-    const opData = { montant, description: opDescription.trim() || (operationType === 'depot' ? 'Dépôt' : 'Retrait') };
-    const endpoint = operationType === 'depot' ? 'versement' : 'retrait';
+    const opData = {
+      compteId: selectedCompte.id,
+      type: (operationType === 'depot' ? 'VERSEMENT' : 'RETRAIT') as TypeOperationCompte,
+      montant,
+      motif: opDescription.trim() || undefined,
+      utilisateurId: userId || undefined,
+    };
     try {
-      await executerOuMettreEnFile(opType, { id: selectedCompte.id, data: opData }, () => api.post(`/comptes/${selectedCompte.id}/${endpoint}`, opData));
+      await executerOuMettreEnFile(
+        operationType === 'depot' ? 'compte_versement' : 'compte_retrait',
+        opData,
+        () => api.post('/comptes/operation', opData)
+      );
       setShowOperation(false);
       charger();
     } catch {
@@ -198,19 +194,20 @@ export default function ComptesScreen() {
   };
 
   const sauvegarderCompte = async () => {
-    if (!formNom.trim()) {
-      Alert.alert(tr('erreur', lang), 'Le nom du compte est requis');
+    if (!formNomBanque.trim()) {
+      Alert.alert(tr('erreur', lang), 'Le nom de la banque est requis');
       return;
     }
     setSavingForm(true);
     const data: Record<string, any> = {
-      nom: formNom.trim(),
-      numero: formNumero.trim() || undefined,
-      banque: formBanque.trim() || undefined,
-      type: formType,
+      nomBanque: formNomBanque.trim(),
+      numeroCompte: formNumeroCompte.trim() || undefined,
+      agence: formAgence.trim() || undefined,
+      titulaire: formTitulaire.trim() || undefined,
+      description: formDescription.trim() || undefined,
     };
     if (!isEditing) {
-      data.solde = parseFloat(formSolde) || 0;
+      data.soldeInitial = parseFloat(formSoldeInitial) || 0;
     }
     try {
       if (isEditing && selectedCompte) {
@@ -255,7 +252,7 @@ export default function ComptesScreen() {
         <View style={s.heroStat}>
           <Text style={s.heroLabel}>Meilleur solde</Text>
           <Text style={s.heroVal} numberOfLines={1}>
-            {compteMax ? compteMax.nom : '—'}
+            {compteMax ? compteMax.nomBanque : '—'}
           </Text>
         </View>
       </View>
@@ -288,66 +285,59 @@ export default function ComptesScreen() {
             <Text style={s.emptyStateText}>Aucun compte enregistré</Text>
           </View>
         }
-        renderItem={({ item: c }) => {
-          const cfg = TYPE_CONFIG[c.type];
-          return (
-            <View style={s.card}>
-              <View style={s.cardTop}>
-                <View style={[s.typeIcon, { backgroundColor: cfg.bg }]}>
-                  <MaterialCommunityIcons name={cfg.icon} size={22} color={cfg.color} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.compteNom}>{c.nom}</Text>
-                  <Text style={s.compteNumero}>{masquerNumero(c.numero)}</Text>
-                  {!!c.banque && <Text style={s.compteBanque}>{c.banque}</Text>}
-                  <View style={[s.typeBadge, { backgroundColor: cfg.bg }]}>
-                    <Text style={[s.typeBadgeText, { color: cfg.color }]}>{cfg.label}</Text>
-                  </View>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[s.soldeText, { color: c.solde >= 0 ? '#16a34a' : '#dc2626' }]}>
-                    {money(c.solde)}
-                  </Text>
-                  <Text style={s.soldeLabel}>Solde</Text>
-                </View>
+        renderItem={({ item: c }) => (
+          <View style={s.card}>
+            <View style={s.cardTop}>
+              <View style={[s.typeIcon, { backgroundColor: c.actif === false ? '#f3f4f6' : '#eff6ff' }]}>
+                <MaterialCommunityIcons name="bank-outline" size={22} color={c.actif === false ? '#9ca3af' : '#1d4ed8'} />
               </View>
-
-              {/* Actions */}
-              <View style={s.cardActions}>
-                <TouchableOpacity
-                  style={[s.actionBtn, { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }]}
-                  onPress={() => openOperation(c, 'depot')}
-                >
-                  <MaterialCommunityIcons name="arrow-down-circle-outline" size={14} color="#047857" />
-                  <Text style={[s.actionBtnText, { color: '#047857' }]}>Déposer</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[s.actionBtn, { backgroundColor: '#fef2f2', borderColor: '#fca5a5' }]}
-                  onPress={() => openOperation(c, 'retrait')}
-                >
-                  <MaterialCommunityIcons name="arrow-up-circle-outline" size={14} color="#dc2626" />
-                  <Text style={[s.actionBtnText, { color: '#dc2626' }]}>Retirer</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[s.actionBtn, { borderColor: '#bfdbfe' }]}
-                  onPress={() => openOpsListe(c)}
-                >
-                  <MaterialCommunityIcons name="history" size={14} color="#1d4ed8" />
-                  <Text style={[s.actionBtnText, { color: '#1d4ed8' }]}>Ops.</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={s.actionIconBtn} onPress={() => openFormModifier(c)}>
-                  <MaterialCommunityIcons name="pencil-outline" size={16} color="#666" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[s.actionIconBtn, { borderColor: '#fca5a5' }]}
-                  onPress={() => supprimerCompte(c)}
-                >
-                  <MaterialCommunityIcons name="trash-can-outline" size={16} color="#dc2626" />
-                </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={s.compteNom}>{c.nomBanque}</Text>
+                <Text style={s.compteNumero}>{masquerNumero(c.numeroCompte)}</Text>
+                {!!c.titulaire && <Text style={s.compteBanque}>{c.titulaire}{c.agence ? ` · ${c.agence}` : ''}</Text>}
+                {c.actif === false && (
+                  <View style={[s.typeBadge, { backgroundColor: '#fef2f2' }]}>
+                    <Text style={[s.typeBadgeText, { color: '#dc2626' }]}>Inactif</Text>
+                  </View>
+                )}
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={[s.soldeText, { color: c.soldeActuel >= 0 ? '#16a34a' : '#dc2626' }]}>
+                  {money(c.soldeActuel)}
+                </Text>
+                <Text style={s.soldeLabel}>Solde</Text>
               </View>
             </View>
-          );
-        }}
+
+            {/* Actions */}
+            <View style={s.cardActions}>
+              <TouchableOpacity
+                style={[s.actionBtn, { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }]}
+                onPress={() => openOperation(c, 'depot')}
+              >
+                <MaterialCommunityIcons name="arrow-down-circle-outline" size={14} color="#047857" />
+                <Text style={[s.actionBtnText, { color: '#047857' }]}>Déposer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.actionBtn, { backgroundColor: '#fef2f2', borderColor: '#fca5a5' }]}
+                onPress={() => openOperation(c, 'retrait')}
+              >
+                <MaterialCommunityIcons name="arrow-up-circle-outline" size={14} color="#dc2626" />
+                <Text style={[s.actionBtnText, { color: '#dc2626' }]}>Retirer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.actionBtn, { borderColor: '#bfdbfe' }]}
+                onPress={() => openOpsListe(c)}
+              >
+                <MaterialCommunityIcons name="history" size={14} color="#1d4ed8" />
+                <Text style={[s.actionBtnText, { color: '#1d4ed8' }]}>Ops.</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.actionIconBtn} onPress={() => openFormModifier(c)}>
+                <MaterialCommunityIcons name="pencil-outline" size={16} color="#666" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       />
 
       {/* ── Modal Opération (Dépôt / Retrait) ──────────────────────────────── */}
@@ -384,14 +374,14 @@ export default function ComptesScreen() {
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
               {selectedCompte && (
                 <View style={s.infoCard}>
-                  <Text style={s.infoCardTitle}>{selectedCompte.nom}</Text>
+                  <Text style={s.infoCardTitle}>{selectedCompte.nomBanque}</Text>
                   <View style={s.infoRow}>
                     <Text style={s.infoLabel}>{tr('solde_actuel', lang)}</Text>
                     <Text style={[
                       s.infoVal,
-                      { color: selectedCompte.solde >= 0 ? '#16a34a' : '#dc2626', fontWeight: '700' },
+                      { color: selectedCompte.soldeActuel >= 0 ? '#16a34a' : '#dc2626', fontWeight: '700' },
                     ]}>
-                      {money(selectedCompte.solde)}
+                      {money(selectedCompte.soldeActuel)}
                     </Text>
                   </View>
                 </View>
@@ -460,7 +450,7 @@ export default function ComptesScreen() {
             <View style={s.handle} />
             <View style={s.modalHead}>
               <Text style={s.modalTitle} numberOfLines={1}>
-                Opérations — {selectedCompte?.nom}
+                Opérations — {selectedCompte?.nomBanque}
               </Text>
               <TouchableOpacity onPress={() => setShowOpsListe(false)}>
                 <MaterialCommunityIcons name="close" size={22} color="#666" />
@@ -473,24 +463,27 @@ export default function ComptesScreen() {
                 <Text style={s.emptyText}>Aucune opération enregistrée</Text>
               ) : (
                 <>
-                  {operations.slice(0, 10).map((op, i) => (
-                    <View key={op.id ?? i} style={s.opRow}>
-                      <View style={[
-                        s.opDot,
-                        { backgroundColor: op.type === 'CREDIT' ? '#16a34a' : '#dc2626' },
-                      ]} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.opDesc}>{op.description}</Text>
-                        <Text style={s.opDate}>{dateStr(op.date)}</Text>
+                  {operations.slice(0, 10).map((op, i) => {
+                    const isCredit = TYPES_CREDIT.includes(op.type);
+                    return (
+                      <View key={op.id ?? i} style={s.opRow}>
+                        <View style={[
+                          s.opDot,
+                          { backgroundColor: isCredit ? '#16a34a' : '#dc2626' },
+                        ]} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.opDesc}>{op.motif || op.type}</Text>
+                          <Text style={s.opDate}>{dateStr(op.dateOperation)}</Text>
+                        </View>
+                        <Text style={[
+                          s.opMontant,
+                          { color: isCredit ? '#16a34a' : '#dc2626' },
+                        ]}>
+                          {isCredit ? '+' : '-'}{money(op.montant)}
+                        </Text>
                       </View>
-                      <Text style={[
-                        s.opMontant,
-                        { color: op.type === 'CREDIT' ? '#16a34a' : '#dc2626' },
-                      ]}>
-                        {op.type === 'CREDIT' ? '+' : '-'}{money(op.montant)}
-                      </Text>
-                    </View>
-                  ))}
+                    );
+                  })}
                   {operations.length > 10 && (
                     <Text style={s.emptyText}>
                       10 dernières opérations affichées sur {operations.length}
@@ -527,69 +520,59 @@ export default function ComptesScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
-              <Text style={s.fieldLabel}>Nom du compte *</Text>
+              <Text style={s.fieldLabel}>Nom de la banque *</Text>
               <TextInput
                 style={s.fieldInput}
-                value={formNom}
-                onChangeText={setFormNom}
-                placeholder="Ex : Compte principal"
+                value={formNomBanque}
+                onChangeText={setFormNomBanque}
+                placeholder="Ex : BDM SA, Ecobank..."
                 placeholderTextColor="#bbb"
               />
               <Text style={s.fieldLabel}>Numéro de compte</Text>
               <TextInput
                 style={s.fieldInput}
-                value={formNumero}
-                onChangeText={setFormNumero}
+                value={formNumeroCompte}
+                onChangeText={setFormNumeroCompte}
                 placeholder="Ex : 00123456789"
                 placeholderTextColor="#bbb"
               />
-              <Text style={s.fieldLabel}>Banque / Institution</Text>
+              <Text style={s.fieldLabel}>Agence</Text>
               <TextInput
                 style={s.fieldInput}
-                value={formBanque}
-                onChangeText={setFormBanque}
-                placeholder="Ex : BDM SA, Ecobank..."
+                value={formAgence}
+                onChangeText={setFormAgence}
+                placeholder="Ex : Agence centrale"
                 placeholderTextColor="#bbb"
               />
-              <Text style={s.fieldLabel}>Type de compte</Text>
-              <View style={s.chips}>
-                {TYPES_COMPTE.map(t => {
-                  const cfg = TYPE_CONFIG[t];
-                  const active = formType === t;
-                  return (
-                    <TouchableOpacity
-                      key={t}
-                      style={[
-                        s.chipType,
-                        active && { backgroundColor: cfg.color, borderColor: cfg.color },
-                      ]}
-                      onPress={() => setFormType(t)}
-                    >
-                      <MaterialCommunityIcons
-                        name={cfg.icon}
-                        size={14}
-                        color={active ? '#fff' : '#666'}
-                      />
-                      <Text style={[s.chipTypeText, active && { color: '#fff', fontWeight: '600' }]}>
-                        {cfg.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <Text style={s.fieldLabel}>Titulaire</Text>
+              <TextInput
+                style={s.fieldInput}
+                value={formTitulaire}
+                onChangeText={setFormTitulaire}
+                placeholder="Nom du titulaire"
+                placeholderTextColor="#bbb"
+              />
               {!isEditing && (
                 <>
                   <Text style={s.fieldLabel}>{tr('solde_initial', lang)}</Text>
                   <TextInput
                     style={s.fieldInput}
-                    value={formSolde}
-                    onChangeText={setFormSolde}
+                    value={formSoldeInitial}
+                    onChangeText={setFormSoldeInitial}
                     keyboardType="numeric"
                     placeholder="0"
                     placeholderTextColor="#bbb"
                   />
                 </>
               )}
+              <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
+              <TextInput
+                style={s.fieldInput}
+                value={formDescription}
+                onChangeText={setFormDescription}
+                placeholder="Description (optionnel)"
+                placeholderTextColor="#bbb"
+              />
             </ScrollView>
             <View style={s.modalFoot}>
               <TouchableOpacity style={s.btnCancel} onPress={() => setShowForm(false)}>

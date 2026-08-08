@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#081648"
-    },
     "ios": {
       "supportsTablet": true
     },
@@ -21,10 +16,8 @@
         "backgroundColor": "#081648",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "minSdkVersion": 21
+      "predictiveBackGestureEnabled": false
     },
-    "newArchEnabled": false,
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -35,7 +28,16 @@
           "cameraPermission": "Autoriser Ges Boutique à accéder à votre caméra pour scanner les codes-barres.",
           "recordAudioAndroid": false
         }
-      ]
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#081648"
+        }
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

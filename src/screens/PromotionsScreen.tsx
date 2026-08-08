@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl, TouchableOpacity, ScrollView, Modal, TextInput } from 'react-native';
 import { Text, FAB, ActivityIndicator, Switch, Card } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
 import api, { createPromotion, updatePromotion } from '../services/api.service';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
@@ -43,8 +42,6 @@ export default function PromotionsScreen() {
   const charger = async (event?: any) => {
     setLoading(true);
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/promotions');
       const data = res.data?.data || res.data || [];
       setPromos(data);

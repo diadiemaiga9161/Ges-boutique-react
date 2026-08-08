@@ -19,8 +19,8 @@ const FEATURES = [
 ];
 
 const CONTACTS = [
-  { icon: '💬', label: 'WhatsApp',         value: '+223 79 99 99 99',          url: 'https://wa.me/22379999999' },
-  { icon: '✉️', label: 'Email',            value: 'contact@mg-consulting.site', url: 'mailto:contact@mg-consulting.site' },
+  { icon: '💬', label: 'WhatsApp',         value: '+223 53 41 79 19',           url: 'https://wa.me/22353417919' },
+  { icon: '✉️', label: 'Email',            value: 'doumaiga3@gmail.com',        url: 'mailto:doumaiga3@gmail.com' },
   { icon: '🌐', label: 'Amadou Maiga CEO', value: 'diadiemaiga9161.github.io',  url: 'https://diadiemaiga9161.github.io/Portfolio-Maiga-/' },
 ];
 
@@ -31,8 +31,7 @@ const ABOUT_ROWS = [
   { label: 'Fondateur & CEO', value: 'Amadou Maiga' },
   { label: 'Vision',         value: 'Digitaliser la gestion des boutiques en Afrique avec des outils simples, puissants et accessibles offline' },
   { label: 'Secteur',        value: 'FinTech / Commerce' },
-  { label: 'Technologie',    value: 'Angular, Ionic, React Native, Flutter, Spring Boot' },
-  { label: 'Contact',        value: 'contact@mg-consulting.site' },
+  { label: 'Contact',        value: 'doumaiga3@gmail.com' },
   { label: 'Copyright',      value: '© 2024-2026 Maïga Consulting. Tous droits réservés.' },
 ];
 
@@ -65,7 +64,7 @@ export default function ResourcesScreen() {
           <Text style={styles.badgeText}>v1.0</Text>
         </View>
 
-        <Text style={styles.heroDev}>Développé par MG Consulting · Maïga Consulting</Text>
+        <Text style={styles.heroDev}>Développé par MAÏGA CONSULTING</Text>
       </View>
 
       {/* ═══════════════ FONCTIONNALITÉS ═══════════════ */}

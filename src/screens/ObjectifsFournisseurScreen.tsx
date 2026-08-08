@@ -19,7 +19,6 @@ import {
   Divider,
   IconButton,
 } from 'react-native-paper';
-import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
@@ -82,8 +81,6 @@ export default function ObjectifsFournisseurScreen() {
 
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/objectifs-fournisseur');
       const liste = res.data?.data || res.data || [];
       setObjectifs(liste);

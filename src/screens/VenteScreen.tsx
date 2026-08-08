@@ -1,16 +1,19 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, FlatList, StyleSheet, Alert, ScrollView, TouchableOpacity } from 'react-native';
-import { Text, Card, Button, Searchbar, ActivityIndicator, Divider, Modal, Portal, TextInput, RadioButton, IconButton } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
+import { Text, ActivityIndicator, Switch } from 'react-native-paper';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SkeletonCard } from '../components/SkeletonLoader';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { getProduits, getClients } from '../services/api.service';
+import { useNavigation } from '@react-navigation/native';
+import { getProduits, getClients, getSoldeAvanceClient } from '../services/api.service';
 import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database';
 import { enregistrerVente, getNombreVentesPending, sauvegarderCache, lireCache } from '../services/offline.service';
-import NetInfo from '@react-native-community/netinfo';
 import { Produit, Client, LigneVenteRequest } from '../types';
 import { ProduitNiveau, getNiveaux, calculerFacteurTotal } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
 
 interface CartItem {
   produit: Produit;
@@ -21,6 +24,7 @@ interface CartItem {
   niveauNom?: string;
   niveauPrixAchat?: number;
   niveauFacteurTotal?: number;
+  niveauStockMax?: number;
 }
 
 const MODES_PAIEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'];
@@ -34,53 +38,117 @@ const MODES_LABELS: Record<string, string> = {
   'VIREMENT': 'Virement',
 };
 
+const PAYMENT_ICONS: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
+  ESPECES: 'cash', ORANGE_MONEY: 'cellphone', MOOV_MONEY: 'cellphone',
+  WAVE_MONEY: 'cellphone', CARTE_BANCAIRE: 'credit-card-outline', VIREMENT: 'bank-transfer',
+};
+
+const toLocalDateStr = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const j = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${j}`;
+};
+
+const calculerPrixApresRemise = (prix: number, remisePourcentage?: number | null) => {
+  if (remisePourcentage && remisePourcentage > 0) return Math.max(0, prix - (prix * remisePourcentage / 100));
+  return prix;
+};
+
+const dateEcheanceParDefaut = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 30);
+  return toLocalDateStr(d);
+};
+
 export default function VenteScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const navigation = useNavigation<any>();
+
+  // ─── Produits ────────────────────────────────────────────────────────────
   const [produits, setProduits] = useState<Produit[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
   const [filtered, setFiltered] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
-  const [panier, setPanier] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [modePaiement, setModePaiement] = useState('ESPECES');
-  const [clientId, setClientId] = useState<number | null>(null);
-  const [montantRecu, setMontantRecu] = useState('');
-  const [estCredit, setEstCredit] = useState(false);
-  const [ventesPending, setVentesPending] = useState(0);
   const [showScanner, setShowScanner] = useState(false);
   const [offline, setOffline] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [ventesPending, setVentesPending] = useState(0);
+  const [userId, setUserId] = useState<number>(0);
+
+  // ─── Panier ──────────────────────────────────────────────────────────────
+  const [panier, setPanier] = useState<CartItem[]>([]);
+
+  // ─── Client ──────────────────────────────────────────────────────────────
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientsFiltres, setClientsFiltres] = useState<Client[]>([]);
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const [clientId, setClientId] = useState<number | null>(null);
+  const [clientNom, setClientNom] = useState('');
+  const [clientPrenom, setClientPrenom] = useState('');
+  const [clientTelephone, setClientTelephone] = useState('');
+  const [creerClient, setCreerClient] = useState(false);
+
+  // ─── Paiement ────────────────────────────────────────────────────────────
+  const [modePaiement, setModePaiement] = useState('ESPECES');
   const [referencePaiement, setReferencePaiement] = useState('');
   const [remiseGlobale, setRemiseGlobale] = useState('');
+  const [typeRemiseGlobale, setTypeRemiseGlobale] = useState<'POURCENTAGE' | 'MONTANT_FIXE'>('POURCENTAGE');
 
-  // Conditionnement
+  // ─── Crédit ──────────────────────────────────────────────────────────────
+  const [estCredit, setEstCredit] = useState(false);
+  const [dateEcheance, setDateEcheance] = useState(dateEcheanceParDefaut());
+  const [montantVerse, setMontantVerse] = useState('');
+  const [soldeAvanceClient, setSoldeAvanceClient] = useState(0);
+  const [utiliserAvance, setUtiliserAvance] = useState(false);
+  const [montantAvanceAUtiliser, setMontantAvanceAUtiliser] = useState('');
+  const [isLoadingAvance, setIsLoadingAvance] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // ─── Conditionnement ─────────────────────────────────────────────────────
   const [showNiveauModal, setShowNiveauModal] = useState(false);
   const [produitEnAttente, setProduitEnAttente] = useState<Produit | null>(null);
   const [niveauxDisponibles, setNiveauxDisponibles] = useState<ProduitNiveau[]>([]);
   const [loadingNiveaux, setLoadingNiveaux] = useState(false);
 
+  useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (raw) { try { setUserId(JSON.parse(raw)?.id || 0); } catch {} }
+    });
+  }, []);
+
+  // En-tête : lien rapide vers l'historique des ventes (comme receipt-outline d'Ionic).
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={() => navigation.navigate('Ventes')} style={{ marginRight: 14 }}>
+          <MaterialCommunityIcons name="receipt-text-outline" color="#fff" size={22} />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
   const charger = useCallback(async () => {
-    const state = await NetInfo.fetch();
-    setOffline(!state.isConnected);
-    if (state.isConnected) {
-      try {
-        const [rP, rC] = await Promise.all([getProduits(), getClients()]);
-        const p = rP.data?.data || rP.data || [];
-        const c = rC.data?.data || rC.data || [];
-        setProduits(p); setClients(c); setFiltered(p);
-        setFromCache(false);
-        await cacheProduits(p);
-        sauvegarderCache('vente_produits', p).catch(() => {});
-      } catch {
-        const [p, c] = await Promise.all([getProduitsCache(), getClientsCache()]);
-        setProduits(p); setClients(c); setFiltered(p);
-        setFromCache(p.length > 0);
-      }
-    } else {
+    // On tente toujours l'appel réel en premier — NetInfo.fetch() n'est pas fiable en
+    // contexte navigateur (React Native Web) et peut signaler "hors ligne" à tort,
+    // ce qui ferait sauter l'appel au backend même quand celui-ci répond très bien.
+    try {
+      const [rP, rC] = await Promise.all([getProduits(), getClients()]);
+      const p = (rP.data?.data || rP.data || []).filter((x: Produit) => x.quantite > 0);
+      const c = rC.data?.data || rC.data || [];
+      setProduits(p); setClients(c); setFiltered(p.slice(0, 20));
+      setFromCache(false);
+      setOffline(false);
+      await cacheProduits(p);
+      sauvegarderCache('vente_produits', p).catch(() => {});
+    } catch {
+      setOffline(true);
       const [p, c] = await Promise.all([getProduitsCache(), getClientsCache()]);
-      setProduits(p); setClients(c); setFiltered(p);
-      setFromCache(p.length > 0);
+      const disponibles = p.filter((x: Produit) => x.quantite > 0);
+      setProduits(disponibles); setClients(c); setFiltered(disponibles.slice(0, 20));
+      setFromCache(disponibles.length > 0);
     }
     const n = await getNombreVentesPending();
     setVentesPending(n);
@@ -90,14 +158,62 @@ export default function VenteScreen() {
   useEffect(() => { charger(); }, [charger]);
 
   useEffect(() => {
-    if (!search) { setFiltered(produits); return; }
-    const q = search.toLowerCase();
-    setFiltered(produits.filter(p => p.nom.toLowerCase().includes(q)));
+    const q = search.trim().toLowerCase();
+    const liste = produits.filter(p => !q || p.nom.toLowerCase().includes(q) || p.codeBarre?.toLowerCase().includes(q));
+    setFiltered(liste.slice(0, 20));
   }, [search, produits]);
 
+  // ─── Client : recherche / sélection ─────────────────────────────────────
+  const filterClients = (term: string) => {
+    setClientSearch(term);
+    const t = term.trim().toLowerCase();
+    if (!t) { setClientsFiltres(clients.slice(0, 8)); setShowClientDropdown(false); return; }
+    const f = clients.filter(c =>
+      (c.nom || '').toLowerCase().includes(t) || (c.telephone || '').includes(t)
+    ).slice(0, 10);
+    setClientsFiltres(f);
+    setShowClientDropdown(f.length > 0);
+  };
+
+  const pickClient = async (c: Client) => {
+    setClientId(c.id);
+    setClientSearch(`${c.nom || ''}${c.telephone ? ' · ' + c.telephone : ''}`);
+    setShowClientDropdown(false);
+    setClientNom(c.nom || '');
+    setClientPrenom('');
+    setClientTelephone(c.telephone || '');
+    setCreerClient(false);
+    setSoldeAvanceClient(0);
+    setUtiliserAvance(false);
+    setMontantAvanceAUtiliser('');
+    if (c.nom) {
+      setIsLoadingAvance(true);
+      try {
+        const res = await getSoldeAvanceClient(c.nom, c.telephone);
+        setSoldeAvanceClient(res.data?.soldeDisponible || 0);
+      } catch {
+        setSoldeAvanceClient(0);
+      }
+      setIsLoadingAvance(false);
+    }
+  };
+
+  const clearClient = () => {
+    setClientId(null);
+    setClientSearch('');
+    setClientNom('');
+    setClientPrenom('');
+    setClientTelephone('');
+    setShowClientDropdown(false);
+    setSoldeAvanceClient(0);
+    setUtiliserAvance(false);
+    setMontantAvanceAUtiliser('');
+  };
+
+  // ─── Scanner ─────────────────────────────────────────────────────────────
   const onCodeScanne = (code: string) => {
     const found = produits.find(p =>
-      p.codeBarres === code || p.nom.toLowerCase() === code.toLowerCase()
+      p.codeBarre === code || p.nom.toLowerCase() === code.toLowerCase()
     );
     if (found) {
       ajouterAuPanier(found);
@@ -107,7 +223,21 @@ export default function VenteScreen() {
     }
   };
 
+  // ─── Ajout au panier ─────────────────────────────────────────────────────
   const ajouterAuPanier = async (p: Produit) => {
+    if (p.quantite <= 0) {
+      Alert.alert(tr('rupture_stock', lang), `${p.nom} est en rupture de stock.`);
+      return;
+    }
+    const existant = panier.find(i => i.produit.id === p.id && !i.niveauId);
+    if (existant) {
+      if (existant.quantite >= p.quantite) {
+        Alert.alert(tr('stock_insuffisant', lang), `Stock maximum atteint : ${p.quantite} unité(s).`);
+        return;
+      }
+      modifierQte(p.id, 1);
+      return;
+    }
     setLoadingNiveaux(true);
     try {
       const niveaux: ProduitNiveau[] = await getNiveaux(p.id) || [];
@@ -126,17 +256,9 @@ export default function VenteScreen() {
   };
 
   const ajouterSansNiveau = (p: Produit) => {
-    if (p.quantite <= 0) {
-      Alert.alert(tr('rupture_stock', lang), `${p.nom} est en rupture de stock.`);
-      return;
-    }
     setPanier(prev => {
       const idx = prev.findIndex(i => i.produit.id === p.id && !i.niveauId);
       if (idx >= 0) {
-        if (prev[idx].quantite >= p.quantite) {
-          Alert.alert(tr('stock_insuffisant', lang), `Stock maximum atteint : ${p.quantite} unité(s).`);
-          return prev;
-        }
         const updated = [...prev];
         updated[idx] = { ...updated[idx], quantite: updated[idx].quantite + 1 };
         return updated;
@@ -151,6 +273,11 @@ export default function VenteScreen() {
     const facteurTotal = niveau.id !== undefined
       ? calculerFacteurTotal(niveauxDisponibles, niveau.id, true)
       : calculerFacteurTotal(niveauxDisponibles, niveau.ordre ?? 1, false);
+    const indexNiveau = niveauxDisponibles.findIndex(n => n.id === niveau.id);
+    const parent = indexNiveau > 0 ? niveauxDisponibles[indexNiveau - 1] : null;
+    const niveauStockMax = indexNiveau === 0
+      ? (niveau.stock ?? 0)
+      : (niveau.stock ?? 0) + (parent?.stock ?? 0) * niveau.facteur;
     setShowNiveauModal(false);
     setProduitEnAttente(null);
     setPanier(prev => {
@@ -169,357 +296,640 @@ export default function VenteScreen() {
         niveauNom: niveau.nom,
         niveauPrixAchat: niveau.prixAchat,
         niveauFacteurTotal: facteurTotal,
+        niveauStockMax,
       }];
     });
   };
 
-  const modifierQte = (id: number, delta: number) => {
+  const getStockMax = (item: CartItem) => (item.niveauId !== undefined && item.niveauStockMax !== undefined ? item.niveauStockMax : item.produit.quantite);
+
+  const modifierQte = (id: number, delta: number, niveauId?: number) => {
     setPanier(prev => {
-      const item = prev.find(i => i.produit.id === id);
-      if (item && delta > 0 && item.quantite >= item.produit.quantite) {
-        Alert.alert(tr('stock_insuffisant', lang), `Stock maximum : ${item.produit.quantite} unité(s).`);
+      const item = prev.find(i => i.produit.id === id && i.niveauId === niveauId);
+      if (item && delta > 0 && item.quantite >= getStockMax(item)) {
+        Alert.alert(tr('stock_insuffisant', lang), `Stock maximum : ${getStockMax(item)} unité(s).`);
         return prev;
       }
       return prev
-        .map(i => i.produit.id === id ? { ...i, quantite: i.quantite + delta } : i)
+        .map(i => (i.produit.id === id && i.niveauId === niveauId) ? { ...i, quantite: i.quantite + delta } : i)
         .filter(i => i.quantite > 0);
     });
   };
 
-  const total = panier.reduce((s, i) => s + i.prixUnitaire * i.quantite * (1 - i.remisePourcentage / 100), 0);
-  const monnaie = montantRecu ? parseFloat(montantRecu) - total : 0;
+  const modifierPrixLigne = (id: number, niveauId: number | undefined, prix: string) => {
+    const val = parseFloat(prix);
+    setPanier(prev => prev.map(i => (i.produit.id === id && i.niveauId === niveauId)
+      ? { ...i, prixUnitaire: isNaN(val) || val < 0 ? 0 : val }
+      : i));
+  };
 
+  const modifierRemiseLigne = (id: number, niveauId: number | undefined, remise: string) => {
+    const val = parseFloat(remise);
+    setPanier(prev => prev.map(i => (i.produit.id === id && i.niveauId === niveauId)
+      ? { ...i, remisePourcentage: isNaN(val) ? 0 : Math.max(0, Math.min(100, val)) }
+      : i));
+  };
+
+  const retirerLigne = (id: number, niveauId?: number) => {
+    setPanier(prev => prev.filter(i => !(i.produit.id === id && i.niveauId === niveauId)));
+  };
+
+  // ─── Totaux ──────────────────────────────────────────────────────────────
+  const totalLigne = (item: CartItem) => calculerPrixApresRemise(item.prixUnitaire, item.remisePourcentage) * item.quantite;
+  const subTotal = panier.reduce((s, i) => s + totalLigne(i), 0);
+  const total = (() => {
+    const rg = parseFloat(remiseGlobale) || 0;
+    if (!rg) return subTotal;
+    if (typeRemiseGlobale === 'POURCENTAGE') return Math.max(0, subTotal - (subTotal * rg / 100));
+    return Math.max(0, subTotal - rg);
+  })();
+  const resteAPayerCredit = Math.max(0, total - (parseFloat(montantVerse) || 0) - (utiliserAvance ? (parseFloat(montantAvanceAUtiliser) || 0) : 0));
+
+  const utiliserTouteAvance = () => setMontantAvanceAUtiliser(String(Math.min(soldeAvanceClient, total)));
+
+  // ─── Stock local (optimiste après vente) ────────────────────────────────
   const mettreAJourStockLocal = (panierVendu: CartItem[]) => {
     setProduits(prev => {
       const updated = prev.map(p => {
-        const ligne = panierVendu.find(i => i.produit.id === p.id);
-        if (!ligne) return p;
-        return { ...p, quantite: Math.max(0, p.quantite - ligne.quantite) };
+        const total = panierVendu.filter(i => i.produit.id === p.id && !i.niveauId).reduce((s, i) => s + i.quantite, 0);
+        return total > 0 ? { ...p, quantite: Math.max(0, p.quantite - total) } : p;
       });
       cacheProduits(updated);
       return updated;
     });
-    setFiltered(prev => {
-      const updated = prev.map(p => {
-        const ligne = panierVendu.find(i => i.produit.id === p.id);
-        if (!ligne) return p;
-        return { ...p, quantite: Math.max(0, p.quantite - ligne.quantite) };
-      }).filter(p => p.quantite > 0);
-      return updated;
-    });
   };
 
+  const reset = () => {
+    setPanier([]);
+    setReferencePaiement('');
+    setRemiseGlobale('');
+    setTypeRemiseGlobale('POURCENTAGE');
+    clearClient();
+    setCreerClient(false);
+    setMontantVerse('');
+    setEstCredit(false);
+    setDateEcheance(dateEcheanceParDefaut());
+  };
+
+  // ─── Validation / envoi ──────────────────────────────────────────────────
   const valider = async () => {
-    if (panier.length === 0) return;
+    if (panier.length === 0) {
+      Alert.alert(tr('erreur', lang), 'Ajoutez au moins un produit');
+      return;
+    }
+    if (estCredit && !clientNom.trim()) {
+      Alert.alert(tr('erreur', lang), 'Nom client obligatoire pour un crédit');
+      return;
+    }
     for (const item of panier) {
-      if (!item.niveauId && item.quantite > item.produit.quantite) {
-        Alert.alert(tr('stock_insuffisant', lang), `${item.produit.nom} : demandé ${item.quantite}, disponible ${item.produit.quantite}`);
+      const max = getStockMax(item);
+      if (item.quantite > max) {
+        Alert.alert(tr('stock_insuffisant', lang), `${item.produit.nom} : demandé ${item.quantite}, disponible ${max}`);
         return;
       }
     }
     if (modePaiement !== 'ESPECES' && !referencePaiement.trim()) {
-      Alert.alert('Erreur', `Référence obligatoire pour ${MODES_LABELS[modePaiement] || modePaiement}`);
+      Alert.alert(tr('erreur', lang), `Référence obligatoire pour ${MODES_LABELS[modePaiement] || modePaiement}`);
       return;
     }
+
+    setSubmitting(true);
     const lignes: LigneVenteRequest[] = panier.map(i => ({
       produitId: i.produit.id,
       quantite: i.quantite,
       prixUnitaire: i.prixUnitaire,
-      remisePourcentage: i.remisePourcentage,
-      prixAchat: i.niveauPrixAchat || i.produit.prixAchat,
+      remisePourcentage: i.remisePourcentage || undefined,
+      prixAchat: i.niveauPrixAchat || undefined,
       niveauId: i.niveauId,
       niveauNom: i.niveauNom,
       niveauFacteur: i.niveauFacteurTotal || 1,
     }));
     const vente = {
+      vendeurId: userId,
       lignes,
       modePaiement,
-      clientId: clientId || undefined,
-      montantRecu: montantRecu ? parseFloat(montantRecu) : total,
-      estCredit,
       referencePaiement: referencePaiement.trim() || undefined,
       remiseGlobale: Number(remiseGlobale || 0),
+      typeRemiseGlobale,
+      clientId: clientId || undefined,
+      clientNom: clientNom.trim() || undefined,
+      clientPrenom: clientPrenom.trim() || undefined,
+      clientTelephone: clientTelephone.trim() || undefined,
+      dateEcheance: estCredit ? dateEcheance : undefined,
+      montantVerse: estCredit ? Number(montantVerse || 0) : 0,
+      montantAvanceUtilise: estCredit && utiliserAvance ? Math.min(Number(montantAvanceAUtiliser || 0), soldeAvanceClient) : 0,
+      creerClient,
+      clientDivers: !clientId && !clientNom.trim(),
+      estCredit,
     };
     const panierSnapshot = [...panier];
     const result = await enregistrerVente(vente);
+    setSubmitting(false);
     if (result.success) {
       mettreAJourStockLocal(panierSnapshot);
-      const msg = result.offline
-        ? tr('vente_hors_ligne', lang)
-        : tr('vente_enregistree', lang);
+      const msg = result.offline ? tr('vente_hors_ligne', lang) : tr('vente_enregistree', lang);
       Alert.alert(result.offline ? tr('hors_ligne', lang) : tr('succes', lang), msg);
-      setPanier([]);
-      setShowCheckout(false);
-      setMontantRecu('');
-      setReferencePaiement('');
-      setRemiseGlobale('');
+      reset();
       const n = await getNombreVentesPending();
       setVentesPending(n);
+    } else {
+      Alert.alert(tr('erreur', lang), result.error || 'Erreur lors de l\'enregistrement de la vente');
     }
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+  if (loading) return (
+    <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ padding: 12 }}>
+      <SkeletonCard count={6} />
+    </ScrollView>
+  );
+
+  const SectionHead = ({ num, title, sub, badge }: { num: number; title: string; sub: string; badge?: number }) => (
+    <View style={styles.sectionHead}>
+      <View style={[styles.sectionNum, { backgroundColor: colors.primary }]}>
+        <Text style={styles.sectionNumText}>{num}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
+        <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>{sub}</Text>
+      </View>
+      {!!badge && (
+        <View style={[styles.cartBadge, { backgroundColor: colors.primary }]}>
+          <Text style={styles.cartBadgeText}>{badge}</Text>
+        </View>
+      )}
+    </View>
+  );
 
   return (
-    <View style={styles.container}>
-      {/* Stat bar */}
-      <View style={styles.statBar}>
-        <View style={styles.statItem}>
-          <Text style={styles.statVal}>{panier.length}</Text>
-          <Text style={styles.statLbl}>articles</Text>
-        </View>
-        <View style={styles.statSep} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statVal, { color: '#1a56db' }]}>{total.toLocaleString('fr-FR')} F</Text>
-          <Text style={styles.statLbl}>total panier</Text>
-        </View>
-        {ventesPending > 0 && (
-          <>
-            <View style={styles.statSep} />
-            <View style={styles.statItem}>
-              <Text style={[styles.statVal, { color: '#d97706', fontSize: 14 }]}>{ventesPending}</Text>
-              <Text style={styles.statLbl}>en attente</Text>
-            </View>
-          </>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+
+        {offline && (
+          <View style={styles.offlineBanner}>
+            <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
+            <Text style={styles.offlineText}>{tr('hors_ligne', lang)} — ventes sauvegardées localement</Text>
+          </View>
         )}
-      </View>
+        {fromCache && (
+          <View style={styles.cacheBanner}>
+            <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
+            <Text style={styles.cacheTxt}>Mode hors ligne — catalogue local</Text>
+          </View>
+        )}
+        {ventesPending > 0 && (
+          <View style={styles.pendingBanner}>
+            <MaterialCommunityIcons name="clock-outline" size={14} color="#92400e" />
+            <Text style={styles.cacheTxt}>{ventesPending} vente(s) en attente de synchronisation</Text>
+          </View>
+        )}
 
-      {/* Bandeau hors-ligne réseau */}
-      {offline && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
-          <Text style={styles.offlineText}>{tr('hors_ligne', lang)} — ventes sauvegardées localement</Text>
-        </View>
-      )}
+        {/* ══════════ SECTION 1 — RECHERCHE PRODUIT ══════════ */}
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <SectionHead num={1} title="Sélectionner les produits" sub="Tapez le nom ou scannez un code-barres" />
 
-      {/* Bandeau catalogue depuis cache */}
-      {fromCache && (
-        <View style={styles.cacheBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.cacheTxt}>Mode hors ligne — catalogue local</Text>
-        </View>
-      )}
-
-      <View style={styles.body}>
-        {/* Liste produits */}
-        <View style={styles.left}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Searchbar
-              placeholder={tr('recherche_produit', lang)}
+          <View style={[styles.searchWrap, { borderColor: colors.border, backgroundColor: colors.background }]}>
+            <MaterialCommunityIcons name="magnify" size={18} color={colors.textSecondary} />
+            <RNTextInput
+              style={[styles.searchInput, { color: colors.text }]}
               value={search}
               onChangeText={setSearch}
-              style={[styles.search, { flex: 1 }]}
+              placeholder="Produit ou code-barres..."
+              placeholderTextColor={colors.placeholder}
             />
-            <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
+            <TouchableOpacity onPress={() => setShowScanner(true)} style={styles.scanBtn}>
+              <MaterialCommunityIcons name="barcode-scan" size={20} color={colors.primary} />
+            </TouchableOpacity>
           </View>
 
-          <FlatList
-            data={filtered}
-            keyExtractor={p => String(p.id)}
-            contentContainerStyle={filtered.length === 0 ? { flex: 1 } : undefined}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <MaterialCommunityIcons name="magnify-close" size={56} color="#cbd5e1" />
-                <Text style={styles.emptyTxt}>Aucun produit trouvé</Text>
-              </View>
-            }
-            renderItem={({ item }) => (
-              <Card style={styles.prodCard} onPress={() => ajouterAuPanier(item)}>
-                <Card.Content style={styles.prodCardRow}>
-                  <View style={[styles.prodAvatar, { backgroundColor: item.quantite === 0 ? '#fee2e2' : '#1a56db22' }]}>
-                    <MaterialCommunityIcons
-                      name="package-variant"
-                      size={20}
-                      color={item.quantite === 0 ? '#dc2626' : '#1a56db'}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.prodName} numberOfLines={1}>{item.nom}</Text>
-                    <Text style={styles.prodSub}>
-                      {item.prixVente?.toLocaleString('fr-FR')} FCFA · Stock: {item.quantite}
-                    </Text>
-                  </View>
-                  <MaterialCommunityIcons name="plus-circle" size={28} color="#1a56db" />
-                </Card.Content>
-              </Card>
-            )}
-          />
-        </View>
-
-        {/* Panier */}
-        <View style={styles.right}>
-          <Text variant="titleMedium" style={styles.panierTitle}>{tr('panier', lang)} ({panier.length})</Text>
-          <FlatList
-            data={panier}
-            keyExtractor={i => `${i.produit.id}_${i.niveauId ?? 'base'}`}
-            renderItem={({ item }) => (
-              <View style={styles.panierItem}>
-                <View style={{ flex: 1 }}>
-                  <Text numberOfLines={1} style={{ fontSize: 13, color: '#1e293b', fontWeight: '500' }}>{item.produit.nom}</Text>
-                  {item.niveauNom && (
-                    <Text style={styles.niveauBadge}>{item.niveauNom}</Text>
-                  )}
-                </View>
-                <View style={styles.qteRow}>
-                  <Button compact onPress={() => modifierQte(item.produit.id, -1)}>-</Button>
-                  <Text style={styles.qte}>{item.quantite}</Text>
-                  <Button compact onPress={() => modifierQte(item.produit.id, 1)}>+</Button>
-                </View>
-                <Text style={styles.sousTotal}>{(item.prixUnitaire * item.quantite).toFixed(0)}</Text>
-              </View>
-            )}
-          />
-          <Divider style={{ marginVertical: 8 }} />
-          <Text variant="titleLarge" style={styles.total}>{tr('total', lang)} : {total.toFixed(0)} FCFA</Text>
-          <Button
-            mode="contained"
-            onPress={() => setShowCheckout(true)}
-            disabled={panier.length === 0}
-            style={styles.btnValider}
-            contentStyle={styles.btnValiderContent}
-            buttonColor="#1a56db"
-            labelStyle={styles.btnValiderLabel}
-            icon={() => <MaterialCommunityIcons name="cash-register" size={18} color="#fff" />}
-          >
-            {tr('encaisser', lang)}
-          </Button>
-          {panier.length > 0 && (
-            <Button onPress={() => setPanier([])} textColor="#dc2626" style={{ marginTop: 4 }}>
-              {tr('vider', lang)}
-            </Button>
-          )}
-        </View>
-      </View>
-
-      {/* Modal sélection niveau conditionnement */}
-      <Portal>
-        <Modal
-          visible={showNiveauModal}
-          onDismiss={() => { setShowNiveauModal(false); setProduitEnAttente(null); }}
-          contentContainerStyle={styles.modal}
-        >
-          <Text variant="titleMedium" style={{ marginBottom: 8 }}>
-            Choisir le niveau — {produitEnAttente?.nom}
-          </Text>
-          {loadingNiveaux ? (
-            <ActivityIndicator color="#1a56db" />
-          ) : (
-            <>
-              {niveauxDisponibles.map((n, i) => {
-                const parentNom = i === 0 ? (produitEnAttente?.nom || 'produit') : niveauxDisponibles[i - 1].nom;
-                const stockPropre = n.stock || 0;
-                const parent = i > 0 ? niveauxDisponibles[i - 1] : null;
-                const parentADuStock = parent ? (parent.stock || 0) > 0 : false;
-                const enRuptureTotale = stockPropre === 0 && !parentADuStock;
-                const stockColor = stockPropre > 0 ? '#16a34a' : (parentADuStock ? '#d97706' : '#dc2626');
-                const stockLabel = stockPropre > 0
-                  ? `Stock : ${stockPropre}`
-                  : (parentADuStock ? '(cascade)' : '(rupture)');
-                return (
-                  <TouchableOpacity
-                    key={n.id}
-                    onPress={() => { if (!enRuptureTotale) choisirNiveau(n); }}
-                    style={[styles.niveauCard, enRuptureTotale && { opacity: 0.45 }]}
-                    disabled={enRuptureTotale}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontWeight: 'bold', fontSize: 15 }}>{n.nom}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: '#eff6ff', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e40af' }}>
-                          1 {parentNom} = {n.facteur} {n.nom}
-                        </Text>
-                      </View>
-                      <Text style={{ fontSize: 12, color: '#555', marginTop: 3 }}>
-                        Achat : {n.prixAchat} FCFA
-                      </Text>
-                      <Text style={{ fontSize: 12, marginTop: 2, fontWeight: '600', color: stockColor }}>
-                        {stockLabel}
-                      </Text>
-                    </View>
-                    <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{n.prixVente} FCFA</Text>
-                  </TouchableOpacity>
-                );
-              })}
-              <Button
-                onPress={() => { ajouterSansNiveau(produitEnAttente!); setShowNiveauModal(false); setProduitEnAttente(null); }}
-                style={{ marginTop: 8 }}
+          <View style={styles.productsGrid}>
+            {filtered.map(product => (
+              <TouchableOpacity
+                key={product.id}
+                style={[styles.productChip, { backgroundColor: colors.background, borderColor: colors.border }, product.quantite <= 0 && { opacity: 0.4 }]}
+                onPress={() => ajouterAuPanier(product)}
+                disabled={product.quantite <= 0}
               >
-                Vendre sans niveau (produit de base)
-              </Button>
-            </>
-          )}
-        </Modal>
-      </Portal>
-
-      {/* Modal encaissement */}
-      <Portal>
-        <Modal
-          visible={showCheckout}
-          onDismiss={() => setShowCheckout(false)}
-          contentContainerStyle={styles.modal}
-        >
-          <ScrollView>
-            <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('encaissement', lang)}</Text>
-            <Text variant="titleMedium" style={{ color: '#1a56db', marginBottom: 12 }}>
-              {tr('total', lang)} : {total.toFixed(0)} FCFA
-            </Text>
-            <Text variant="labelLarge">{tr('mode_paiement', lang)}</Text>
-            {MODES_PAIEMENT.map(m => (
-              <View key={m} style={styles.radioRow}>
-                <RadioButton
-                  value={m}
-                  status={modePaiement === m ? 'checked' : 'unchecked'}
-                  onPress={() => { setModePaiement(m); setReferencePaiement(''); }}
-                />
-                <Text>{MODES_LABELS[m] || m}</Text>
-              </View>
+                <View style={[styles.pcIcon, { backgroundColor: colors.primary + '18' }]}>
+                  <MaterialCommunityIcons name="cube-outline" size={16} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={[styles.pcName, { color: colors.text }]}>{product.nom}</Text>
+                  <Text style={[styles.pcPrice, { color: colors.primary }]}>{product.prixVente?.toLocaleString('fr-FR')} FCFA</Text>
+                </View>
+                <Text style={[styles.pcStock, product.quantite <= 5 && { color: '#dc2626' }]}>{product.quantite}</Text>
+                <MaterialCommunityIcons name="plus-circle" size={20} color={colors.primary} />
+              </TouchableOpacity>
             ))}
-            {modePaiement === 'ESPECES' && (
-              <TextInput
-                label={tr('montant_recu', lang)}
-                value={montantRecu}
-                onChangeText={setMontantRecu}
-                keyboardType="numeric"
-                mode="outlined"
-                style={{ marginTop: 12 }}
+          </View>
+
+          {search && filtered.length === 0 && (
+            <View style={styles.searchEmpty}>
+              <MaterialCommunityIcons name="magnify-close" size={40} color={colors.border} />
+              <Text style={{ color: colors.textSecondary, marginTop: 6 }}>Aucun produit trouvé</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ══════════ SECTION 2 — PANIER ══════════ */}
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <SectionHead num={2} title="Panier" sub={`${panier.length} article${panier.length > 1 ? 's' : ''}`} badge={panier.length} />
+
+          {panier.length === 0 ? (
+            <View style={styles.searchEmpty}>
+              <MaterialCommunityIcons name="cart-outline" size={40} color={colors.border} />
+              <Text style={{ color: colors.textSecondary, marginTop: 6 }}>Aucun article — sélectionnez des produits ci-dessus</Text>
+            </View>
+          ) : (
+            panier.map(item => {
+              const prixAchatEffectif = item.niveauId ? (item.niveauPrixAchat || 0) : (item.produit.prixAchat || 0);
+              const beneficeLigne = (calculerPrixApresRemise(item.prixUnitaire, item.remisePourcentage) - prixAchatEffectif) * item.quantite;
+              const beneficeColor = beneficeLigne > 0 ? colors.success : beneficeLigne < 0 ? colors.danger : colors.textSecondary;
+              const beneficeLabel = beneficeLigne > 0 ? 'Bénéfice' : beneficeLigne < 0 ? 'Perte' : 'Équilibre';
+              const stockMax = getStockMax(item);
+              const key = `${item.produit.id}_${item.niveauId ?? 'base'}`;
+              return (
+                <View key={key} style={[styles.cartItem, { borderColor: colors.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text numberOfLines={1} style={[styles.ciName, { color: colors.text }]}>{item.produit.nom}</Text>
+                    {item.niveauNom && (
+                      <View style={[styles.niveauBadge, { backgroundColor: colors.primary + '18' }]}>
+                        <MaterialCommunityIcons name="layers-outline" size={11} color={colors.primary} />
+                        <Text style={[styles.niveauBadgeText, { color: colors.primary }]}>{item.niveauNom}</Text>
+                      </View>
+                    )}
+
+                    {/* Prix de vente modifiable */}
+                    <View style={styles.ciPriceRow}>
+                      <RNTextInput
+                        style={[styles.ciPriceInput, { borderColor: colors.border, color: colors.text }]}
+                        value={String(item.prixUnitaire)}
+                        onChangeText={v => modifierPrixLigne(item.produit.id, item.niveauId, v)}
+                        keyboardType="numeric"
+                      />
+                      <Text style={{ fontSize: 11, color: colors.textSecondary }}>FCFA / unité</Text>
+                    </View>
+
+                    {/* Bénéfice / prix d'achat */}
+                    {prixAchatEffectif > 0 && (
+                      <Text style={{ fontSize: 10, fontWeight: '600', color: beneficeColor, marginTop: 2 }} numberOfLines={1}>
+                        {beneficeLabel}: {Math.abs(beneficeLigne).toFixed(0)} · Achat: {prixAchatEffectif.toFixed(0)}
+                      </Text>
+                    )}
+                    {beneficeLigne < 0 && (
+                      <Text style={{ fontSize: 10, color: colors.danger }}>Prix saisi inférieur au prix d'achat.</Text>
+                    )}
+
+                    {/* Remise ligne */}
+                    <View style={styles.ciDiscountRow}>
+                      <MaterialCommunityIcons name="tag-outline" size={13} color={colors.textSecondary} />
+                      <RNTextInput
+                        style={[styles.ciDiscountInput, { borderColor: colors.border, color: colors.text }]}
+                        value={item.remisePourcentage ? String(item.remisePourcentage) : ''}
+                        onChangeText={v => modifierRemiseLigne(item.produit.id, item.niveauId, v)}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={colors.placeholder}
+                      />
+                      <Text style={{ fontSize: 11, color: colors.textSecondary }}>% remise</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.ciRight}>
+                    <View style={styles.ciQty}>
+                      <TouchableOpacity style={styles.ciQtyBtn} onPress={() => modifierQte(item.produit.id, -1, item.niveauId)}>
+                        <Text style={styles.ciQtyBtnText}>−</Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.ciQtyVal, { color: colors.text }]}>{item.quantite}</Text>
+                      <TouchableOpacity
+                        style={[styles.ciQtyBtn, item.quantite >= stockMax && { opacity: 0.3 }]}
+                        onPress={() => modifierQte(item.produit.id, 1, item.niveauId)}
+                        disabled={item.quantite >= stockMax}
+                      >
+                        <Text style={styles.ciQtyBtnText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={[styles.ciStockBadge, { color: item.quantite >= stockMax ? '#dc2626' : colors.textSecondary }]}>
+                      {item.quantite}/{stockMax}
+                    </Text>
+                    <Text style={[styles.ciTotal, { color: colors.primary }]}>{totalLigne(item).toLocaleString('fr-FR')}</Text>
+                    <TouchableOpacity onPress={() => retirerLigne(item.produit.id, item.niveauId)} style={{ marginTop: 4 }}>
+                      <MaterialCommunityIcons name="trash-can-outline" size={18} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        {/* ══════════ SECTION 3 — PAIEMENT ══════════ */}
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <SectionHead num={3} title="Paiement" sub="Remise, client et mode de règlement" />
+
+          {/* Sous-total + remise globale */}
+          <View style={[styles.totauxCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            <View style={styles.rowBetween}>
+              <Text style={{ color: colors.textSecondary }}>Sous-total</Text>
+              <Text style={{ fontWeight: 'bold', color: colors.text }}>{subTotal.toLocaleString('fr-FR')} FCFA</Text>
+            </View>
+
+            <View style={styles.remiseRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Remise globale</Text>
+                <RNTextInput
+                  style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]}
+                  value={remiseGlobale}
+                  onChangeText={setRemiseGlobale}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.placeholder}
+                />
+              </View>
+              <View style={{ marginLeft: 8 }}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Type</Text>
+                <View style={styles.rtypeRow}>
+                  {(['POURCENTAGE', 'MONTANT_FIXE'] as const).map(t => (
+                    <TouchableOpacity
+                      key={t}
+                      style={[styles.rtypeBtn, { borderColor: colors.border }, typeRemiseGlobale === t && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                      onPress={() => setTypeRemiseGlobale(t)}
+                    >
+                      <Text style={{ color: typeRemiseGlobale === t ? '#fff' : colors.text, fontWeight: '700' }}>{t === 'POURCENTAGE' ? '%' : 'F'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            <View style={[styles.totalLine, { borderTopColor: colors.border }]}>
+              <Text style={{ fontWeight: 'bold', color: colors.text }}>TOTAL À PAYER</Text>
+              <Text style={[styles.totalVal, { color: colors.primary }]}>{total.toLocaleString('fr-FR')} FCFA</Text>
+            </View>
+          </View>
+
+          {/* Client */}
+          <View style={styles.fieldGroup}>
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+              <MaterialCommunityIcons name="account-outline" size={13} /> Client
+            </Text>
+            <View style={[styles.clientSearchRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <MaterialCommunityIcons name="magnify" size={16} color={colors.textSecondary} />
+              <RNTextInput
+                style={[styles.clientSearchInput, { color: colors.text }]}
+                value={clientSearch}
+                onChangeText={filterClients}
+                onFocus={() => filterClients(clientSearch)}
+                placeholder="Rechercher par nom ou téléphone..."
+                placeholderTextColor={colors.placeholder}
               />
+              {(clientId || clientSearch) && (
+                <TouchableOpacity onPress={clearClient}>
+                  <MaterialCommunityIcons name="close-circle-outline" size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {clientId && (
+              <View style={styles.clientSelected}>
+                <MaterialCommunityIcons name="check-circle-outline" size={15} color={colors.success} />
+                <Text style={{ color: colors.text, fontSize: 12 }}>{clientNom} {clientTelephone ? `· ${clientTelephone}` : ''}</Text>
+              </View>
             )}
-            {montantRecu !== '' && modePaiement === 'ESPECES' && (
-              <Text style={{ marginTop: 8, color: monnaie >= 0 ? '#16a34a' : '#dc2626' }}>
-                {tr('monnaie', lang)} : {monnaie.toFixed(0)} FCFA
+
+            {showClientDropdown && (
+              <View style={[styles.clientDropdown, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                {clientsFiltres.map(c => (
+                  <TouchableOpacity key={c.id} style={styles.clientOption} onPress={() => pickClient(c)}>
+                    <View style={[styles.coAvatar, { backgroundColor: colors.primary + '22' }]}>
+                      <Text style={{ color: colors.primary, fontWeight: 'bold' }}>{(c.nom || '?')[0].toUpperCase()}</Text>
+                    </View>
+                    <View>
+                      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{c.nom}</Text>
+                      {!!c.telephone && <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{c.telephone}</Text>}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Mode de paiement en chips */}
+          <View style={styles.fieldGroup}>
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+              <MaterialCommunityIcons name="wallet-outline" size={13} /> Mode de paiement
+            </Text>
+            <View style={styles.paymentChips}>
+              {MODES_PAIEMENT.map(m => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.paymentChip, { borderColor: colors.border }, modePaiement === m && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                  onPress={() => { setModePaiement(m); setReferencePaiement(''); }}
+                >
+                  <MaterialCommunityIcons name={PAYMENT_ICONS[m] || 'wallet-outline'} size={14} color={modePaiement === m ? '#fff' : colors.text} />
+                  <Text style={{ color: modePaiement === m ? '#fff' : colors.text, fontSize: 12, fontWeight: '600' }}>{MODES_LABELS[m] || m}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Référence (si non espèces) */}
+          {modePaiement !== 'ESPECES' && (
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                <MaterialCommunityIcons name="file-document-outline" size={13} /> Référence de paiement
               </Text>
-            )}
-            {modePaiement !== 'ESPECES' && (
-              <TextInput
-                label="Référence paiement (obligatoire)"
-                placeholder="Référence paiement (obligatoire)"
+              <RNTextInput
+                style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]}
                 value={referencePaiement}
                 onChangeText={setReferencePaiement}
-                mode="outlined"
-                style={{ marginTop: 12 }}
+                placeholder="N° transaction, référence..."
+                placeholderTextColor={colors.placeholder}
               />
+            </View>
+          )}
+
+          {/* Toggle crédit */}
+          <View style={[styles.toggleCard, { borderColor: colors.border }, estCredit && { borderColor: colors.primary, backgroundColor: colors.primary + '0c' }]}>
+            <View style={styles.rowStart}>
+              <View style={[styles.toggleIcon, { backgroundColor: estCredit ? colors.primary : colors.background }]}>
+                <MaterialCommunityIcons name="clock-outline" size={16} color={estCredit ? '#fff' : colors.textSecondary} />
+              </View>
+              <View>
+                <Text style={{ fontWeight: '600', color: colors.text, fontSize: 13 }}>Vente à crédit</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11 }}>Le client paiera plus tard</Text>
+              </View>
+            </View>
+            <Switch value={estCredit} onValueChange={setEstCredit} color={colors.primary} />
+          </View>
+
+          {/* Champs crédit */}
+          {estCredit && (
+            <View style={{ marginTop: 10 }}>
+              <View style={[styles.toggleCard, { borderColor: colors.border, paddingVertical: 8 }]}>
+                <View style={styles.rowStart}>
+                  <MaterialCommunityIcons name="account-plus-outline" size={16} color={colors.primary} />
+                  <Text style={{ fontWeight: '600', color: colors.text, fontSize: 13, marginLeft: 6 }}>Créer ce client</Text>
+                </View>
+                <Switch value={creerClient} onValueChange={setCreerClient} disabled={!!clientId} color={colors.primary} />
+              </View>
+
+              <View style={styles.creditGrid}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Nom</Text>
+                  <RNTextInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={clientNom} onChangeText={setClientNom} placeholder="Nom de famille" placeholderTextColor={colors.placeholder} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Prénom</Text>
+                  <RNTextInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={clientPrenom} onChangeText={setClientPrenom} placeholder="Prénom" placeholderTextColor={colors.placeholder} />
+                </View>
+              </View>
+
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Téléphone</Text>
+              <RNTextInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={clientTelephone} onChangeText={setClientTelephone} placeholder="Ex: 70 00 00 00" keyboardType="phone-pad" placeholderTextColor={colors.placeholder} />
+
+              <View style={styles.creditGrid}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Date d'échéance</Text>
+                  <RNTextInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={dateEcheance} onChangeText={setDateEcheance} placeholder="AAAA-MM-JJ" placeholderTextColor={colors.placeholder} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Montant versé (acompte)</Text>
+                  <RNTextInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={montantVerse} onChangeText={setMontantVerse} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.placeholder} />
+                </View>
+              </View>
+
+              {/* Avance client */}
+              {(soldeAvanceClient > 0 || isLoadingAvance) && (
+                <View style={[styles.avanceCard, { borderColor: colors.border, backgroundColor: colors.background }]}>
+                  <View style={styles.rowBetween}>
+                    <View style={styles.rowStart}>
+                      <MaterialCommunityIcons name="wallet-outline" size={15} color={colors.textSecondary} />
+                      {isLoadingAvance ? (
+                        <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
+                      ) : (
+                        <Text style={{ marginLeft: 6, fontSize: 12, color: colors.text }}>
+                          Avance disponible : <Text style={{ fontWeight: 'bold' }}>{soldeAvanceClient.toLocaleString('fr-FR')} FCFA</Text>
+                        </Text>
+                      )}
+                    </View>
+                    {!isLoadingAvance && (
+                      <View style={styles.rowStart}>
+                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginRight: 6 }}>Utiliser</Text>
+                        <Switch value={utiliserAvance} onValueChange={setUtiliserAvance} color={colors.primary} />
+                      </View>
+                    )}
+                  </View>
+                  {utiliserAvance && !isLoadingAvance && (
+                    <View style={{ marginTop: 8 }}>
+                      <View style={styles.rowStart}>
+                        <RNTextInput
+                          style={[styles.fieldInput, { flex: 1, borderColor: colors.border, color: colors.text }]}
+                          value={montantAvanceAUtiliser}
+                          onChangeText={setMontantAvanceAUtiliser}
+                          keyboardType="numeric"
+                          placeholder="0"
+                          placeholderTextColor={colors.placeholder}
+                        />
+                        <TouchableOpacity style={[styles.maxBtn, { backgroundColor: colors.primary }]} onPress={utiliserTouteAvance}>
+                          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Tout</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                        Max : {soldeAvanceClient.toLocaleString('fr-FR')} FCFA
+                        {Number(montantAvanceAUtiliser) > 0 ? ` · Reste : ${resteAPayerCredit.toLocaleString('fr-FR')} FCFA` : ''}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Bouton valider */}
+          <TouchableOpacity
+            style={[styles.submitBtn, { backgroundColor: colors.primary }, (submitting || panier.length === 0) && { opacity: 0.5 }]}
+            onPress={valider}
+            disabled={submitting || panier.length === 0}
+          >
+            {submitting ? (
+              <>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.submitBtnText}>Traitement en cours...</Text>
+              </>
+            ) : (
+              <>
+                <MaterialCommunityIcons name="check-circle-outline" size={20} color="#fff" />
+                <Text style={styles.submitBtnText}>Valider la vente · {total.toLocaleString('fr-FR')} FCFA</Text>
+              </>
             )}
-            <TextInput
-              label="Remise globale (%)"
-              placeholder="Remise globale (%)"
-              value={remiseGlobale}
-              onChangeText={setRemiseGlobale}
-              keyboardType="numeric"
-              mode="outlined"
-              style={{ marginTop: 12 }}
-            />
-            <Button
-              mode="contained"
-              onPress={valider}
-              style={{ marginTop: 16, borderRadius: 10 }}
-              buttonColor="#1a56db"
-              contentStyle={{ paddingVertical: 4 }}
-            >
-              {tr('confirmer_vente', lang)}
-            </Button>
-          </ScrollView>
-        </Modal>
-      </Portal>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      {/* Modal sélection niveau conditionnement */}
+      {showNiveauModal && (
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeadRow}>
+              <Text variant="titleMedium" style={{ color: colors.text, flex: 1 }}>
+                Choisir le niveau — {produitEnAttente?.nom}
+              </Text>
+              <TouchableOpacity onPress={() => { setShowNiveauModal(false); setProduitEnAttente(null); }}>
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {loadingNiveaux ? (
+                <ActivityIndicator color={colors.primary} />
+              ) : (
+                <>
+                  {niveauxDisponibles.map((n, i) => {
+                    const parentNom = i === 0 ? (produitEnAttente?.nom || 'produit') : niveauxDisponibles[i - 1].nom;
+                    const stockPropre = n.stock || 0;
+                    const parent = i > 0 ? niveauxDisponibles[i - 1] : null;
+                    const parentADuStock = parent ? (parent.stock || 0) > 0 : false;
+                    const enRuptureTotale = stockPropre === 0 && !parentADuStock;
+                    const stockColor = stockPropre > 0 ? colors.success : (parentADuStock ? colors.warning : colors.danger);
+                    const stockLabel = stockPropre > 0
+                      ? `Stock : ${stockPropre}`
+                      : (parentADuStock ? '(cascade)' : '(rupture)');
+                    return (
+                      <TouchableOpacity
+                        key={n.id}
+                        onPress={() => { if (!enRuptureTotale) choisirNiveau(n); }}
+                        style={[styles.niveauCard, { backgroundColor: colors.infoBg, borderColor: colors.border }, enRuptureTotale && { opacity: 0.45 }]}
+                        disabled={enRuptureTotale}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: 'bold', fontSize: 15, color: colors.text }}>{n.nom}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: colors.primary + '22', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>
+                              1 {parentNom} = {n.facteur} {n.nom}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 3 }}>
+                            Achat : {n.prixAchat} FCFA
+                          </Text>
+                          <Text style={{ fontSize: 12, marginTop: 2, fontWeight: '600', color: stockColor }}>
+                            {stockLabel}
+                          </Text>
+                        </View>
+                        <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>{n.prixVente} FCFA</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    style={[styles.submitBtn, { backgroundColor: colors.textSecondary, marginTop: 8 }]}
+                    onPress={() => { ajouterSansNiveau(produitEnAttente!); setShowNiveauModal(false); setProduitEnAttente(null); }}
+                  >
+                    <Text style={styles.submitBtnText}>Vendre sans niveau (produit de base)</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      )}
 
       <BarcodeScannerModal
         visible={showScanner}
@@ -532,89 +942,96 @@ export default function VenteScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
-
-  // Stat bar
-  statBar: {
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-  },
-  statItem: { flex: 1, alignItems: 'center' },
-  statSep: { width: 1, backgroundColor: '#e2e8f0', marginVertical: 4 },
-  statVal: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
-  statLbl: { fontSize: 10, color: '#64748b', marginTop: 1 },
+  container: { flex: 1 },
 
   // Bandeaux
-  offlineBanner: {
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-    backgroundColor: '#f97316',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6 },
   offlineText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-  cacheBanner: {
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-    backgroundColor: '#fef3c7',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
+  cacheBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 5 },
+  pendingBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 5 },
   cacheTxt: { color: '#92400e', fontSize: 11 },
 
-  // Layout
-  body: { flex: 1, flexDirection: 'row' },
-  left: { flex: 1.2, padding: 8 },
-  right: { flex: 1, padding: 8, backgroundColor: '#fff', borderLeftWidth: 1, borderColor: '#e2e8f0' },
+  // Sections
+  section: { margin: 12, marginBottom: 0, marginTop: 12, borderRadius: 14, padding: 14, elevation: 1 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  sectionNum: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  sectionNumText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  sectionTitle: { fontWeight: 'bold', fontSize: 14 },
+  sectionSub: { fontSize: 11, marginTop: 1 },
+  cartBadge: { minWidth: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  cartBadgeText: { color: '#fff', fontWeight: 'bold', fontSize: 11 },
 
-  // Searchbar
-  search: { marginBottom: 8, height: 42, backgroundColor: '#fff' },
+  // Recherche produit
+  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 },
+  searchInput: { flex: 1, fontSize: 14 },
+  scanBtn: { padding: 2 },
+  searchEmpty: { alignItems: 'center', paddingVertical: 24 },
 
-  // Product card
-  prodCard: { marginHorizontal: 8, marginBottom: 6, borderRadius: 12, elevation: 1 },
-  prodCardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
-  prodAvatar: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  prodName: { fontWeight: '600', fontSize: 13, color: '#1e293b' },
-  prodSub: { color: '#64748b', fontSize: 11, marginTop: 1 },
-
-  // Empty state
-  empty: { alignItems: 'center', paddingTop: 40 },
-  emptyTxt: { color: '#94a3b8', fontSize: 14, marginTop: 8 },
+  // Grille produits (responsive : s'adapte à la largeur de l'écran)
+  productsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  productChip: { flexBasis: '47%', flexGrow: 1, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 10, padding: 8 },
+  pcIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  pcName: { fontSize: 12, fontWeight: '600' },
+  pcPrice: { fontSize: 11, fontWeight: '700', marginTop: 1 },
+  pcStock: { fontSize: 11, color: '#64748b', marginRight: 2 },
 
   // Panier
-  panierTitle: { fontWeight: 'bold', marginBottom: 8, color: '#1e293b' },
-  panierItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  qteRow: { flexDirection: 'row', alignItems: 'center' },
-  qte: { minWidth: 24, textAlign: 'center', fontWeight: 'bold', color: '#1e293b' },
-  sousTotal: { fontSize: 12, color: '#1a56db', marginLeft: 4, fontWeight: '600' },
-  total: { textAlign: 'center', fontWeight: 'bold', color: '#1a56db', marginBottom: 4 },
-  niveauBadge: { fontSize: 11, color: '#1a56db', fontWeight: '600', marginTop: 1 },
+  cartItem: { flexDirection: 'row', borderBottomWidth: 1, paddingVertical: 10, gap: 10 },
+  ciName: { fontSize: 13, fontWeight: '600' },
+  niveauBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, marginTop: 3 },
+  niveauBadgeText: { fontSize: 10, fontWeight: '700' },
+  ciPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  ciPriceInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, width: 80 },
+  ciDiscountRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  ciDiscountInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, width: 50, textAlign: 'center' },
+  ciRight: { alignItems: 'flex-end', justifyContent: 'flex-start', minWidth: 90 },
+  ciQty: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  ciQtyBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f0f4f8', alignItems: 'center', justifyContent: 'center' },
+  ciQtyBtnText: { fontSize: 16, fontWeight: 'bold', color: '#1a56db' },
+  ciQtyVal: { minWidth: 20, textAlign: 'center', fontWeight: 'bold' },
+  ciStockBadge: { fontSize: 10, marginTop: 3 },
+  ciTotal: { fontSize: 13, fontWeight: '700', marginTop: 6 },
+
+  // Section 3
+  totauxCard: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 12 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowStart: { flexDirection: 'row', alignItems: 'center' },
+  remiseRow: { flexDirection: 'row', marginTop: 10 },
+  rtypeRow: { flexDirection: 'row', gap: 4 },
+  rtypeBtn: { width: 34, height: 34, borderWidth: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  totalLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, marginTop: 12, paddingTop: 10 },
+  totalVal: { fontSize: 16, fontWeight: 'bold' },
+
+  fieldGroup: { marginBottom: 12 },
+  fieldLabel: { fontSize: 12, fontWeight: '600', marginBottom: 5 },
+  fieldInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, fontSize: 13 },
+
+  // Client
+  clientSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  clientSearchInput: { flex: 1, fontSize: 13 },
+  clientSelected: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  clientDropdown: { borderWidth: 1, borderRadius: 10, marginTop: 4, maxHeight: 220, overflow: 'hidden' },
+  clientOption: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  coAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+
+  // Paiement chips
+  paymentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  paymentChip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 7 },
+
+  // Crédit
+  toggleCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 8 },
+  toggleIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  creditGrid: { flexDirection: 'row', marginBottom: 4 },
+  avanceCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginTop: 8 },
+  maxBtn: { borderRadius: 8, paddingHorizontal: 12, justifyContent: 'center', marginLeft: 6 },
 
   // Bouton valider
-  btnValider: { marginTop: 12, borderRadius: 10 },
-  btnValiderContent: { paddingVertical: 6 },
-  btnValiderLabel: { fontSize: 15, fontWeight: 'bold', letterSpacing: 0.3 },
+  submitBtn: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 12, paddingVertical: 14, marginTop: 8 },
+  submitBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 
-  // Modals
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },
-  radioRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
-
-  // Niveau conditionnement
-  niveauCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    marginBottom: 8,
-    backgroundColor: '#f0f7ff',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
-  },
+  // Modal niveau
+  modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  modalSheet: { borderRadius: 16, padding: 20, maxHeight: '80%' },
+  modalHeadRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  niveauCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, marginBottom: 8, borderRadius: 10, borderWidth: 1 },
 });

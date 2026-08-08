@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BOUTIQUES_CONFIG, setApiUrl } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
 
 interface Props {
   onSelect: () => void;
@@ -12,6 +13,7 @@ interface Props {
 
 export default function BoutiqueSelectScreen({ onSelect }: Props) {
   const { lang } = useLang();
+  const colors = useColors();
   const choisir = async (b: typeof BOUTIQUES_CONFIG[0]) => {
     await AsyncStorage.setItem('api_url', b.url);
     await AsyncStorage.setItem('boutique_nom', b.nom);
@@ -20,8 +22,8 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.hero }]}>
         <View style={styles.logoBox}>
           <Image source={require('../../assets/icon.png')} style={styles.logoImg} />
         </View>
@@ -34,18 +36,22 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
         keyExtractor={b => String(b.id)}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
-          <TouchableOpacity style={styles.card} onPress={() => choisir(item)} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={[styles.card, { backgroundColor: colors.card, shadowColor: colors.text }]}
+            onPress={() => choisir(item)}
+            activeOpacity={0.85}
+          >
             <View style={styles.cardLeft}>
-              <View style={styles.cardIcon}>
-                <Text style={styles.cardIconText}>{item.id}</Text>
+              <View style={[styles.cardIcon, { backgroundColor: colors.infoBg }]}>
+                <Text style={[styles.cardIconText, { color: colors.primary }]}>{item.id}</Text>
               </View>
             </View>
             <View style={styles.cardBody}>
-              <Text style={styles.cardName}>{item.nom}</Text>
-              <Text style={styles.cardPort}>{item.url.replace('https://', '').replace('/api', '')}</Text>
+              <Text style={[styles.cardName, { color: colors.text }]}>{item.nom}</Text>
+              <Text style={[styles.cardPort, { color: colors.textSecondary }]}>{item.url.replace('https://', '').replace('/api', '')}</Text>
             </View>
             <View style={styles.cardArrow}>
-              <Text style={styles.arrow}>›</Text>
+              <Text style={[styles.arrow, { color: colors.primary }]}>›</Text>
             </View>
           </TouchableOpacity>
         )}

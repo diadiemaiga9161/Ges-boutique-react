@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
+import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, Card, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
-import { getNotifications, marquerLue } from '../services/api.service';
+import { getNotifications, marquerLue, marquerToutesLues } from '../services/api.service';
 import { sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -18,8 +17,6 @@ export default function NotificationsScreen() {
   const charger = async (event?: any) => {
     setLoading(true);
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await getNotifications();
       const data = res.data?.data || res.data || [];
       setNotifs(data);
@@ -61,6 +58,13 @@ export default function NotificationsScreen() {
   const total = notifs.length;
   const nonLues = notifs.filter(n => !n.lue).length;
 
+  const lireTout = async () => {
+    try {
+      await marquerToutesLues();
+      setNotifs(prev => prev.map(n => ({ ...n, lue: true })));
+    } catch { }
+  };
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
@@ -76,6 +80,13 @@ export default function NotificationsScreen() {
           <Text style={styles.heroLbl}>Non lues</Text>
         </View>
       </View>
+
+      {nonLues > 0 && (
+        <TouchableOpacity style={styles.btnToutLire} onPress={lireTout}>
+          <MaterialCommunityIcons name="check-all" size={15} color="#1a56db" />
+          <Text style={styles.btnToutLireText}>Tout marquer comme lu</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Bandeau offline */}
       {fromCache && (
@@ -150,6 +161,9 @@ const styles = StyleSheet.create({
 
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
   offlineTxt: { color: '#92400e', fontSize: 12 },
+
+  btnToutLire: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginHorizontal: 12, marginTop: 10, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: '#1a56db' },
+  btnToutLireText: { color: '#1a56db', fontWeight: '700', fontSize: 12 },
 
   card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
   cardUnread: { borderLeftWidth: 4, borderLeftColor: '#1a56db' },

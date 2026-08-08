@@ -5,7 +5,6 @@ import {
 } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
@@ -103,8 +102,6 @@ export default function DettesAnciennesScreen() {
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/dettes-anciennes');
       const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       setDettes(liste);

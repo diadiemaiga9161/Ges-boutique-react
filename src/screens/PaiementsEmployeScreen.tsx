@@ -3,14 +3,13 @@ import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
   Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import NetInfo from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
-const MODES_PAIEMENT = ['ESPECES', 'VIREMENT', 'MOBILE MONEY'];
 const AVATAR_COLORS = ['#1e88e5', '#43a047', '#e53935', '#8e24aa', '#fb8c00', '#00acc1', '#d81b60'];
 
 function money(v: number) { return (v || 0).toLocaleString('fr-FR') + ' FCFA'; }
@@ -23,27 +22,14 @@ function avatarColor(name: string) {
   return AVATAR_COLORS[code % AVATAR_COLORS.length];
 }
 
-/** Retourne les 12 derniers mois sous forme YYYY-MM, du plus récent au plus ancien. */
-function getMoisOptions(): string[] {
-  const mois: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    mois.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  return mois;
-}
-
-const MOIS_OPTIONS = getMoisOptions();
-const MOIS_COURANT = MOIS_OPTIONS[0];
 const ANNEE_COURANTE = new Date().getFullYear();
+const MOIS_COURANT_ISO = new Date().toISOString().split('T')[0];
 
 const FORM_INITIAL = {
-  montant: '',
-  moisConcerne: MOIS_COURANT,
-  modePaiement: 'ESPECES',
-  note: '',
-  referencePaiement: '',
+  nombreMois: 1,
+  periodeDebut: MOIS_COURANT_ISO,
+  periodeFin: '',
+  observation: '',
 };
 
 export default function PaiementsEmployeScreen({ navigation, route }: any) {
@@ -59,15 +45,13 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
   const [fromCache, setFromCache] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ ...FORM_INITIAL });
-  const [showMoisPicker, setShowMoisPicker] = useState(false);
+  const [userId, setUserId] = useState<number>(0);
 
   const cacheKey = `paiements_employe_${employe.id}`;
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
-      const res = await api.get(`/employes/${employe.id}/paiements`);
-      const data = res.data?.paiements || res.data?.data || res.data || [];
+      const res = await api.get(`/paiements-employe/employe/${employe.id}`);
+      const data = res.data?.data || res.data || [];
       const liste = Array.isArray(data) ? data : [];
       setPaiements(liste);
       setFromCache(false);
@@ -82,6 +66,9 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
   };
 
   useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (raw) { try { setUserId(JSON.parse(raw)?.id || 0); } catch {} }
+    });
     if (employe.id) {
       charger();
     } else {
@@ -89,37 +76,59 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
     }
   }, []);
 
-  // Total versé sur l'année en cours
-  const totalAnnee = paiements
-    .filter(p => {
-      const ref = p.datePaiement || p.moisConcerne || '';
-      return ref.startsWith(String(ANNEE_COURANTE));
-    })
+  const paiementsActifs = paiements.filter(p => p.statut !== 'ANNULE');
+
+  // Total versé sur l'année en cours (paiements actifs uniquement)
+  const totalAnnee = paiementsActifs
+    .filter(p => String(p.datePaiement || '').startsWith(String(ANNEE_COURANTE)))
     .reduce((s, p) => s + (p.montant || 0), 0);
 
   // Le mois en cours a-t-il été versé ?
-  const moisPayé = paiements.some(p => (p.moisConcerne || '') === MOIS_COURANT);
+  const moisPayé = paiementsActifs.some(p => String(p.periodeDebut || '').startsWith(MOIS_COURANT_ISO.slice(0, 7)));
 
   const ouvrirModal = () => {
     setForm({ ...FORM_INITIAL });
-    setShowMoisPicker(false);
     setShowModal(true);
   };
 
   const enregistrerPaiement = async () => {
-    const montantNum = parseFloat(form.montant);
-    if (!form.montant || isNaN(montantNum) || montantNum <= 0) {
-      Alert.alert(tr('erreur', lang), 'Montant invalide');
+    if (!form.periodeDebut) {
+      Alert.alert(tr('erreur', lang), 'La période de début est obligatoire');
       return;
     }
-    const data = { montant: montantNum, moisConcerne: form.moisConcerne, modePaiement: form.modePaiement, note: form.note, referencePaiement: form.referencePaiement };
+    if (!form.nombreMois || form.nombreMois < 1 || form.nombreMois > 3) {
+      Alert.alert(tr('erreur', lang), 'Le nombre de mois doit être entre 1 et 3');
+      return;
+    }
+    const data = {
+      employeId: employe.id,
+      nombreMois: form.nombreMois,
+      periodeDebut: form.periodeDebut,
+      periodeFin: form.nombreMois > 1 ? (form.periodeFin || form.periodeDebut) : undefined,
+      observation: form.observation || undefined,
+      utilisateurId: userId || undefined,
+    };
     try {
-      await executerOuMettreEnFile('paiement_employe', { employeId: employe.id, data }, () => api.post(`/employes/${employe.id}/paiements`, data));
+      await executerOuMettreEnFile('paiement_employe', data, () => api.post('/paiements-employe', data));
       setShowModal(false);
       charger();
     } catch (err: any) {
       Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Erreur serveur');
     }
+  };
+
+  const annulerPaiement = (p: any) => {
+    Alert.alert('Annuler ce paiement ?', `${money(p.montant)} — ${p.periodeDebut}`, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: 'Oui, annuler', style: 'destructive', onPress: async () => {
+        try {
+          await api.patch(`/paiements-employe/${p.id}/annuler`, null, { params: { motif: 'Annulation mobile', utilisateurId: userId || undefined } });
+          charger();
+        } catch (err: any) {
+          Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Erreur serveur');
+        }
+      } },
+    ]);
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#081648" />;
@@ -199,29 +208,33 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
           <Text style={styles.empty}>Aucun paiement enregistre</Text>
         }
         renderItem={({ item: p }) => (
-          <View style={styles.paiCard}>
+          <View style={[styles.paiCard, p.statut === 'ANNULE' && { opacity: 0.55 }]}>
             <View style={styles.paiTop}>
               <Text style={styles.paiDate}>{fdate(p.datePaiement)}</Text>
               <Text style={styles.paiMontant}>{money(p.montant)}</Text>
             </View>
 
-            {p.moisConcerne ? (
-              <View style={styles.paiMoisRow}>
-                <Text style={styles.paiMoisLabel}>Mois : </Text>
-                <Text style={styles.paiMoisVal}>{p.moisConcerne}</Text>
-              </View>
-            ) : null}
+            <View style={styles.paiMoisRow}>
+              <Text style={styles.paiMoisLabel}>Période : </Text>
+              <Text style={styles.paiMoisVal}>
+                {p.periodeDebut}{p.periodeFin && p.periodeFin !== p.periodeDebut ? ` → ${p.periodeFin}` : ''}
+              </Text>
+            </View>
 
-            {p.modePaiement ? (
-              <View style={styles.modeBadge}>
-                <Text style={styles.modeBadgeText}>{p.modePaiement}</Text>
-              </View>
-            ) : null}
+            <View style={styles.modeBadge}>
+              <Text style={styles.modeBadgeText}>{p.nombreMois} mois</Text>
+            </View>
 
-            {p.note ? <Text style={styles.paiNote}>{p.note}</Text> : null}
-            {p.referencePaiement ? (
-              <Text style={styles.paiRef}>Ref : {p.referencePaiement}</Text>
-            ) : null}
+            {p.statut === 'ANNULE' && (
+              <Text style={[styles.paiRef, { color: '#dc2626' }]}>Annulé{p.motifAnnulation ? ` : ${p.motifAnnulation}` : ''}</Text>
+            )}
+            {p.observation ? <Text style={styles.paiNote}>{p.observation}</Text> : null}
+
+            {p.statut !== 'ANNULE' && (
+              <TouchableOpacity onPress={() => annulerPaiement(p)} style={{ alignSelf: 'flex-end', marginTop: 6 }}>
+                <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{tr('annuler', lang)}</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       />
@@ -248,80 +261,56 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
             </View>
 
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              {/* Montant */}
-              <Text style={styles.fieldLabel}>{tr('montant', lang)} *</Text>
-              <TextInput
-                style={styles.input}
-                value={form.montant}
-                onChangeText={t => setForm({ ...form, montant: t })}
-                placeholder="0"
-                placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
-              />
-
-              {/* Mois concerné */}
-              <Text style={styles.fieldLabel}>Mois concerne</Text>
-              <TouchableOpacity
-                style={styles.picker}
-                onPress={() => setShowMoisPicker(v => !v)}
-              >
-                <Text style={styles.pickerVal}>{form.moisConcerne}</Text>
-                <Text style={styles.pickerArrow}>{showMoisPicker ? '▲' : '▼'}</Text>
-              </TouchableOpacity>
-              {showMoisPicker && (
-                <View style={styles.pickerList}>
-                  {MOIS_OPTIONS.map(m => (
-                    <TouchableOpacity
-                      key={m}
-                      style={styles.pickerItem}
-                      onPress={() => { setForm({ ...form, moisConcerne: m }); setShowMoisPicker(false); }}
-                    >
-                      <Text style={[
-                        styles.pickerItemText,
-                        form.moisConcerne === m && { color: '#081648', fontWeight: 'bold' },
-                      ]}>
-                        {m}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-
-              {/* Mode de paiement */}
-              <Text style={styles.fieldLabel}>{tr('mode_paiement', lang)}</Text>
+              {/* Nombre de mois */}
+              <Text style={styles.fieldLabel}>Nombre de mois *</Text>
               <View style={styles.modeRow}>
-                {MODES_PAIEMENT.map(m => (
+                {[1, 2, 3].map(n => (
                   <TouchableOpacity
-                    key={m}
-                    style={[styles.modeBtn, form.modePaiement === m && styles.modeBtnActive]}
-                    onPress={() => setForm({ ...form, modePaiement: m })}
+                    key={n}
+                    style={[styles.modeBtn, form.nombreMois === n && styles.modeBtnActive]}
+                    onPress={() => setForm({ ...form, nombreMois: n })}
                   >
-                    <Text style={[
-                      styles.modeBtnText,
-                      form.modePaiement === m && { color: '#fff' },
-                    ]}>
-                      {m}
-                    </Text>
+                    <Text style={[styles.modeBtnText, form.nombreMois === n && { color: '#fff' }]}>{n} mois</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              {/* Référence */}
-              <Text style={styles.fieldLabel}>Reference / No. transaction</Text>
+              {/* Montant calculé */}
+              <View style={styles.montantPreview}>
+                <Text style={styles.montantPreviewLabel}>Montant à verser</Text>
+                <Text style={styles.montantPreviewVal}>{money((employe.salaireMensuel || 0) * form.nombreMois)}</Text>
+              </View>
+
+              {/* Période début */}
+              <Text style={styles.fieldLabel}>Période de début (AAAA-MM-JJ) *</Text>
               <TextInput
                 style={styles.input}
-                value={form.referencePaiement}
-                onChangeText={t => setForm({ ...form, referencePaiement: t })}
-                placeholder="ex: TXN-001..."
+                value={form.periodeDebut}
+                onChangeText={t => setForm({ ...form, periodeDebut: t })}
+                placeholder="2026-08-01"
                 placeholderTextColor="#94a3b8"
               />
 
-              {/* Note */}
-              <Text style={styles.fieldLabel}>Note</Text>
+              {/* Période fin (si plusieurs mois) */}
+              {form.nombreMois > 1 && (
+                <>
+                  <Text style={styles.fieldLabel}>Période de fin (AAAA-MM-JJ)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={form.periodeFin}
+                    onChangeText={t => setForm({ ...form, periodeFin: t })}
+                    placeholder={form.periodeDebut}
+                    placeholderTextColor="#94a3b8"
+                  />
+                </>
+              )}
+
+              {/* Observation */}
+              <Text style={styles.fieldLabel}>Observation</Text>
               <TextInput
                 style={[styles.input, styles.inputMultiline]}
-                value={form.note}
-                onChangeText={t => setForm({ ...form, note: t })}
+                value={form.observation}
+                onChangeText={t => setForm({ ...form, observation: t })}
                 placeholder="Commentaire..."
                 placeholderTextColor="#94a3b8"
                 multiline
@@ -478,31 +467,16 @@ const styles = StyleSheet.create({
   },
   inputMultiline: { minHeight: 70 },
 
-  // Mois picker
-  picker: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+  // Aperçu du montant calculé
+  montantPreview: {
+    backgroundColor: '#f0fdf4',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 8,
-    backgroundColor: '#fafafa',
-  },
-  pickerVal: { color: '#1e293b', fontSize: 14, fontWeight: '500' },
-  pickerArrow: { color: '#94a3b8', fontSize: 12 },
-  pickerList: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 8,
+    padding: 12,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    maxHeight: 200,
+    alignItems: 'center',
   },
-  pickerItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  pickerItemText: { color: '#334155', fontSize: 13 },
+  montantPreviewLabel: { color: '#166534', fontSize: 11, textTransform: 'uppercase' },
+  montantPreviewVal: { color: '#16a34a', fontSize: 20, fontWeight: '800', marginTop: 2 },
 
   // Mode paiement
   modeRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },

@@ -7,9 +7,11 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { login, getBoutique, setAuthToken } from '../services/api.service';
+import { login, getBoutique, setAuthToken, setStoredToken } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
+import { showToast } from '../services/toast.service';
 
 const LANGUAGES = [
   { code: 'fr', flag: '🇫🇷', name: 'Français' },
@@ -25,6 +27,7 @@ const LANGUAGES = [
 export default function LoginScreen({ onLogin }: any) {
   const navigation = useNavigation<any>();
   const { lang, setLang } = useLang();
+  const colors = useColors();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword]     = useState('');
   const [loading, setLoading]       = useState(false);
@@ -56,17 +59,29 @@ export default function LoginScreen({ onLogin }: any) {
     try {
       const res  = await login(resolveUsername(identifier), password);
       const data = res.data?.data || res.data;
-      // Le backend renvoie { token, username, role, nomComplet, ... } à la racine
-      const user = { ...data };
+      // Le backend renvoie { token, username, role, nomComplet, ... } à la racine.
+      // "role" arrive au format Spring Security ("ROLE_ADMIN", "ROLE_VENDEUR") —
+      // on retire le préfixe ici, une fois pour toutes, pour que les comparaisons
+      // `user.role === 'ADMIN'` utilisées partout dans l'app (tabs, tiroir latéral,
+      // écrans Paramètres/Profil/Vendeurs...) fonctionnent réellement.
+      const user = { ...data, role: (data.role || '').replace(/^ROLE_/, '') };
       await AsyncStorage.setItem('user', JSON.stringify(user));
-      await AsyncStorage.setItem('token', data.token);
+      await setStoredToken(data.token);
       setAuthToken(data.token);
       // Charger les infos boutique immédiatement après login
       try {
         const bRes = await getBoutique();
         const boutiqueData = bRes.data?.data || bRes.data;
         if (boutiqueData) await AsyncStorage.setItem('boutique_info', JSON.stringify(boutiqueData));
-      } catch {}
+      } catch {
+        // Ne bloque jamais la connexion, mais on informe l'utilisateur (toast
+        // discret, non bloquant) plutôt que d'échouer silencieusement — il
+        // pourra continuer à utiliser l'app et rafraîchir plus tard.
+        showToast(
+          "Connecté, mais les infos boutique n'ont pas pu être chargées — réessayez depuis le menu si le nom de la boutique n'apparaît pas.",
+          'warning'
+        );
+      }
       onLogin(user);
     } catch (e: any) {
       let msg: string;
@@ -90,7 +105,7 @@ export default function LoginScreen({ onLogin }: any) {
   return (
     // Fix clavier Android : behavior="height" au lieu de undefined
     <KeyboardAvoidingView
-      style={s.root}
+      style={[s.root, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'android' ? 0 : 0}
     >
@@ -102,7 +117,7 @@ export default function LoginScreen({ onLogin }: any) {
       >
 
         {/* ══ HERO ══ */}
-        <View style={s.hero}>
+        <View style={[s.hero, { backgroundColor: colors.hero }]}>
           <View style={[s.deco, s.deco1]} />
           <View style={[s.deco, s.deco2]} />
           <View style={[s.deco, s.deco3]} />
@@ -115,15 +130,15 @@ export default function LoginScreen({ onLogin }: any) {
               <Text style={s.langChevron}>▾</Text>
             </TouchableOpacity>
             {showLang && (
-              <View style={s.langDropdown}>
+              <View style={[s.langDropdown, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 {LANGUAGES.map(l => (
                   <TouchableOpacity
                     key={l.code}
-                    style={[s.langOption, l.code === lang && s.langActive]}
+                    style={[s.langOption, l.code === lang && { backgroundColor: colors.primary + '22' }]}
                     onPress={() => selectLang(l)}
                   >
                     <Text style={s.langOptFlag}>{l.flag}</Text>
-                    <Text style={[s.langOptName, l.code === lang && s.langOptNameActive]}>{l.name}</Text>
+                    <Text style={[s.langOptName, { color: l.code === lang ? colors.primary : colors.text }, l.code === lang && s.langOptNameActive]}>{l.name}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -141,25 +156,25 @@ export default function LoginScreen({ onLogin }: any) {
 
           {/* Vague */}
           <Svg viewBox="0 0 375 60" style={s.wave} preserveAspectRatio="none">
-            <Path d="M0,20 C60,50 120,0 200,25 C270,48 330,5 375,25 L375,60 L0,60 Z" fill="#f0f4f8" />
+            <Path d="M0,20 C60,50 120,0 200,25 C270,48 330,5 375,25 L375,60 L0,60 Z" fill={colors.background} />
           </Svg>
         </View>
 
         {/* ══ FORMULAIRE ══ */}
-        <View style={s.formZone}>
-          <View style={s.card}>
-            <Text style={s.cardTitle}>{tr('connexion', lang)}</Text>
-            <Text style={s.cardSub}>{tr('sub_connexion', lang)}</Text>
+        <View style={[s.formZone, { backgroundColor: colors.background }]}>
+          <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[s.cardTitle, { color: colors.text }]}>{tr('connexion', lang)}</Text>
+            <Text style={[s.cardSub, { color: colors.textSecondary }]}>{tr('sub_connexion', lang)}</Text>
 
             <View style={s.inputGroup}>
-              <Text style={s.label}>👤  {tr('identifiant', lang)}</Text>
-              <View style={s.inputWrap}>
+              <Text style={[s.label, { color: colors.text }]}>👤  {tr('identifiant', lang)}</Text>
+              <View style={[s.inputWrap, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                 <TextInput
-                  style={s.input}
+                  style={[s.input, { color: colors.text }]}
                   value={identifier}
                   onChangeText={setIdentifier}
                   placeholder={tr('placeholder_id', lang)}
-                  placeholderTextColor="#cbd5e1"
+                  placeholderTextColor={colors.placeholder}
                   autoCapitalize="none"
                   keyboardType="default"
                   returnKeyType="next"
@@ -168,14 +183,14 @@ export default function LoginScreen({ onLogin }: any) {
             </View>
 
             <View style={s.inputGroup}>
-              <Text style={s.label}>🔒  {tr('mot_de_passe', lang)}</Text>
-              <View style={s.inputWrap}>
+              <Text style={[s.label, { color: colors.text }]}>🔒  {tr('mot_de_passe', lang)}</Text>
+              <View style={[s.inputWrap, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                 <TextInput
-                  style={s.input}
+                  style={[s.input, { color: colors.text }]}
                   value={password}
                   onChangeText={setPassword}
                   placeholder={tr('placeholder_pwd', lang)}
-                  placeholderTextColor="#cbd5e1"
+                  placeholderTextColor={colors.placeholder}
                   secureTextEntry={!showPwd}
                   returnKeyType="done"
                   onSubmitEditing={handleLogin}
@@ -193,11 +208,11 @@ export default function LoginScreen({ onLogin }: any) {
 
             {/* Lien mot de passe oublié — visible, AVANT le bouton connexion */}
             <TouchableOpacity style={s.forgotRow} onPress={() => navigation.navigate('ForgotPassword')}>
-              <Text style={s.forgotText}>{tr('mdp_oublie', lang)}</Text>
+              <Text style={[s.forgotText, { color: colors.primary }]}>{tr('mdp_oublie', lang)}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[s.btn, loading && s.btnDis]}
+              style={[s.btn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && s.btnDis]}
               onPress={handleLogin}
               disabled={loading}
             >
@@ -207,7 +222,7 @@ export default function LoginScreen({ onLogin }: any) {
               }
             </TouchableOpacity>
 
-            <Text style={s.version}>Ges Lafia · v1.0 · Maïga Consulting</Text>
+            <Text style={[s.version, { color: colors.textSecondary }]}>Ges Lafia · v1.0 · Maïga Consulting</Text>
           </View>
         </View>
 

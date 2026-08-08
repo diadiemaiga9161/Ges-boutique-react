@@ -1,5 +1,49 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+
+// ─── Stockage sécurisé du token JWT ────────────────────────────────────────
+// Le token est désormais stocké dans expo-secure-store (Keychain iOS /
+// Keystore Android) plutôt qu'en clair dans AsyncStorage. Migration
+// transparente : si aucun token n'est trouvé dans SecureStore mais qu'un
+// ancien token existe encore dans AsyncStorage (installation précédente),
+// on le récupère, on l'écrit dans SecureStore, puis on le supprime
+// d'AsyncStorage — l'utilisateur n'est jamais déconnecté par la migration.
+const SECURE_TOKEN_KEY = 'token';
+
+export async function getStoredToken(): Promise<string | null> {
+  try {
+    const secureToken = await SecureStore.getItemAsync(SECURE_TOKEN_KEY);
+    if (secureToken) return secureToken;
+  } catch (e) {
+    console.warn('SecureStore indisponible (lecture token) :', e);
+  }
+  // Migration depuis l'ancien emplacement AsyncStorage (versions < migration)
+  try {
+    const legacyToken = await AsyncStorage.getItem('token');
+    if (legacyToken) {
+      await SecureStore.setItemAsync(SECURE_TOKEN_KEY, legacyToken).catch(() => {});
+      await AsyncStorage.removeItem('token').catch(() => {});
+      return legacyToken;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+export async function setStoredToken(token: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(SECURE_TOKEN_KEY, token);
+  } catch (e) {
+    console.warn('SecureStore indisponible (écriture token) :', e);
+  }
+  // Nettoyage de l'ancien emplacement au cas où il resterait un token en clair
+  AsyncStorage.removeItem('token').catch(() => {});
+}
+
+export async function removeStoredToken(): Promise<void> {
+  try { await SecureStore.deleteItemAsync(SECURE_TOKEN_KEY); } catch { /* ignore */ }
+  AsyncStorage.removeItem('token').catch(() => {});
+}
 
 export const DEFAULT_API_URL = 'https://fatmazahara.mg-consulting.site/api';
 
@@ -9,6 +53,14 @@ export const BOUTIQUES_CONFIG = [
   { id: 3, nom: 'Magaouba Kabala', url: 'https://magaoubakabala.mg-consulting.site/api' },
   { id: 4, nom: 'Baran Djim',      url: 'https://barandjim.mg-consulting.site/api' },
   { id: 5, nom: 'Bou Bandjim',     url: 'https://boubandjim.mg-consulting.site/api' },
+  // Entrées de test local (dev) — pointent vers le backend Spring Boot lancé en local
+  // sur le PC de dev. À retirer avant une build de production.
+  // Téléphone séparé sur le même Wi-Fi que le PC : "localhost" désignerait le téléphone
+  // lui-même, il faut l'IP réseau du PC.
+  { id: 6, nom: '🧪 Local (tunnel, sans wifi)', url: 'https://theories-waterproof-demonstrate-joint.trycloudflare.com/api' },
+  // Test via le navigateur du PC lui-même (comme "ionic serve" + Chrome en local) :
+  // ouvrir http://localhost:8081 dans Chrome sur le PC, choisir cette boutique.
+  { id: 7, nom: '🧪 Local (navigateur PC)', url: 'http://localhost:8080/api' },
 ];
 
 export function getApiUrlForPort(port: number): string {
@@ -23,6 +75,13 @@ export function setApiUrl(url: string): void {
   _baseUrl = url;
 }
 
+// URL racine du backend (sans le suffixe /api) — utile pour construire des
+// liens directs vers des endpoints publics servant des fichiers (QR code,
+// PDF...) plutôt que de passer par axios, comme /api/clients/{id}/qrcode.
+export function getBackendRootUrl(): string {
+  return _baseUrl.replace(/\/api\/?$/, '');
+}
+
 export function setAuthToken(token: string | null): void {
   _token = token;
 }
@@ -32,9 +91,10 @@ export function clearAuthToken(): void {
 }
 
 export async function initApiSession(): Promise<void> {
-  const [urlEntry, tokenEntry] = await AsyncStorage.multiGet(['api_url', 'token']);
-  if (urlEntry[1]) _baseUrl = urlEntry[1];
-  if (tokenEntry[1]) _token = tokenEntry[1];
+  const urlEntry = await AsyncStorage.getItem('api_url');
+  if (urlEntry) _baseUrl = urlEntry;
+  const token = await getStoredToken();
+  if (token) _token = token;
 }
 
 // ─── Callback déconnexion automatique (401) ───────────────────────────────
@@ -63,7 +123,8 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401) {
       clearAuthToken();
-      await AsyncStorage.multiRemove(['user', 'token']);
+      await AsyncStorage.removeItem('user');
+      await removeStoredToken();
       if (_onAuthError) _onAuthError();
     }
     return Promise.reject(error);
@@ -91,6 +152,11 @@ export const selectBoutique = (id: number) => api.post(`/boutiques/${id}/select`
 // ─── Produits ──────────────────────────────────────────────────────────────
 export const getProduits = (params?: any) => api.get('/produits', { params });
 export const getProduit = (id: number) => api.get(`/produits/${id}`);
+export const getCategories = () => api.get('/produits/categories');
+export const createCategorie = (data: { nom: string; description?: string }) => api.post('/produits/categories', data);
+export const updateCategorie = (id: number, data: { nom: string; description?: string }) => api.put(`/produits/categories/${id}`, data);
+export const deleteCategorie = (id: number) => api.delete(`/produits/categories/${id}`);
+export const getStatistiquesStock = () => api.get('/produits/statistiques');
 export const createProduit = (data: any) => api.post('/produits', data);
 export const updateProduit = (id: number, data: any) => api.put(`/produits/${id}`, data);
 export const deleteProduit = (id: number) => api.delete(`/produits/${id}`);
@@ -105,6 +171,17 @@ export const annulerVente = (id: number) => api.delete(`/ventes/${id}`);
 export const getVenteDetail = (id: number) => api.get(`/ventes/${id}`);
 export const getVentesParPeriode = (dateDebut: string, dateFin: string) =>
   api.get('/ventes/periode', { params: { dateDebut, dateFin } });
+export const modifierLignesVente = (venteId: number, data: {
+  lignes: any[];
+  utilisateurId?: number;
+  motif?: string;
+}) => api.put(`/ventes/${venteId}/modifier-lignes`, data);
+export const effectuerRetourVente = (data: {
+  venteId: number;
+  motif?: string;
+  utilisateurId?: number;
+  lignes: { produitId: number; quantiteRetournee: number; prixUnitaire: number; ligneVenteId?: number }[];
+}) => api.post('/retours-ventes', data);
 
 // ─── Clients ───────────────────────────────────────────────────────────────
 export const getClients = (params?: any) => api.get('/clients', { params });
@@ -117,9 +194,13 @@ export const getFournisseurs = (params?: any) => api.get('/fournisseurs', { para
 export const createFournisseur = (data: any) => api.post('/fournisseurs', data);
 export const updateFournisseur = (id: number, data: any) => api.put(`/fournisseurs/${id}`, data);
 export const deleteFournisseur = (id: number) => api.delete(`/fournisseurs/${id}`);
-export const getHistoriqueAchatsFournisseur = (id: number) => api.get(`/fournisseur-achats/achats/${id}`);
-export const getHistoriquePaiementsFournisseur = (id: number) => api.get(`/fournisseur-achats/paiements/${id}`);
-export const getSituationFournisseur = (id: number) => api.get(`/fournisseur-achats/situation/${id}`);
+export const getHistoriqueAchatsFournisseur = (id: number, dateDebut?: string, dateFin?: string) =>
+  api.get(`/fournisseur-achats/achats/${id}`, { params: { dateDebut, dateFin } });
+export const getHistoriquePaiementsFournisseur = (id: number, dateDebut?: string, dateFin?: string) =>
+  api.get(`/fournisseur-achats/paiements/${id}`, { params: { dateDebut, dateFin } });
+export const getSituationFournisseur = (id: number, dateDebut?: string, dateFin?: string) =>
+  api.get(`/fournisseur-achats/situation/${id}`, { params: { dateDebut, dateFin } });
+export const getAchatsNonPayesFournisseur = (id: number) => api.get(`/fournisseur-achats/achats-non-payes/${id}`);
 export const creerAchatFournisseur = (data: any) => api.post('/fournisseur-achats/achat', data);
 export const payerFournisseur = (data: any) => api.post('/fournisseur-achats/paiement', data);
 export const annulerAchatFournisseur = (id: number) => api.post(`/fournisseur-achats/achat/${id}/annuler`, {});
@@ -131,13 +212,60 @@ export const updateDepense = (id: number, data: any) => api.put(`/depenses/${id}
 export const deleteDepense = (id: number) => api.delete(`/depenses/${id}`);
 
 // ─── Rapports ──────────────────────────────────────────────────────────────
+// NOTE : /rapports/jour, /rapports/semaine, /rapports/mois n'existent PAS côté
+// backend (aucun controller ne les expose — vérifié dans RapportAnalytiqueController,
+// seul /rapports/ca-30-jours, /top-produits, /ventes-par-heure, /ventes-par-vendeur,
+// /marges y sont). Les rapports jour/semaine/mois/personnalisé sont donc calculés
+// côté client à partir de /ventes/periode, exactement comme rapport.service.ts sur
+// Ionic (genererRapportJournalier/Hebdomadaire/Mensuel/Periodique) — voir
+// rapport.helpers.ts. Ces 3 exports sont conservés (cassés) uniquement parce que
+// ResultatNetScreen/BeneficesScreen/HistoriqueVentesScreen les appellent encore.
 export const getRapportJour = (params?: any) => api.get('/rapports/jour', { params });
 export const getRapportSemaine = (params?: any) => api.get('/rapports/semaine', { params });
 export const getRapportMois = (params?: any) => api.get('/rapports/mois', { params });
+export const getSituationCredits = () => api.get('/caisse/credits/situation');
+
+// ─── Bénéfices ─────────────────────────────────────────────────────────────
+// Ceux-ci EXISTENT réellement côté backend (BeneficeController, ADMIN only),
+// contrairement à /rapports/jour|semaine|mois ci-dessus.
+export const getBeneficeJournalier = (date?: string) => api.get('/benefices/journalier', { params: { date } });
+export const getBeneficeHebdomadaire = () => api.get('/benefices/hebdomadaire');
+export const getBeneficeMensuel = (mois?: number, annee?: number) => api.get('/benefices/mensuel', { params: { mois, annee } });
+export const getBeneficeAnnuel = (annee?: number) => api.get('/benefices/annuel', { params: { annee } });
+
+// ─── Résultat net (bénéfices + bonus fournisseurs - dépenses/paiements employé) ─
+export const getResultatJournalier = (date?: string) => api.get('/resultat-net/journalier', { params: { date } });
+export const getResultatMensuel = (mois?: number, annee?: number) => api.get('/resultat-net/mensuel', { params: { mois, annee } });
+export const getResultatAnnuel = (annee?: number) => api.get('/resultat-net/annuel', { params: { annee } });
+
+// GET /ventes/statistiques/chiffre-affaire — vrai endpoint utilisé par le modal
+// "Statistiques" de sales.page.ts sur Ionic (PAS /rapports/jour|semaine|mois).
+export const getStatistiquesChiffreAffaire = () => api.get('/ventes/statistiques/chiffre-affaire');
+
+// ─── Factures pro forma (entité distincte des ventes — /api/caisse/factures) ─
+export const getFactures = () => api.get('/caisse/factures');
+export const getFacturesParStatut = (statut: string) => api.get(`/caisse/factures/statut/${statut}`);
+export const creerFactureProforma = (data: any) => api.post('/caisse/factures', data);
+export const changerStatutFacture = (id: number, statut: string) =>
+  api.put(`/caisse/factures/${id}/statut`, null, { params: { statut } });
+
+// ─── Dépôts garde — vue groupée par client + retrait global (cloturerDepot
+//     existe déjà plus haut, écran ne l'appelait juste pas) ──────────────────
+export const getGroupesClientDepot = () => api.get('/depots-garde/groupes-client');
+export const retraitGlobalDepot = (data: { numero: string; montant?: number; observation?: string }) =>
+  api.post('/depots-garde/retrait-global', data);
 
 // ─── Notifications ─────────────────────────────────────────────────────────
 export const getNotifications = () => api.get('/notifications');
 export const marquerLue = (id: number) => api.patch(`/notifications/${id}/lue`);
+export const marquerToutesLues = () => api.put('/notifications/tout-lire', {});
+
+// ─── Mobile Money (Orange/Moov) — vrais endpoints backend dédiés, PAS un
+// filtre client-side sur /ventes (ancien comportement RN, en plus avec des
+// modes WAVE/MTN_MONEY que le backend ne gère même pas) ──────────────────────
+export const getMobileMoneyOperations = (type: string, periode: string) =>
+  api.get('/mobile-money/operations', { params: { type, periode } });
+export const getMobileMoneyResume = () => api.get('/mobile-money/resume');
 
 // ─── Crédits ───────────────────────────────────────────────────────────────
 export const getCredits = (params?: any) => api.get('/credits', { params });
@@ -169,6 +297,13 @@ export const getStatsCaisseJour = () => api.get('/caisse/statistiques/aujourdhui
 export const getHistoriqueReglementsCredit = (venteId: number) => api.get(`/caisse/credits/${venteId}/reglements`);
 export const getCreditsRegles = () => api.get('/caisse/credits/regles');
 export const getPaiementsGroupes = () => api.get('/caisse/paiements-groupes');
+export const transfererVersBanque = (data: {
+  compteId: number;
+  montant: number;
+  motif: string;
+  utilisateurId?: number;
+  reference?: string;
+}) => api.post('/caisse/transfert-banque', data);
 
 // ─── Inventaire ────────────────────────────────────────────────────────────
 export const getInventaire = () => api.get('/inventaire');
@@ -219,8 +354,13 @@ export const getDepensesParType = (params?: { debut?: string; fin?: string }) =>
 export const getPaiementsEmploye = () => api.get('/paiements-employe');
 
 // ─── Mouvements de stock ───────────────────────────────────────────────────
-export const getMouvements = (params?: { dateDebut?: string; dateFin?: string }) =>
-  api.get('/inventaire/mouvements', { params });
+// GET /inventaire/mouvements ne prend AUCUN paramètre côté backend (dateDebut/
+// dateFin étaient silencieusement ignorés) — pour filtrer par date il faut
+// GET /inventaire/historique?debut=...&fin=... (LocalDateTime ISO, obligatoires
+// tous les deux), exactement comme obtenirMouvementsParDate() sur Ionic.
+export const getMouvements = () => api.get('/inventaire/mouvements');
+export const getMouvementsParDate = (debut: string, fin: string) =>
+  api.get('/inventaire/historique', { params: { debut, fin } });
 export const ajouterMouvement = (data: any) => {
   const { typeMouvement, quantite, ...rest } = data;
   if (typeMouvement === 'ENTREE') return api.post('/inventaire/entree', { quantite, ...rest });
@@ -241,6 +381,14 @@ export const getClientVentes = (clientId: number) =>
   api.get('/ventes', { params: { clientId } });
 export const getCreditsClient = (clientNom: string) =>
   api.get('/caisse/credits/non-regles', { params: { clientNom } });
+
+// ─── Clients — relevé / situation client (JSON paginé) ──────────────────────
+// Contrat backend : GET /api/clients/{id}/releve?page=&size=&dateDebut=&dateFin=&type=
+// dateDebut/dateFin au format AAAA-MM-JJ (LocalDate). type = 'VENTE' | 'VERSEMENT' | undefined (tout).
+export const getReleveClient = (
+  clientId: number,
+  params?: { page?: number; size?: number; dateDebut?: string; dateFin?: string; type?: string },
+) => api.get(`/clients/${clientId}/releve`, { params });
 
 // ─── Types Dépenses ────────────────────────────────────────────────────────
 export const getTypesDepense = () => api.get('/types-depense');
@@ -296,15 +444,28 @@ export const getVentesParType = (params?: any) =>
   api.get('/ventes/par-type', { params }).catch(() => ({ data: [] }));
 
 // ─── Avances clients ────────────────────────────────────────────────────────
-export const getSoldeAvanceClient = (clientId: number) =>
-  api.get('/clients/avances/solde', { params: { clientId } }).catch(() => ({ data: { solde: 0 } }));
-export const createAvanceClient = (data: any) => api.post('/clients/avances', data);
-export const getAvancesClient = (clientId: number) =>
-  api.get(`/clients/avances/${clientId}`).catch(() => ({ data: [] }));
+// Endpoint réel du backend : GET /api/avances/solde?clientNom=...&clientTelephone=...
+// (l'ancien getSoldeAvanceClient(clientId) appelait /clients/avances/solde, une route
+// qui n'existe pas côté backend — toujours retombée sur le .catch() silencieusement).
+export const getSoldeAvanceClient = (clientNom: string, clientTelephone?: string) =>
+  api.get('/avances/solde', { params: { clientNom, clientTelephone } }).catch(() => ({ data: { soldeDisponible: 0 } }));
+export const createAvanceClient = (data: {
+  clientNom: string;
+  clientTelephone?: string;
+  montant: number;
+  motif?: string;
+  utilisateurId?: number;
+  modePaiement?: string;
+  referencePaiement?: string;
+}) => api.post('/avances', data);
+// Endpoint réel : GET /api/avances/historique?clientNom=...&clientTelephone=... — l'ancien
+// getAvancesClient(clientId) appelait /clients/avances/{id}, une route qui n'existe pas
+// côté backend (ClientController n'a pas de sous-route /avances).
+export const getHistoriqueAvanceClient = (clientNom: string, clientTelephone?: string) =>
+  api.get('/avances/historique', { params: { clientNom, clientTelephone } });
 
 // ─── Retours vente ──────────────────────────────────────────────────────────
 export const retourVente = (id: number, data: any) => api.post(`/ventes/${id}/retour`, data);
-export const modifierLignesVente = (id: number, data: any) => api.put(`/ventes/${id}/lignes`, data);
 
 // ─── Ventes annulées ────────────────────────────────────────────────────────
 export const getVentesAnnulees = (boutiqueId: number) =>
@@ -338,6 +499,8 @@ export const getCA30Jours = () => api.get('/rapports/ca-30-jours');
 export const getTopProduits = () => api.get('/rapports/top-produits');
 export const getVentesParHeure = () => api.get('/rapports/ventes-par-heure');
 export const getMarges = () => api.get('/rapports/marges');
+export const getVentesParVendeur = (dateDebut?: string, dateFin?: string) =>
+  api.get('/rapports/ventes-par-vendeur', { params: (dateDebut && dateFin) ? { dateDebut, dateFin } : {} });
 export const getPrevisionStock = () => api.get('/previsions/stock');
 
 // ─── IA (100% locale — pas d'API externe) ──────────────────────────────────
@@ -348,3 +511,33 @@ export const getRecommandationsIA = () => api.get('/ia/recommandations');
 export const enregistrerFeedbackIA = (id: string, statut: 'SUIVIE' | 'IGNOREE') =>
   api.post(`/ia/feedback/${id}`, { statut });
 export const getScoreSanteIA = () => api.get('/ia/sante');
+
+// ─── Assistant IA — chat avec questions suggérées ──────────────────────────
+export const getQuestionsPredefiniesIA = () => api.get('/ia/questions-predefinies');
+export const envoyerQuestionIA = (question: string) => api.post('/ia/chat', { question });
+
+// ─── Transferts — produits & paiements inter-boutiques ────────────────────
+export const getProduitsBoutique = (partenaireId: number) =>
+  api.get(`/transferts/partenaires/${partenaireId}/produits`).catch(() => ({ data: [] }));
+
+export const getPaiementsTransfert = (transfertId: number) =>
+  api.get(`/transferts/${transfertId}/paiements`).catch(() => ({ data: [] }));
+
+export const ajouterPaiementTransfert = (transfertId: number, paiement: {
+  montant: number;
+  modePaiement: string;
+  notes?: string;
+}) => api.post(`/transferts/${transfertId}/paiements`, paiement);
+
+// ─── Paramètres (réinitialisation / suppression données boutique — ADMIN) ──
+export interface SelectionParametres {
+  soldeCaisse?: boolean;
+  historiqueOperationsCaisse?: boolean;
+  creditsRegles?: boolean;
+  historiqueVentesAnnulees?: boolean;
+}
+export const getStatutParametres = () => api.get('/parametres/statut');
+export const reinitialiserParametres = (selection: SelectionParametres) =>
+  api.post('/parametres/reinitialiser', selection);
+export const supprimerParametres = (selection: SelectionParametres) =>
+  api.delete('/parametres/supprimer', { data: selection });

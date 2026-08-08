@@ -17,7 +17,6 @@ import {
 } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
-import NetInfo from '@react-native-community/netinfo';
 import { sauvegarderCache, lireCache, creerDepenseOffline } from '../services/offline.service';
 
 interface TypeDepense { id: number; nom: string; }
@@ -158,8 +157,6 @@ export default function DepensesScreen() {
 
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const [resD, resP] = await Promise.all([getDepenses(), getPaiementsEmploye().catch(() => ({ data: [] }))]);
       const liste: any[] = resD.data?.depenses || resD.data?.data || [];
       const salaires: any[] = (Array.isArray(resP.data) ? resP.data : [])

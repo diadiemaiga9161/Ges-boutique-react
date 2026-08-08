@@ -5,10 +5,9 @@ import {
 } from 'react-native';
 import { Text, Card, FAB, Searchbar, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import api, { createDepot, effectuerRetraitDepot } from '../services/api.service';
+import api, { createDepot, effectuerRetraitDepot, cloturerDepot, getGroupesClientDepot, retraitGlobalDepot } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
-import NetInfo from '@react-native-community/netinfo';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 
 interface DepotClient {
@@ -49,6 +48,17 @@ interface Stats {
   totalMontantGarde: number;
 }
 
+interface ClientDepotGroupe {
+  numero: string;
+  nom: string;
+  prenom?: string;
+  nomComplet: string;
+  nombreDepotsActifs: number;
+  totalMontantInitial: number;
+  totalMontantRestant: number;
+  totalMontantRetire: number;
+}
+
 const money = (v: number) =>
   new Intl.NumberFormat('fr-FR').format(v || 0) + ' FCFA';
 
@@ -80,11 +90,20 @@ export default function DepotsScreen() {
   const [showRetrait, setShowRetrait] = useState(false);
   const [retraitMontant, setRetraitMontant] = useState('');
   const [retraitObs, setRetraitObs] = useState('');
+  const [cloturing, setCloturing] = useState(false);
+
+  // Vue groupée par client + retrait global
+  const [vueMode, setVueMode] = useState<'liste' | 'groupes'>('liste');
+  const [groupesClient, setGroupesClient] = useState<ClientDepotGroupe[]>([]);
+  const [loadingGroupes, setLoadingGroupes] = useState(false);
+  const [showRetraitGlobal, setShowRetraitGlobal] = useState(false);
+  const [clientRetraitGlobal, setClientRetraitGlobal] = useState<ClientDepotGroupe | null>(null);
+  const [retraitGlobalMontant, setRetraitGlobalMontant] = useState('');
+  const [retraitGlobalObs, setRetraitGlobalObs] = useState('');
+  const [savingRetraitGlobal, setSavingRetraitGlobal] = useState(false);
 
   const charger = useCallback(async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const [r1, r2] = await Promise.all([
         api.get('/depots-garde').catch(() => ({ data: [] })),
         api.get('/depots-garde/statistiques').catch(() => ({ data: null })),
@@ -209,6 +228,92 @@ export default function DepotsScreen() {
     }
   };
 
+  // ── Clôture d'un dépôt (comme cloturerDepot() sur Ionic) ──────────────────
+  const cloturer = (depot: DepotGarde) => {
+    Alert.alert(
+      'Clôturer ce dépôt ?',
+      `${depot.nomComplet} — Solde restant : ${money(depot.montantRestant)}`,
+      [
+        { text: tr('annuler', lang), style: 'cancel' },
+        {
+          text: 'Clôturer', style: 'destructive',
+          onPress: async () => {
+            setCloturing(true);
+            try {
+              await cloturerDepot(depot.id);
+              setShowDetail(false);
+              await charger();
+            } catch (e: any) {
+              Alert.alert(tr('erreur', lang), e?.response?.data?.message || 'Clôture impossible');
+            }
+            setCloturing(false);
+          },
+        },
+      ],
+    );
+  };
+
+  // ── Vue groupée par client ─────────────────────────────────────────────────
+  const chargerGroupes = async () => {
+    setLoadingGroupes(true);
+    try {
+      const res = await getGroupesClientDepot();
+      setGroupesClient(res.data?.data || res.data || []);
+    } catch {
+      Alert.alert(tr('erreur', lang), 'Chargement des groupes impossible');
+    }
+    setLoadingGroupes(false);
+  };
+
+  const basculerVue = (mode: 'liste' | 'groupes') => {
+    setVueMode(mode);
+    if (mode === 'groupes' && groupesClient.length === 0) chargerGroupes();
+  };
+
+  const ouvrirRetraitGlobal = (client: ClientDepotGroupe) => {
+    setClientRetraitGlobal(client);
+    setRetraitGlobalMontant('');
+    setRetraitGlobalObs('');
+    setShowRetraitGlobal(true);
+  };
+
+  const saveRetraitGlobal = () => {
+    if (!clientRetraitGlobal) return;
+    const total = clientRetraitGlobal.totalMontantRestant;
+    const montant = parseFloat(retraitGlobalMontant) || 0;
+    if (montant > 0 && montant > total) {
+      Alert.alert(tr('erreur', lang), `Montant max : ${money(total)}`); return;
+    }
+    Alert.alert(
+      'Confirmer le retrait global ?',
+      `Client : ${clientRetraitGlobal.nomComplet}\nMontant : ${montant > 0 ? money(montant) : money(total) + ' (total)'}\n${clientRetraitGlobal.nombreDepotsActifs} dépôt(s) concerné(s)`,
+      [
+        { text: tr('annuler', lang), style: 'cancel' },
+        {
+          text: tr('confirmer', lang),
+          onPress: async () => {
+            setSavingRetraitGlobal(true);
+            try {
+              await retraitGlobalDepot({
+                numero: clientRetraitGlobal.numero,
+                montant: montant > 0 ? montant : undefined,
+                observation: retraitGlobalObs || undefined,
+              });
+              setShowRetraitGlobal(false);
+              setClientRetraitGlobal(null);
+              setGroupesClient([]);
+              await charger();
+              await chargerGroupes();
+            } catch (e: any) {
+              Alert.alert(tr('erreur', lang), e?.response?.data?.message || 'Retrait global impossible');
+            }
+            setSavingRetraitGlobal(false);
+          },
+        },
+      ],
+    );
+  };
+
   const filtered = depots.filter(d => {
     if (filtre !== 'TOUS' && d.statut !== filtre) return false;
     if (!search.trim()) return true;
@@ -246,66 +351,120 @@ export default function DepotsScreen() {
         </View>
       )}
 
-      {/* ── Filtres ── */}
-      <View style={s.filtreRow}>
-        {(['TOUS', 'ACTIF', 'CLOTURE'] as const).map(f => (
-          <TouchableOpacity key={f} style={[s.filtreBtn, filtre === f && s.filtreBtnActive]} onPress={() => setFiltre(f)}>
-            <Text style={[s.filtreTxt, filtre === f && s.filtreTxtActive]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? tr('actifs', lang) : tr('clotures', lang)}</Text>
-          </TouchableOpacity>
-        ))}
+      {/* ── Bascule vue liste / groupée par client ── */}
+      <View style={s.vueRow}>
+        <TouchableOpacity style={[s.vueBtn, vueMode === 'liste' && s.vueBtnActive]} onPress={() => basculerVue('liste')}>
+          <MaterialCommunityIcons name="format-list-bulleted" size={14} color={vueMode === 'liste' ? '#fff' : '#64748b'} />
+          <Text style={[s.vueTxt, vueMode === 'liste' && s.vueTxtActive]}>Liste</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.vueBtn, vueMode === 'groupes' && s.vueBtnActive]} onPress={() => basculerVue('groupes')}>
+          <MaterialCommunityIcons name="account-group-outline" size={14} color={vueMode === 'groupes' ? '#fff' : '#64748b'} />
+          <Text style={[s.vueTxt, vueMode === 'groupes' && s.vueTxtActive]}>Par client</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* ── Searchbar ── */}
-      <Searchbar
-        style={s.searchBar}
-        inputStyle={{ fontSize: 13 }}
-        placeholder={tr('recherche_client', lang)}
-        value={search}
-        onChangeText={setSearch}
-      />
-
-      {/* ── Liste ── */}
-      <FlatList
-        data={filtered}
-        keyExtractor={d => String(d.id)}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 80 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={['#1a56db']} />}
-        ListEmptyComponent={
-          <View style={s.empty}>
-            <MaterialCommunityIcons name="safe" size={64} color="#cbd5e1" />
-            <Text style={s.emptyTitle}>{tr('aucun_depot', lang)}</Text>
-            <Text style={s.emptySub}>Appuyez sur + pour créer</Text>
+      {vueMode === 'liste' ? (
+        <>
+          {/* ── Filtres ── */}
+          <View style={s.filtreRow}>
+            {(['TOUS', 'ACTIF', 'CLOTURE'] as const).map(f => (
+              <TouchableOpacity key={f} style={[s.filtreBtn, filtre === f && s.filtreBtnActive]} onPress={() => setFiltre(f)}>
+                <Text style={[s.filtreTxt, filtre === f && s.filtreTxtActive]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? tr('actifs', lang) : tr('clotures', lang)}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
-        }
-        renderItem={({ item: d }) => {
-          const pct = d.montantInitial > 0 ? (d.montantRetire / d.montantInitial) * 100 : 0;
-          return (
-            <Card style={s.card} onPress={() => { setSelected(d); setShowDetail(true); }}>
-              <Card.Content style={s.cardRow}>
-                <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
-                  <MaterialCommunityIcons name="safe" size={22} color="#1a56db" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.cardName} numberOfLines={1}>{d.nomComplet}</Text>
-                  <Text style={s.cardSub}>{d.numero} · {fmt(d.dateDepot)}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={s.cardAmt}>{money(d.montantRestant)}</Text>
-                  <View style={[s.badge, { backgroundColor: d.statut === 'ACTIF' ? '#d1fae5' : '#f1f5f9' }]}>
-                    <Text style={[s.badgeTxt, { color: d.statut === 'ACTIF' ? '#16a34a' : '#6b7280' }]}>{d.statut}</Text>
+
+          {/* ── Searchbar ── */}
+          <Searchbar
+            style={s.searchBar}
+            inputStyle={{ fontSize: 13 }}
+            placeholder={tr('recherche_client', lang)}
+            value={search}
+            onChangeText={setSearch}
+          />
+
+          {/* ── Liste ── */}
+          <FlatList
+            data={filtered}
+            keyExtractor={d => String(d.id)}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 80 }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={['#1a56db']} />}
+            ListEmptyComponent={
+              <View style={s.empty}>
+                <MaterialCommunityIcons name="safe" size={64} color="#cbd5e1" />
+                <Text style={s.emptyTitle}>{tr('aucun_depot', lang)}</Text>
+                <Text style={s.emptySub}>Appuyez sur + pour créer</Text>
+              </View>
+            }
+            renderItem={({ item: d }) => {
+              const pct = d.montantInitial > 0 ? (d.montantRetire / d.montantInitial) * 100 : 0;
+              return (
+                <Card style={s.card} onPress={() => { setSelected(d); setShowDetail(true); }}>
+                  <Card.Content style={s.cardRow}>
+                    <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
+                      <MaterialCommunityIcons name="safe" size={22} color="#1a56db" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.cardName} numberOfLines={1}>{d.nomComplet}</Text>
+                      <Text style={s.cardSub}>{d.numero} · {fmt(d.dateDepot)}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={s.cardAmt}>{money(d.montantRestant)}</Text>
+                      <View style={[s.badge, { backgroundColor: d.statut === 'ACTIF' ? '#d1fae5' : '#f1f5f9' }]}>
+                        <Text style={[s.badgeTxt, { color: d.statut === 'ACTIF' ? '#16a34a' : '#6b7280' }]}>{d.statut}</Text>
+                      </View>
+                    </View>
+                  </Card.Content>
+                  <Card.Content style={{ paddingTop: 0 }}>
+                    <View style={s.progressBg}>
+                      <View style={[s.progressFill, { width: `${Math.min(pct, 100)}%` as any }]} />
+                    </View>
+                    <Text style={s.progressLbl}>{money(d.montantRetire)} retiré / {money(d.montantInitial)} initial</Text>
+                  </Card.Content>
+                </Card>
+              );
+            }}
+          />
+        </>
+      ) : (
+        /* ── Vue groupée par client ── */
+        loadingGroupes ? (
+          <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />
+        ) : (
+          <FlatList
+            data={groupesClient}
+            keyExtractor={g => g.numero}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 80 }}
+            refreshControl={<RefreshControl refreshing={loadingGroupes} onRefresh={chargerGroupes} colors={['#1a56db']} />}
+            ListEmptyComponent={
+              <View style={s.empty}>
+                <MaterialCommunityIcons name="account-group-outline" size={64} color="#cbd5e1" />
+                <Text style={s.emptyTitle}>Aucun client</Text>
+              </View>
+            }
+            renderItem={({ item: g }) => (
+              <Card style={s.card}>
+                <Card.Content style={s.cardRow}>
+                  <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
+                    <Text style={{ fontWeight: '700', color: '#1a56db' }}>{(g.nom || '?')[0].toUpperCase()}</Text>
                   </View>
-                </View>
-              </Card.Content>
-              <Card.Content style={{ paddingTop: 0 }}>
-                <View style={s.progressBg}>
-                  <View style={[s.progressFill, { width: `${Math.min(pct, 100)}%` as any }]} />
-                </View>
-                <Text style={s.progressLbl}>{money(d.montantRetire)} retiré / {money(d.montantInitial)} initial</Text>
-              </Card.Content>
-            </Card>
-          );
-        }}
-      />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.cardName} numberOfLines={1}>{g.nomComplet}</Text>
+                    <Text style={s.cardSub}>{g.numero} · {g.nombreDepotsActifs} dépôt(s) actif(s)</Text>
+                  </View>
+                  <Text style={s.cardAmt}>{money(g.totalMontantRestant)}</Text>
+                </Card.Content>
+                <Card.Content style={{ paddingTop: 0, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                  <TouchableOpacity style={s.btnRetraitGlobal} onPress={() => ouvrirRetraitGlobal(g)}>
+                    <MaterialCommunityIcons name="cash-minus" size={14} color="#fff" />
+                    <Text style={s.btnRetraitGlobalTxt}>Retrait global</Text>
+                  </TouchableOpacity>
+                </Card.Content>
+              </Card>
+            )}
+          />
+        )
+      )}
 
       {/* ── FAB ── */}
       <FAB icon="plus" style={s.fab} onPress={openCreate} />
@@ -406,13 +565,22 @@ export default function DepotsScreen() {
               )}
 
               {selected.statut === 'ACTIF' && (
-                <TouchableOpacity style={[s.saveBtn, { backgroundColor: '#dc2626', marginTop: 24 }]} onPress={() => {
-                  setRetraitMontant('');
-                  setRetraitObs('');
-                  setShowRetrait(true);
-                }}>
-                  <Text style={s.saveBtnTxt}>{tr('effectuer_retrait', lang)}</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity style={[s.saveBtn, { backgroundColor: '#dc2626', marginTop: 24 }]} onPress={() => {
+                    setRetraitMontant('');
+                    setRetraitObs('');
+                    setShowRetrait(true);
+                  }}>
+                    <Text style={s.saveBtnTxt}>{tr('effectuer_retrait', lang)}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.saveBtn, { backgroundColor: '#6b7280', marginTop: 10 }]}
+                    disabled={cloturing}
+                    onPress={() => cloturer(selected)}
+                  >
+                    {cloturing ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>Clôturer le dépôt</Text>}
+                  </TouchableOpacity>
+                </>
               )}
             </ScrollView>
           </>
@@ -440,6 +608,30 @@ export default function DepotsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ── Modal Retrait global (vue groupée) ── */}
+      <Modal visible={showRetraitGlobal} animationType="slide" transparent onRequestClose={() => setShowRetraitGlobal(false)}>
+        <View style={s.retraitOverlay}>
+          <View style={s.retraitCard}>
+            <Text style={s.retraitTitle}>Retrait global — {clientRetraitGlobal?.nomComplet}</Text>
+            <Text style={s.retraitInfo}>
+              {tr('disponible', lang)} : {clientRetraitGlobal ? money(clientRetraitGlobal.totalMontantRestant) : ''} · {clientRetraitGlobal?.nombreDepotsActifs} dépôt(s)
+            </Text>
+            <Text style={s.fieldLabel}>Montant (laisser vide pour tout retirer)</Text>
+            <TextInput style={s.input} value={retraitGlobalMontant} onChangeText={setRetraitGlobalMontant} keyboardType="numeric" placeholder="Total si vide" />
+            <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
+            <TextInput style={s.input} value={retraitGlobalObs} onChangeText={setRetraitGlobalObs} placeholder={tr('description', lang)} />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#6b7280' }]} onPress={() => setShowRetraitGlobal(false)}>
+                <Text style={s.saveBtnTxt}>{tr('annuler', lang)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#dc2626' }]} disabled={savingRetraitGlobal} onPress={saveRetraitGlobal}>
+                {savingRetraitGlobal ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>{tr('confirmer', lang)}</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -456,6 +648,15 @@ const s = StyleSheet.create({
   // Offline banner
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
   offlineTxt: { color: '#92400e', fontSize: 12 },
+
+  // Bascule vue liste / groupée
+  vueRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 8 },
+  vueBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, borderRadius: 10, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
+  vueBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
+  vueTxt: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  vueTxtActive: { color: '#fff' },
+  btnRetraitGlobal: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#dc2626', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  btnRetraitGlobalTxt: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   // Filtres
   filtreRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center' },

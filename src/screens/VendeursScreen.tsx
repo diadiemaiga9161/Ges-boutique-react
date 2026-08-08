@@ -20,7 +20,6 @@ import {
   IconButton,
   RadioButton,
 } from 'react-native-paper';
-import NetInfo from '@react-native-community/netinfo';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
@@ -88,8 +87,6 @@ export default function VendeursScreen() {
 
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/users');
       const liste = res.data?.data || res.data || [];
       setVendeurs(liste);

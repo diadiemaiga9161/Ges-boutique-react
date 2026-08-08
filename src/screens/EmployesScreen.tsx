@@ -3,7 +3,6 @@ import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
   Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import NetInfo from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
@@ -21,7 +20,7 @@ function avatarColor(name: string) {
 }
 
 const FORM_INITIAL = {
-  nom: '', prenom: '', poste: '', telephone: '', email: '',
+  nom: '', prenom: '', poste: '', telephone: '',
   salaireMensuel: '', statut: 'ACTIF',
 };
 
@@ -40,8 +39,6 @@ export default function EmployesScreen({ navigation }: any) {
 
   const charger = async () => {
     try {
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) throw new Error('offline');
       const res = await api.get('/employes');
       const data = res.data?.data || res.data || [];
       const liste = Array.isArray(data) ? data : [];
@@ -84,7 +81,6 @@ export default function EmployesScreen({ navigation }: any) {
       prenom: emp.prenom || '',
       poste: emp.poste || '',
       telephone: emp.telephone || '',
-      email: emp.email || '',
       salaireMensuel: emp.salaireMensuel != null ? String(emp.salaireMensuel) : '',
       statut: emp.statut || 'ACTIF',
     });
@@ -101,7 +97,6 @@ export default function EmployesScreen({ navigation }: any) {
       prenom: form.prenom.trim(),
       poste: form.poste.trim(),
       telephone: form.telephone.trim(),
-      email: form.email.trim(),
       salaireMensuel: form.salaireMensuel ? parseFloat(form.salaireMensuel) : 0,
       statut: form.statut,
     };
@@ -121,7 +116,7 @@ export default function EmployesScreen({ navigation }: any) {
   const toggleStatut = async (emp: any) => {
     const actif = emp.statut !== 'ACTIF';
     try {
-      await executerOuMettreEnFile('employe_toggle', { id: emp.id, actif }, () => api.patch(`/employes/${emp.id}/statut`, { actif }));
+      await executerOuMettreEnFile('employe_toggle', { id: emp.id, actif }, () => api.patch(`/employes/${emp.id}/${actif ? 'activer' : 'desactiver'}`));
       charger();
     } catch (err: any) {
       Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Erreur serveur');
@@ -345,17 +340,6 @@ export default function EmployesScreen({ navigation }: any) {
                 placeholder="+224..."
                 placeholderTextColor="#94a3b8"
                 keyboardType="phone-pad"
-              />
-
-              <Text style={styles.fieldLabel}>{tr('email', lang)}</Text>
-              <TextInput
-                style={styles.input}
-                value={form.email}
-                onChangeText={t => setForm({ ...form, email: t })}
-                placeholder="email@exemple.com"
-                placeholderTextColor="#94a3b8"
-                keyboardType="email-address"
-                autoCapitalize="none"
               />
 
               <Text style={styles.fieldLabel}>Salaire mensuel (FCFA)</Text>
