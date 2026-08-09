@@ -9,7 +9,7 @@ import { getProduits, getClients, getSoldeAvanceClient } from '../services/api.s
 import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database';
 import { enregistrerVente, getNombreVentesPending, sauvegarderCache, lireCache } from '../services/offline.service';
 import { Produit, Client, LigneVenteRequest } from '../types';
-import { ProduitNiveau, getNiveaux, calculerFacteurTotal, disponibleNiveau } from '../services/produit-niveau.service';
+import { ProduitNiveau, getNiveauxEtPrincipal, calculerFacteurTotal, disponibleNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -111,6 +111,7 @@ export default function VenteScreen() {
   const [showNiveauModal, setShowNiveauModal] = useState(false);
   const [produitEnAttente, setProduitEnAttente] = useState<Produit | null>(null);
   const [niveauxDisponibles, setNiveauxDisponibles] = useState<ProduitNiveau[]>([]);
+  const [quantitePrincipale, setQuantitePrincipale] = useState<number>(0);
   const [loadingNiveaux, setLoadingNiveaux] = useState(false);
 
   useEffect(() => {
@@ -240,9 +241,10 @@ export default function VenteScreen() {
     }
     setLoadingNiveaux(true);
     try {
-      const niveaux: ProduitNiveau[] = await getNiveaux(p.id) || [];
+      const { niveaux, quantitePrincipale: qp } = await getNiveauxEtPrincipal(p.id);
       if (niveaux.length > 0) {
         setNiveauxDisponibles(niveaux);
+        setQuantitePrincipale(qp);
         setProduitEnAttente(p);
         setShowNiveauModal(true);
         setLoadingNiveaux(false);
@@ -276,7 +278,7 @@ export default function VenteScreen() {
     // Cascade récursive jusqu'à la racine (pas seulement le parent direct) —
     // sinon on bloque l'ajout au panier alors que le backend pourrait
     // décomposer plusieurs crans (ex: Carton → Paquet → Pièce d'un coup).
-    const niveauStockMax = niveau.id !== undefined ? disponibleNiveau(niveauxDisponibles, niveau.id) : (niveau.stock ?? 0);
+    const niveauStockMax = niveau.id !== undefined ? disponibleNiveau(niveauxDisponibles, niveau.id, quantitePrincipale) : (niveau.stock ?? 0);
     setShowNiveauModal(false);
     setProduitEnAttente(null);
     setPanier(prev => {
@@ -888,7 +890,7 @@ export default function VenteScreen() {
                     // Cascade récursive jusqu'à la racine, pas seulement le parent
                     // direct — sinon on bloque le choix alors que le backend
                     // pourrait décomposer plusieurs crans d'un coup.
-                    const disponibleCascade = n.id !== undefined ? disponibleNiveau(niveauxDisponibles, n.id) : stockPropre;
+                    const disponibleCascade = n.id !== undefined ? disponibleNiveau(niveauxDisponibles, n.id, quantitePrincipale) : stockPropre;
                     const enRuptureTotale = disponibleCascade === 0;
                     const stockColor = stockPropre > 0 ? colors.success : (disponibleCascade > 0 ? colors.warning : colors.danger);
                     const stockLabel = stockPropre > 0

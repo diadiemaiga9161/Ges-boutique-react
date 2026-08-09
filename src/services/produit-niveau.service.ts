@@ -17,6 +17,17 @@ export const getNiveaux = async (produitId: number): Promise<ProduitNiveau[]> =>
   return res.data?.niveaux || [];
 };
 
+/**
+ * Niveaux + stock du produit "principal" pas encore décomposé (ex: cartons
+ * fermés) en un seul appel. C'est le parent implicite du niveau racine
+ * (parentId = null) — sans ça, disponibleNiveau() ne peut pas savoir qu'il
+ * reste des cartons à ouvrir.
+ */
+export const getNiveauxEtPrincipal = async (produitId: number): Promise<{ niveaux: ProduitNiveau[]; quantitePrincipale: number }> => {
+  const res = await api.get(`/produits/${produitId}/niveaux`);
+  return { niveaux: res.data?.niveaux || [], quantitePrincipale: res.data?.quantitePrincipale ?? 0 };
+};
+
 export const decomposer = async (id: number): Promise<{ niveaux: ProduitNiveau[], produitQuantite: number, message: string }> => {
   const res = await api.post(`/produits/niveaux/${id}/decomposer`, {});
   return res.data;
@@ -71,14 +82,18 @@ export function calculerFacteurTotal(niveaux: ProduitNiveau[], niveauIdOuOrdre: 
  * limiter au parent direct : la vente peut décomposer plusieurs crans d'un
  * coup (ex: Pièce épuisée + Paquet épuisé → ouvre directement un Carton).
  */
-export function disponibleNiveau(niveaux: ProduitNiveau[], niveauId: number): number {
+export function disponibleNiveau(niveaux: ProduitNiveau[], niveauId: number, quantitePrincipale = 0): number {
   const map = new Map<number, ProduitNiveau>(niveaux.filter(n => n.id !== undefined).map(n => [n.id!, n]));
   const calc = (niveau: ProduitNiveau): number => {
     const direct = niveau.stock ?? 0;
-    if (niveau.parentId === undefined || niveau.parentId === null) return direct;
+    const facteur = niveau.facteur > 0 ? niveau.facteur : 1;
+    if (niveau.parentId === undefined || niveau.parentId === null) {
+      // Niveau racine : son parent implicite est le produit principal
+      // (quantitePrincipale = stock pas encore décomposé, ex: cartons fermés).
+      return direct + quantitePrincipale * facteur;
+    }
     const parent = map.get(niveau.parentId);
     if (!parent) return direct;
-    const facteur = niveau.facteur > 0 ? niveau.facteur : 1;
     return direct + calc(parent) * facteur;
   };
   const target = map.get(niveauId);
