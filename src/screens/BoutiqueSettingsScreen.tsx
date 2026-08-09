@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
 import { Text, TextInput, Button, ActivityIndicator, Switch } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBoutique, updateBoutique } from '../services/api.service';
+import { executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -12,17 +14,18 @@ export default function BoutiqueSettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [conditionnement, setConditionnement] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       const stored = await AsyncStorage.getItem('boutique_info');
-      if (stored) setForm(JSON.parse(stored));
+      if (stored) { setForm(JSON.parse(stored)); setFromCache(true); }
       const cond = await AsyncStorage.getItem('feat_conditionnement');
       setConditionnement(cond === 'true');
       try {
         const res = await getBoutique();
         const data = res.data?.boutique || res.data?.data || res.data;
-        if (data) { setForm(data); await AsyncStorage.setItem('boutique_info', JSON.stringify(data)); }
+        if (data) { setForm(data); setFromCache(false); await AsyncStorage.setItem('boutique_info', JSON.stringify(data)); }
       } catch { }
       setLoading(false);
     };
@@ -31,11 +34,16 @@ export default function BoutiqueSettingsScreen() {
 
   const sauvegarder = async () => {
     setSaving(true);
-    try {
-      await updateBoutique(form);
-      await AsyncStorage.setItem('boutique_info', JSON.stringify(form));
-      Alert.alert(tr('succes', lang), 'Paramètres enregistrés');
-    } catch { Alert.alert(tr('erreur', lang), 'Impossible de sauvegarder'); }
+    // Ecrit toujours localement d'abord, puis empile pour synchro si hors ligne
+    // (skill offline-first) — sinon un admin qui modifie les infos boutique
+    // sans réseau perdait purement et simplement sa saisie.
+    await AsyncStorage.setItem('boutique_info', JSON.stringify(form));
+    const { offline } = await executerOuMettreEnFile('boutique_update', form, () => updateBoutique(form));
+    setFromCache(offline);
+    Alert.alert(
+      offline ? tr('hors_ligne', lang) : tr('succes', lang),
+      offline ? 'Enregistré localement — sera synchronisé au retour du réseau.' : 'Paramètres enregistrés'
+    );
     setSaving(false);
   };
 
@@ -58,6 +66,12 @@ export default function BoutiqueSettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
+      {fromCache && (
+        <View style={styles.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
+          <Text style={styles.offlineBannerText}>Hors ligne — dernières informations connues</Text>
+        </View>
+      )}
       <Text variant="titleMedium" style={styles.section}>{tr('infos_boutique', lang)}</Text>
       <TextInput label={tr('nom_boutique', lang) + ' *'} value={form.nom || ''} onChangeText={t => setForm({ ...form, nom: t })} mode="outlined" style={styles.input} />
       <TextInput label={tr('telephone', lang)} value={form.telephone || ''} onChangeText={t => setForm({ ...form, telephone: t })} mode="outlined" keyboardType="phone-pad" style={styles.input} />
@@ -92,6 +106,8 @@ export default function BoutiqueSettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginBottom: 10 },
+  offlineBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   section: { fontWeight: 'bold', color: '#1a56db', marginTop: 16, marginBottom: 8 },
   input: { marginBottom: 12 },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12 },

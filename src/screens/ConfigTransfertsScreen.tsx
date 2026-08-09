@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, Card, FAB, ActivityIndicator, Modal, Portal, TextInput, Button, Switch, IconButton } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import api from '../services/api.service';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
@@ -28,12 +30,20 @@ export default function ConfigTransfertsScreen() {
   const [editing, setEditing] = useState<BoutiquePartenaire | null>(null);
   const [form, setForm] = useState<BoutiquePartenaire>({ ...FORM_INITIAL });
   const [saving, setSaving] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   const charger = async () => {
     try {
       const res = await api.get('/transferts/partenaires');
-      setPartenaires(Array.isArray(res.data) ? res.data : (res.data?.data || []));
-    } catch { }
+      const data = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setPartenaires(data);
+      setFromCache(false);
+      sauvegarderCache('transferts_partenaires', data).catch(() => {});
+    } catch {
+      const cached = await lireCache<BoutiquePartenaire>('transferts_partenaires');
+      setPartenaires(cached);
+      setFromCache(cached.length > 0);
+    }
     setLoading(false); setRefreshing(false);
   };
 
@@ -57,16 +67,16 @@ export default function ConfigTransfertsScreen() {
       return;
     }
     setSaving(true);
-    try {
-      if (editing?.id) {
-        await api.put(`/transferts/partenaires/${editing.id}`, form);
-      } else {
-        await api.post('/transferts/partenaires', form);
-      }
-      setShowModal(false);
+    const type = editing?.id ? 'transfert_partenaire_update' : 'transfert_partenaire_create';
+    const payload = editing?.id ? { id: editing.id, data: form } : form;
+    const { offline } = await executerOuMettreEnFile(type, payload, () =>
+      editing?.id ? api.put(`/transferts/partenaires/${editing.id}`, form) : api.post('/transferts/partenaires', form)
+    );
+    setShowModal(false);
+    if (offline) {
+      Alert.alert(tr('hors_ligne', lang), 'Enregistré localement — sera synchronisé au retour du réseau.');
+    } else {
       charger();
-    } catch {
-      Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer');
     }
     setSaving(false);
   };
@@ -94,6 +104,12 @@ export default function ConfigTransfertsScreen() {
 
   return (
     <View style={styles.container}>
+      {fromCache && (
+        <View style={styles.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
+          <Text style={styles.offlineBannerText}>Hors ligne — dernières données connues</Text>
+        </View>
+      )}
       <FlatList
         data={partenaires}
         keyExtractor={(c, i) => String(c.id ?? i)}
@@ -148,6 +164,8 @@ export default function ConfigTransfertsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   card: { marginBottom: 10, borderRadius: 12 },
   row: { flexDirection: 'row', alignItems: 'center' },
   sub: { color: '#666', marginTop: 4 },

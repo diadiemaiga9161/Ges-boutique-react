@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getVentesParVendeur } from '../services/api.service';
+import { sauvegarderCache, lireCache } from '../services/offline.service';
 
 const BLUE = '#1a56db';
 
@@ -42,11 +44,43 @@ function toIso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+const CLE_CACHE = 'historique_vendeur_lignes';
+
+function agregerParVendeur(lignes: VenteParVendeurJour[]): VendeurResume[] {
+  const parVendeur = new Map<number, VendeurResume>();
+  for (const ligne of lignes) {
+    let resume = parVendeur.get(ligne.vendeurId);
+    if (!resume) {
+      resume = {
+        vendeurId: ligne.vendeurId,
+        vendeurNom: ligne.vendeurNom,
+        nbVentesComptant: 0,
+        nbVentesCredit: 0,
+        caComptant: 0,
+        caCredit: 0,
+        caTotal: 0,
+        nbVentesTotal: 0,
+        jours: [],
+      };
+      parVendeur.set(ligne.vendeurId, resume);
+    }
+    resume.nbVentesComptant += ligne.nbVentesComptant;
+    resume.nbVentesCredit += ligne.nbVentesCredit;
+    resume.caComptant += ligne.caComptant;
+    resume.caCredit += ligne.caCredit;
+    resume.caTotal += ligne.caTotal;
+    resume.nbVentesTotal += ligne.nbVentesTotal;
+    resume.jours.push(ligne);
+  }
+  return Array.from(parVendeur.values()).sort((a, b) => b.caTotal - a.caTotal);
+}
+
 export default function HistoriqueVendeurScreen() {
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState('');
   const [vendeurs, setVendeurs] = useState<VendeurResume[]>([]);
   const [selectionne, setSelectionne] = useState<VendeurResume | null>(null);
+  const [fromCache, setFromCache] = useState(false);
 
   const charger = () => {
     setLoading(true);
@@ -58,38 +92,23 @@ export default function HistoriqueVendeurScreen() {
     getVentesParVendeur(toIso(debut), toIso(fin))
       .then(res => {
         const lignes: VenteParVendeurJour[] = res.data || [];
-        const parVendeur = new Map<number, VendeurResume>();
-
-        for (const ligne of lignes) {
-          let resume = parVendeur.get(ligne.vendeurId);
-          if (!resume) {
-            resume = {
-              vendeurId: ligne.vendeurId,
-              vendeurNom: ligne.vendeurNom,
-              nbVentesComptant: 0,
-              nbVentesCredit: 0,
-              caComptant: 0,
-              caCredit: 0,
-              caTotal: 0,
-              nbVentesTotal: 0,
-              jours: [],
-            };
-            parVendeur.set(ligne.vendeurId, resume);
-          }
-          resume.nbVentesComptant += ligne.nbVentesComptant;
-          resume.nbVentesCredit += ligne.nbVentesCredit;
-          resume.caComptant += ligne.caComptant;
-          resume.caCredit += ligne.caCredit;
-          resume.caTotal += ligne.caTotal;
-          resume.nbVentesTotal += ligne.nbVentesTotal;
-          resume.jours.push(ligne);
-        }
-
-        const liste = Array.from(parVendeur.values()).sort((a, b) => b.caTotal - a.caTotal);
+        const liste = agregerParVendeur(lignes);
         setVendeurs(liste);
         setSelectionne(liste[0] || null);
+        setFromCache(false);
+        sauvegarderCache(CLE_CACHE, lignes).catch(() => {});
       })
-      .catch(() => setErreur("Impossible de charger l'historique des ventes par vendeur."))
+      .catch(async () => {
+        const lignesCache = await lireCache<VenteParVendeurJour>(CLE_CACHE);
+        if (lignesCache.length > 0) {
+          const liste = agregerParVendeur(lignesCache);
+          setVendeurs(liste);
+          setSelectionne(liste[0] || null);
+          setFromCache(true);
+        } else {
+          setErreur("Impossible de charger l'historique des ventes par vendeur.");
+        }
+      })
       .finally(() => setLoading(false));
   };
 
@@ -123,6 +142,12 @@ export default function HistoriqueVendeurScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+      {fromCache && (
+        <View style={styles.offlineBanner}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
+          <Text style={styles.offlineBannerText}>Hors ligne — dernières données connues</Text>
+        </View>
+      )}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow} contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}>
         {vendeurs.map(v => (
           <TouchableOpacity
@@ -175,6 +200,8 @@ export default function HistoriqueVendeurScreen() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6 },
+  offlineBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   chipsRow: { flexGrow: 0, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
   chip: {
     borderWidth: 1.5,

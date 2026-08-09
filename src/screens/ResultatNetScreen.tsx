@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getResultatJournalier, getResultatMensuel, getResultatAnnuel } from '../services/api.service';
 
 type Periode = 'JOURNALIER' | 'MENSUEL' | 'ANNUEL';
@@ -30,19 +31,35 @@ export default function ResultatNetScreen() {
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
   const charger = async (p: Periode = periodeActive) => {
     setLoading(true);
     setErreur('');
+    const cleCache = `cache_resultat_net_${p}_${p === 'JOURNALIER' ? dateJour : p === 'MENSUEL' ? `${moisSelect}-${anneeSelect}` : anneeSelect}`;
     try {
       let res;
       if (p === 'JOURNALIER') res = await getResultatJournalier(dateJour);
       else if (p === 'MENSUEL') res = await getResultatMensuel(moisSelect, anneeSelect);
       else res = await getResultatAnnuel(anneeSelect);
-      setData(res.data?.data || res.data || null);
+      const resultat = res.data?.data || res.data || null;
+      setData(resultat);
+      setFromCache(false);
+      if (resultat) AsyncStorage.setItem(cleCache, JSON.stringify(resultat)).catch(() => {});
     } catch (e: any) {
-      setErreur(e.response?.data?.message || 'Erreur résultat');
-      setData(null);
+      try {
+        const s = await AsyncStorage.getItem(cleCache);
+        if (s) {
+          setData(JSON.parse(s));
+          setFromCache(true);
+        } else {
+          setErreur(e.response?.data?.message || 'Erreur résultat');
+          setData(null);
+        }
+      } catch {
+        setErreur(e.response?.data?.message || 'Erreur résultat');
+        setData(null);
+      }
     }
     setLoading(false);
     setRefreshing(false);
@@ -118,6 +135,12 @@ export default function ResultatNetScreen() {
           contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
         >
+          {fromCache && (
+            <View style={styles.offlineBanner}>
+              <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
+              <Text style={styles.offlineBannerText}>Hors ligne — dernier résultat connu</Text>
+            </View>
+          )}
           {data && (
             <>
               {/* Carte principale GAIN/PERTE */}
@@ -210,6 +233,8 @@ const styles = StyleSheet.create({
 
   errorCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fef2f2', margin: 12, padding: 14, borderRadius: 10 },
   errorTxt: { color: '#dc2626', fontSize: 13, flex: 1 },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginBottom: 10 },
+  offlineBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
 
   resultatCard: { alignItems: 'center', borderRadius: 16, padding: 20, marginBottom: 12, borderWidth: 1.5 },
   resultatCardGain: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },

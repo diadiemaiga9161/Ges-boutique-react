@@ -12,6 +12,7 @@ import api, {
   createCompte, deleteCompte, versementCompte, retraitCompte,
   createObjectifFournisseur, deleteObjectifFournisseur,
   createVendeur, updateVendeur, toggleStatutVendeur,
+  updateBoutique,
 } from './api.service';
 import {
   getVentesPending, marquerVenteSynced, saveVentePending, countVentesPending,
@@ -47,6 +48,8 @@ const LABELS_OPERATION: Record<string, string> = {
   compte_versement: 'Versement compte', compte_retrait: 'Retrait compte',
   objectif_create: 'Création objectif', objectif_delete: 'Suppression objectif',
   vendeur_create: 'Création vendeur', vendeur_update: 'Modification vendeur', vendeur_toggle: 'Statut vendeur',
+  boutique_update: 'Paramètres boutique',
+  transfert_partenaire_create: 'Création boutique partenaire', transfert_partenaire_update: 'Modification boutique partenaire',
 };
 
 function libelleOperation(type: string): string {
@@ -373,6 +376,11 @@ async function executerOperation(type: string, payload: any): Promise<void> {
     case 'vendeur_create': await createVendeur(payload); break;
     case 'vendeur_update': await updateVendeur(payload.id, payload.data); break;
     case 'vendeur_toggle': await toggleStatutVendeur(payload.id, payload.actif); break;
+    // Boutique
+    case 'boutique_update': await updateBoutique(payload); break;
+    // Boutiques partenaires (transferts)
+    case 'transfert_partenaire_create': await api.post('/transferts/partenaires', payload); break;
+    case 'transfert_partenaire_update': await api.put(`/transferts/partenaires/${payload.id}`, payload.data); break;
     default: throw new Error(`Type opération inconnu: ${type}`);
   }
 }
