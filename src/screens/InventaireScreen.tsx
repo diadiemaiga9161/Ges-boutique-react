@@ -73,8 +73,11 @@ export default function InventaireScreen() {
   const [loadingMouvements, setLoadingMouvements] = useState(false);
   const [filtreType, setFiltreType] = useState<TypeMouvement>('TOUS');
   const [searchMouvements, setSearchMouvements] = useState('');
-  const [dateDebut, setDateDebut] = useState('');
-  const [dateFin, setDateFin] = useState('');
+  // Par défaut = aujourd'hui, pour ne pas tout charger dès l'ouverture de
+  // l'onglet Mouvements — l'utilisateur élargit via Semaine/Mois/Tout ou une
+  // période personnalisée (voir filterByPeriod / appliquerDatesManuelles).
+  const [dateDebut, setDateDebut] = useState(todayStr());
+  const [dateFin, setDateFin] = useState(todayStr());
 
   // Modal ajout mouvement
   const [showMouvModal, setShowMouvModal] = useState(false);
