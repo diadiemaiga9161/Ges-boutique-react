@@ -63,3 +63,24 @@ export function calculerFacteurTotal(niveaux: ProduitNiveau[], niveauIdOuOrdre: 
   }
   return total;
 }
+
+/**
+ * Stock réellement disponible pour un niveau, en cascadant récursivement
+ * depuis ses parents jusqu'à la racine (produit principal) — miroir exact de
+ * calculerDisponibleNiveau() côté backend (VenteServiceImpl.java). Ne PAS se
+ * limiter au parent direct : la vente peut décomposer plusieurs crans d'un
+ * coup (ex: Pièce épuisée + Paquet épuisé → ouvre directement un Carton).
+ */
+export function disponibleNiveau(niveaux: ProduitNiveau[], niveauId: number): number {
+  const map = new Map<number, ProduitNiveau>(niveaux.filter(n => n.id !== undefined).map(n => [n.id!, n]));
+  const calc = (niveau: ProduitNiveau): number => {
+    const direct = niveau.stock ?? 0;
+    if (niveau.parentId === undefined || niveau.parentId === null) return direct;
+    const parent = map.get(niveau.parentId);
+    if (!parent) return direct;
+    const facteur = niveau.facteur > 0 ? niveau.facteur : 1;
+    return direct + calc(parent) * facteur;
+  };
+  const target = map.get(niveauId);
+  return target ? calc(target) : 0;
+}

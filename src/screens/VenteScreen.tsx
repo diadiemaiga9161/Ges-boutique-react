@@ -9,7 +9,7 @@ import { getProduits, getClients, getSoldeAvanceClient } from '../services/api.s
 import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database';
 import { enregistrerVente, getNombreVentesPending, sauvegarderCache, lireCache } from '../services/offline.service';
 import { Produit, Client, LigneVenteRequest } from '../types';
-import { ProduitNiveau, getNiveaux, calculerFacteurTotal } from '../services/produit-niveau.service';
+import { ProduitNiveau, getNiveaux, calculerFacteurTotal, disponibleNiveau } from '../services/produit-niveau.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -273,11 +273,10 @@ export default function VenteScreen() {
     const facteurTotal = niveau.id !== undefined
       ? calculerFacteurTotal(niveauxDisponibles, niveau.id, true)
       : calculerFacteurTotal(niveauxDisponibles, niveau.ordre ?? 1, false);
-    const indexNiveau = niveauxDisponibles.findIndex(n => n.id === niveau.id);
-    const parent = indexNiveau > 0 ? niveauxDisponibles[indexNiveau - 1] : null;
-    const niveauStockMax = indexNiveau === 0
-      ? (niveau.stock ?? 0)
-      : (niveau.stock ?? 0) + (parent?.stock ?? 0) * niveau.facteur;
+    // Cascade récursive jusqu'à la racine (pas seulement le parent direct) —
+    // sinon on bloque l'ajout au panier alors que le backend pourrait
+    // décomposer plusieurs crans (ex: Carton → Paquet → Pièce d'un coup).
+    const niveauStockMax = niveau.id !== undefined ? disponibleNiveau(niveauxDisponibles, niveau.id) : (niveau.stock ?? 0);
     setShowNiveauModal(false);
     setProduitEnAttente(null);
     setPanier(prev => {
@@ -886,13 +885,15 @@ export default function VenteScreen() {
                   {niveauxDisponibles.map((n, i) => {
                     const parentNom = i === 0 ? (produitEnAttente?.nom || 'produit') : niveauxDisponibles[i - 1].nom;
                     const stockPropre = n.stock || 0;
-                    const parent = i > 0 ? niveauxDisponibles[i - 1] : null;
-                    const parentADuStock = parent ? (parent.stock || 0) > 0 : false;
-                    const enRuptureTotale = stockPropre === 0 && !parentADuStock;
-                    const stockColor = stockPropre > 0 ? colors.success : (parentADuStock ? colors.warning : colors.danger);
+                    // Cascade récursive jusqu'à la racine, pas seulement le parent
+                    // direct — sinon on bloque le choix alors que le backend
+                    // pourrait décomposer plusieurs crans d'un coup.
+                    const disponibleCascade = n.id !== undefined ? disponibleNiveau(niveauxDisponibles, n.id) : stockPropre;
+                    const enRuptureTotale = disponibleCascade === 0;
+                    const stockColor = stockPropre > 0 ? colors.success : (disponibleCascade > 0 ? colors.warning : colors.danger);
                     const stockLabel = stockPropre > 0
                       ? `Stock : ${stockPropre}`
-                      : (parentADuStock ? '(cascade)' : '(rupture)');
+                      : (disponibleCascade > 0 ? `(cascade : ${disponibleCascade})` : '(rupture)');
                     return (
                       <TouchableOpacity
                         key={n.id}
