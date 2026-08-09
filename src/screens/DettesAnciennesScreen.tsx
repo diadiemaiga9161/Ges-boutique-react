@@ -5,31 +5,46 @@ import {
 } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import api from '../services/api.service';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import api, { getClients } from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+// Modèle réel backend (DetteAncienneController/Dto) : une "dette ancienne" est
+// une dette d'un CLIENT existant envers la boutique (pas un créancier libre —
+// contrairement à une version précédente de cet écran qui inventait un modèle
+// "creancier" texte libre incompatible avec l'API réelle). Voir
+// dette-ancienne.service.ts (Ionic) pour la référence exacte.
 interface DetteAncienne {
   id: number;
-  creancier: string;
-  description: string;
-  montantTotal: number;
-  montantRegle: number;
+  clientId: number;
+  clientNom?: string;
+  clientPrenom?: string;
+  clientTelephone?: string;
+  montantInitial: number;
   montantRestant: number;
-  dateEcheance: string;
-  statut: 'EN_COURS' | 'SOLDEE' | 'EN_RETARD';
-  notes?: string;
+  montantPaye: number;
+  dateCredit: string;
+  description?: string;
+  estReglee: boolean;
+  dateCreation?: string;
+  dateDernierReglement?: string;
 }
 
 interface ReglementDette {
   id: number;
-  montant: number;
-  date: string;
+  detteId: number;
+  montantPaye: number;
+  montantRestantApres: number;
+  dateReglement: string;
   modePaiement: string;
-  reference?: string;
+  referencePaiement?: string;
+  observations?: string;
 }
+
+interface ClientLite { id: number; nom: string; prenom?: string; telephone?: string }
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const MODES_PAIEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'VIREMENT'] as const;
@@ -41,15 +56,18 @@ const MODE_LABELS: Record<ModePaiement, string> = {
   VIREMENT: 'Virement',
 };
 
-const STATUT_CONFIG = {
-  EN_COURS:  { color: '#d97706', bg: '#fffbeb', label: 'En cours',  icon: 'clock-outline' as const },
-  SOLDEE:    { color: '#16a34a', bg: '#f0fdf4', label: 'Soldée',    icon: 'check-circle-outline' as const },
-  EN_RETARD: { color: '#dc2626', bg: '#fef2f2', label: 'En retard', icon: 'alert-circle-outline' as const },
-};
-
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v ?? 0).toLocaleString('fr-FR') + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
+const nomClient = (d: DetteAncienne) => `${d.clientPrenom || ''} ${d.clientNom || ''}`.trim() || `Client #${d.clientId}`;
+
+// Réponse enveloppée {success, dettes/reglements, ...} — pas {data:[...]}.
+function extractList(payload: any, key: string): any[] {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.[key])) return payload[key];
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function DettesAnciennesScreen() {
@@ -60,6 +78,7 @@ export default function DettesAnciennesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const [search, setSearch] = useState('');
+  const [userId, setUserId] = useState<number>(0);
 
   // Modals
   const [showNouvelle, setShowNouvelle] = useState(false);
@@ -69,41 +88,50 @@ export default function DettesAnciennesScreen() {
   const [reglements, setReglements] = useState<ReglementDette[]>([]);
   const [loadingReglements, setLoadingReglements] = useState(false);
 
-  // Formulaire nouvelle dette
-  const [formCreancier, setFormCreancier] = useState('');
+  // Formulaire nouvelle dette — sélection d'un client existant (comme
+  // resources.page.ts detteForm.clientId, PAS un texte libre)
+  const [clients, setClients] = useState<ClientLite[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [selectedClient, setSelectedClient] = useState<ClientLite | null>(null);
   const [formDescription, setFormDescription] = useState('');
   const [formMontant, setFormMontant] = useState('');
-  const [formEcheance, setFormEcheance] = useState('');
-  const [formNotes, setFormNotes] = useState('');
+  const [formDateCredit, setFormDateCredit] = useState(new Date().toISOString().split('T')[0]);
   const [saving, setSaving] = useState(false);
 
   // Formulaire règlement
   const [reglMontant, setReglMontant] = useState('');
-  const [reglDate, setReglDate] = useState('');
   const [reglMode, setReglMode] = useState<ModePaiement>('ESPECES');
   const [reglRef, setReglRef] = useState('');
   const [savingRegl, setSavingRegl] = useState(false);
 
   // ─── Stats calculées ─────────────────────────────────────────────────────
-  const totalDettes = useMemo(() => dettes.reduce((s, d) => s + d.montantTotal, 0), [dettes]);
-  const totalRegle = useMemo(() => dettes.reduce((s, d) => s + d.montantRegle, 0), [dettes]);
-  const totalRestant = useMemo(() => dettes.reduce((s, d) => s + d.montantRestant, 0), [dettes]);
+  const totalDettes = useMemo(() => dettes.reduce((s, d) => s + (d.montantInitial || 0), 0), [dettes]);
+  const totalRegle = useMemo(() => dettes.reduce((s, d) => s + (d.montantPaye || 0), 0), [dettes]);
+  const totalRestant = useMemo(() => dettes.reduce((s, d) => s + (d.montantRestant || 0), 0), [dettes]);
 
   // ─── Filtre recherche ─────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const t = search.trim().toLowerCase();
     if (!t) return dettes;
     return dettes.filter(d =>
-      d.creancier.toLowerCase().includes(t) ||
+      nomClient(d).toLowerCase().includes(t) ||
       (d.description || '').toLowerCase().includes(t)
     );
   }, [dettes, search]);
+
+  const clientsFiltres = useMemo(() => {
+    const t = clientSearch.trim().toLowerCase();
+    if (!t) return [];
+    return clients.filter(c =>
+      `${c.prenom || ''} ${c.nom}`.toLowerCase().includes(t) || (c.telephone || '').includes(t)
+    ).slice(0, 20);
+  }, [clients, clientSearch]);
 
   // ─── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
       const res = await api.get('/dettes-anciennes');
-      const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      const liste = extractList(res.data, 'dettes');
       setDettes(liste);
       setFromCache(false);
       sauvegarderCache('dettes_anciennes', liste).catch(() => {});
@@ -116,7 +144,16 @@ export default function DettesAnciennesScreen() {
     setRefreshing(false);
   }, [lang]);
 
-  useEffect(() => { charger(); }, []);
+  useEffect(() => {
+    charger();
+    AsyncStorage.getItem('user').then(raw => {
+      if (raw) { try { setUserId(JSON.parse(raw)?.id || 0); } catch {} }
+    });
+    getClients().then(res => {
+      const raw = res.data?.clients || res.data?.data || (Array.isArray(res.data) ? res.data : []);
+      setClients(raw.map((c: any) => ({ id: c.id, nom: c.nom, prenom: c.prenom, telephone: c.numeroTelephone || c.telephone })));
+    }).catch(() => {});
+  }, []);
 
   // ─── Actions ─────────────────────────────────────────────────────────────
   const openDetails = (dette: DetteAncienne) => {
@@ -125,7 +162,7 @@ export default function DettesAnciennesScreen() {
     setLoadingReglements(true);
     setShowDetails(true);
     api.get(`/dettes-anciennes/${dette.id}/reglements`)
-      .then(r => setReglements(Array.isArray(r.data) ? r.data : (r.data?.data || [])))
+      .then(r => setReglements(extractList(r.data, 'reglements')))
       .catch(() => {})
       .finally(() => setLoadingReglements(false));
   };
@@ -133,14 +170,13 @@ export default function DettesAnciennesScreen() {
   const openReglement = (dette: DetteAncienne) => {
     setSelectedDette(dette);
     setReglMontant(String(dette.montantRestant));
-    setReglDate(new Date().toISOString().split('T')[0]);
     setReglMode('ESPECES');
     setReglRef('');
     setShowReglement(true);
   };
 
   const supprimerDette = (dette: DetteAncienne) => {
-    Alert.alert('Supprimer', `Supprimer la dette de ${dette.creancier} ?`, [
+    Alert.alert('Supprimer', `Supprimer la dette de ${nomClient(dette)} ?`, [
       { text: tr('annuler', lang), style: 'cancel' },
       {
         text: tr('supprimer', lang), style: 'destructive',
@@ -149,7 +185,7 @@ export default function DettesAnciennesScreen() {
             await executerOuMettreEnFile('dette_delete', { id: dette.id }, () => api.delete(`/dettes-anciennes/${dette.id}`));
             charger();
           } catch {
-            Alert.alert(tr('erreur', lang), 'Suppression impossible');
+            Alert.alert(tr('erreur', lang), 'Suppression impossible (réservée à l\'admin, ou des règlements existent déjà)');
           }
         },
       },
@@ -157,16 +193,16 @@ export default function DettesAnciennesScreen() {
   };
 
   const resetForm = () => {
-    setFormCreancier('');
+    setSelectedClient(null);
+    setClientSearch('');
     setFormDescription('');
     setFormMontant('');
-    setFormEcheance('');
-    setFormNotes('');
+    setFormDateCredit(new Date().toISOString().split('T')[0]);
   };
 
   const sauvegarderDette = async () => {
-    if (!formCreancier.trim() || !formMontant.trim()) {
-      Alert.alert(tr('erreur', lang), tr('remplir_champs', lang));
+    if (!selectedClient) {
+      Alert.alert(tr('erreur', lang), 'Sélectionnez un client');
       return;
     }
     const montant = parseFloat(formMontant);
@@ -175,14 +211,20 @@ export default function DettesAnciennesScreen() {
       return;
     }
     setSaving(true);
-    const payload = { creancier: formCreancier.trim(), description: formDescription.trim(), montantTotal: montant, dateEcheance: formEcheance.trim() || undefined, notes: formNotes.trim() || undefined };
+    // DetteAncienneRequest : {clientId, montant, dateCredit, description}
+    const payload = {
+      clientId: selectedClient.id,
+      montant,
+      dateCredit: formDateCredit.trim(),
+      description: formDescription.trim() || undefined,
+    };
     try {
       await executerOuMettreEnFile('dette_create', payload, () => api.post('/dettes-anciennes', payload));
       setShowNouvelle(false);
       resetForm();
       charger();
-    } catch {
-      Alert.alert(tr('erreur', lang), 'Enregistrement impossible');
+    } catch (err: any) {
+      Alert.alert(tr('erreur', lang), err.response?.data?.error || 'Enregistrement impossible');
     }
     setSaving(false);
   };
@@ -199,13 +241,22 @@ export default function DettesAnciennesScreen() {
       return;
     }
     setSavingRegl(true);
-    const dataRegl = { montant, date: reglDate, modePaiement: reglMode, reference: reglRef.trim() || undefined };
+    // ReglementDetteRequest : {detteId, montantPaye, utilisateurId, modePaiement,
+    // referencePaiement, observations} — posté sur /dettes-anciennes/reglement
+    // (PAS /dettes-anciennes/{id}/reglements, cette route n'existe pas).
+    const dataRegl = {
+      detteId: selectedDette.id,
+      montantPaye: montant,
+      utilisateurId: userId || undefined,
+      modePaiement: reglMode,
+      referencePaiement: reglRef.trim() || undefined,
+    };
     try {
-      await executerOuMettreEnFile('dette_reglement', { detteId: selectedDette.id, data: dataRegl }, () => api.post(`/dettes-anciennes/${selectedDette.id}/reglements`, dataRegl));
+      await executerOuMettreEnFile('dette_reglement', dataRegl, () => api.post('/dettes-anciennes/reglement', dataRegl));
       setShowReglement(false);
       charger();
-    } catch {
-      Alert.alert(tr('erreur', lang), 'Règlement impossible');
+    } catch (err: any) {
+      Alert.alert(tr('erreur', lang), err.response?.data?.error || 'Règlement impossible');
     }
     setSavingRegl(false);
   };
@@ -225,8 +276,10 @@ export default function DettesAnciennesScreen() {
     </View>
   );
 
-  const renderStatutBadge = (statut: DetteAncienne['statut']) => {
-    const cfg = STATUT_CONFIG[statut];
+  const renderStatutBadge = (d: DetteAncienne) => {
+    const cfg = d.estReglee
+      ? { color: '#16a34a', bg: '#f0fdf4', label: 'Soldée', icon: 'check-circle-outline' as const }
+      : { color: '#d97706', bg: '#fffbeb', label: 'En cours', icon: 'clock-outline' as const };
     return (
       <View style={[s.statutBadge, { backgroundColor: cfg.bg }]}>
         <MaterialCommunityIcons name={cfg.icon} size={11} color={cfg.color} />
@@ -273,7 +326,7 @@ export default function DettesAnciennesScreen() {
             style={s.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Rechercher un créancier..."
+            placeholder="Rechercher un client..."
             placeholderTextColor="#bbb"
           />
           {search.length > 0 && (
@@ -305,33 +358,29 @@ export default function DettesAnciennesScreen() {
           </View>
         }
         renderItem={({ item: d }) => {
-          const cfg = STATUT_CONFIG[d.statut];
-          const pct = d.montantTotal > 0
-            ? Math.min(100, Math.round((d.montantRegle / d.montantTotal) * 100))
+          const cfg = d.estReglee ? '#16a34a' : '#d97706';
+          const pct = d.montantInitial > 0
+            ? Math.min(100, Math.round((d.montantPaye / d.montantInitial) * 100))
             : 0;
           return (
-            <View style={[s.card, d.statut === 'EN_RETARD' && s.cardRetard]}>
+            <View style={s.card}>
 
               {/* En-tête carte */}
               <View style={s.cardTop}>
-                <View style={[s.avatar, { backgroundColor: cfg.color }]}>
-                  <Text style={s.avatarText}>{d.creancier[0].toUpperCase()}</Text>
+                <View style={[s.avatar, { backgroundColor: cfg }]}>
+                  <Text style={s.avatarText}>{nomClient(d)[0]?.toUpperCase() || '?'}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.creancierText}>{d.creancier}</Text>
+                  <Text style={s.creancierText}>{nomClient(d)}</Text>
                   {!!d.description && (
                     <Text style={s.descText} numberOfLines={1}>{d.description}</Text>
                   )}
-                  {!!d.dateEcheance && (
-                    <Text style={[s.dateText, d.statut === 'EN_RETARD' && { color: '#dc2626' }]}>
-                      Échéance : {dateStr(d.dateEcheance)}
-                    </Text>
-                  )}
+                  <Text style={s.dateText}>Crédit du : {dateStr(d.dateCredit)}</Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[s.montantText, { color: cfg.color }]}>{money(d.montantRestant)}</Text>
-                  <Text style={s.montantSub}>/ {money(d.montantTotal)}</Text>
-                  {renderStatutBadge(d.statut)}
+                  <Text style={[s.montantText, { color: cfg }]}>{money(d.montantRestant)}</Text>
+                  <Text style={s.montantSub}>/ {money(d.montantInitial)}</Text>
+                  {renderStatutBadge(d)}
                 </View>
               </View>
 
@@ -339,7 +388,7 @@ export default function DettesAnciennesScreen() {
               <View style={s.progressWrap}>
                 <View style={s.progressBg}>
                   <View
-                    style={[s.progressFill, { width: `${pct}%` as any, backgroundColor: cfg.color }]}
+                    style={[s.progressFill, { width: `${pct}%` as any, backgroundColor: cfg }]}
                   />
                 </View>
                 <Text style={s.progressLabel}>{pct}% réglé</Text>
@@ -351,7 +400,7 @@ export default function DettesAnciennesScreen() {
                   <MaterialCommunityIcons name="eye-outline" size={14} color="#081648" />
                   <Text style={s.actionBtnText}>Détails</Text>
                 </TouchableOpacity>
-                {d.statut !== 'SOLDEE' && (
+                {!d.estReglee && (
                   <TouchableOpacity
                     style={[s.actionBtn, s.actionBtnPrimary]}
                     onPress={() => openReglement(d)}
@@ -389,23 +438,39 @@ export default function DettesAnciennesScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
-              <Text style={s.fieldLabel}>Créancier *</Text>
-              <TextInput
-                style={s.fieldInput}
-                value={formCreancier}
-                onChangeText={setFormCreancier}
-                placeholder="Nom du créancier"
-                placeholderTextColor="#bbb"
-              />
-              <Text style={s.fieldLabel}>Description</Text>
-              <TextInput
-                style={s.fieldInput}
-                value={formDescription}
-                onChangeText={setFormDescription}
-                placeholder="Description de la dette"
-                placeholderTextColor="#bbb"
-              />
-              <Text style={s.fieldLabel}>Montant total *</Text>
+              <Text style={s.fieldLabel}>Client *</Text>
+              {selectedClient ? (
+                <View style={s.selectedClientBox}>
+                  <Text style={s.selectedClientText}>
+                    {`${selectedClient.prenom || ''} ${selectedClient.nom}`.trim()}
+                    {selectedClient.telephone ? ` · ${selectedClient.telephone}` : ''}
+                  </Text>
+                  <TouchableOpacity onPress={() => { setSelectedClient(null); setClientSearch(''); }}>
+                    <MaterialCommunityIcons name="close-circle" size={18} color="#999" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <TextInput
+                    style={s.fieldInput}
+                    value={clientSearch}
+                    onChangeText={setClientSearch}
+                    placeholder="Rechercher un client..."
+                    placeholderTextColor="#bbb"
+                  />
+                  {clientsFiltres.map(c => (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={s.clientOption}
+                      onPress={() => { setSelectedClient(c); setClientSearch(''); }}
+                    >
+                      <Text style={s.clientOptionText}>{`${c.prenom || ''} ${c.nom}`.trim()}</Text>
+                      {!!c.telephone && <Text style={s.clientOptionSub}>{c.telephone}</Text>}
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+              <Text style={s.fieldLabel}>Montant *</Text>
               <TextInput
                 style={s.fieldInput}
                 value={formMontant}
@@ -414,21 +479,21 @@ export default function DettesAnciennesScreen() {
                 placeholder="0"
                 placeholderTextColor="#bbb"
               />
-              <Text style={s.fieldLabel}>Date d'échéance</Text>
+              <Text style={s.fieldLabel}>Date du crédit</Text>
               <TextInput
                 style={s.fieldInput}
-                value={formEcheance}
-                onChangeText={setFormEcheance}
+                value={formDateCredit}
+                onChangeText={setFormDateCredit}
                 placeholder="AAAA-MM-JJ"
                 placeholderTextColor="#bbb"
               />
-              <Text style={s.fieldLabel}>Notes</Text>
+              <Text style={s.fieldLabel}>Description</Text>
               <TextInput
                 style={[s.fieldInput, { height: 80, textAlignVertical: 'top' }]}
-                value={formNotes}
-                onChangeText={setFormNotes}
+                value={formDescription}
+                onChangeText={setFormDescription}
                 multiline
-                placeholder="Notes optionnelles..."
+                placeholder="Description de la dette"
                 placeholderTextColor="#bbb"
               />
             </ScrollView>
@@ -475,7 +540,7 @@ export default function DettesAnciennesScreen() {
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
               {selectedDette && (
                 <View style={s.infoCard}>
-                  <Text style={s.infoCardTitle}>{selectedDette.creancier}</Text>
+                  <Text style={s.infoCardTitle}>{nomClient(selectedDette)}</Text>
                   <View style={s.infoRow}>
                     <Text style={s.infoLabel}>Reste à payer</Text>
                     <Text style={[s.infoVal, { color: '#dc2626', fontWeight: '700' }]}>
@@ -491,14 +556,6 @@ export default function DettesAnciennesScreen() {
                 onChangeText={setReglMontant}
                 keyboardType="numeric"
                 placeholder="0"
-                placeholderTextColor="#bbb"
-              />
-              <Text style={s.fieldLabel}>Date</Text>
-              <TextInput
-                style={s.fieldInput}
-                value={reglDate}
-                onChangeText={setReglDate}
-                placeholder="AAAA-MM-JJ"
                 placeholderTextColor="#bbb"
               />
               <Text style={s.fieldLabel}>Mode de paiement</Text>
@@ -552,7 +609,7 @@ export default function DettesAnciennesScreen() {
             <View style={s.handle} />
             <View style={s.modalHead}>
               <Text style={s.modalTitle} numberOfLines={1}>
-                Détails — {selectedDette?.creancier}
+                Détails — {selectedDette ? nomClient(selectedDette) : ''}
               </Text>
               <TouchableOpacity onPress={() => setShowDetails(false)}>
                 <MaterialCommunityIcons name="close" size={22} color="#666" />
@@ -563,9 +620,15 @@ export default function DettesAnciennesScreen() {
                 <>
                   <View style={s.infoCard}>
                     <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Créancier</Text>
-                      <Text style={s.infoVal}>{selectedDette.creancier}</Text>
+                      <Text style={s.infoLabel}>Client</Text>
+                      <Text style={s.infoVal}>{nomClient(selectedDette)}</Text>
                     </View>
+                    {!!selectedDette.clientTelephone && (
+                      <View style={s.infoRow}>
+                        <Text style={s.infoLabel}>Téléphone</Text>
+                        <Text style={s.infoVal}>{selectedDette.clientTelephone}</Text>
+                      </View>
+                    )}
                     {!!selectedDette.description && (
                       <View style={s.infoRow}>
                         <Text style={s.infoLabel}>Description</Text>
@@ -574,30 +637,24 @@ export default function DettesAnciennesScreen() {
                     )}
                     <View style={s.infoRow}>
                       <Text style={s.infoLabel}>Montant total</Text>
-                      <Text style={s.infoVal}>{money(selectedDette.montantTotal)}</Text>
+                      <Text style={s.infoVal}>{money(selectedDette.montantInitial)}</Text>
                     </View>
                     <View style={s.infoRow}>
                       <Text style={s.infoLabel}>Montant réglé</Text>
-                      <Text style={[s.infoVal, { color: '#16a34a' }]}>{money(selectedDette.montantRegle)}</Text>
+                      <Text style={[s.infoVal, { color: '#16a34a' }]}>{money(selectedDette.montantPaye)}</Text>
                     </View>
                     <View style={s.infoRow}>
                       <Text style={s.infoLabel}>Reste à payer</Text>
                       <Text style={[s.infoVal, { color: '#dc2626' }]}>{money(selectedDette.montantRestant)}</Text>
                     </View>
                     <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Échéance</Text>
-                      <Text style={s.infoVal}>{dateStr(selectedDette.dateEcheance)}</Text>
+                      <Text style={s.infoLabel}>Date du crédit</Text>
+                      <Text style={s.infoVal}>{dateStr(selectedDette.dateCredit)}</Text>
                     </View>
                     <View style={[s.infoRow, { alignItems: 'center' }]}>
                       <Text style={s.infoLabel}>Statut</Text>
-                      {renderStatutBadge(selectedDette.statut)}
+                      {renderStatutBadge(selectedDette)}
                     </View>
-                    {!!selectedDette.notes && (
-                      <View style={s.infoRow}>
-                        <Text style={s.infoLabel}>Notes</Text>
-                        <Text style={s.infoVal}>{selectedDette.notes}</Text>
-                      </View>
-                    )}
                   </View>
 
                   <Text style={s.sectionTitle}>Historique des règlements</Text>
@@ -610,12 +667,12 @@ export default function DettesAnciennesScreen() {
                     reglements.map((r, i) => (
                       <View key={r.id ?? i} style={s.reglRow}>
                         <View style={s.reglTop}>
-                          <Text style={s.reglDate}>{dateStr(r.date)}</Text>
-                          <Text style={s.reglMontant}>+{money(r.montant)}</Text>
+                          <Text style={s.reglDate}>{dateStr(r.dateReglement)}</Text>
+                          <Text style={s.reglMontant}>+{money(r.montantPaye)}</Text>
                           <Text style={s.reglMode}>{r.modePaiement}</Text>
                         </View>
-                        {!!r.reference && (
-                          <Text style={s.reglRef}>Réf : {r.reference}</Text>
+                        {!!r.referencePaiement && (
+                          <Text style={s.reglRef}>Réf : {r.referencePaiement}</Text>
                         )}
                       </View>
                     ))
@@ -668,7 +725,6 @@ const s = StyleSheet.create({
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-  cardRetard: { borderLeftWidth: 3, borderLeftColor: '#dc2626' },
   cardTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 10 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
@@ -757,6 +813,18 @@ const s = StyleSheet.create({
   chipActive: { backgroundColor: '#081648', borderColor: '#081648' },
   chipText: { fontSize: 13, color: '#555' },
   chipTextActive: { color: '#fff', fontWeight: '600' },
+
+  // Sélecteur client
+  selectedClientBox: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#eff6ff', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#bfdbfe',
+  },
+  selectedClientText: { color: '#1e3a8a', fontWeight: '600', fontSize: 13, flex: 1 },
+  clientOption: {
+    paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+  },
+  clientOptionText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
+  clientOptionSub: { fontSize: 11, color: '#94a3b8', marginTop: 1 },
 
   // Boutons footer
   btnCancel: {

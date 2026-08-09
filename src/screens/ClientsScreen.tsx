@@ -54,6 +54,14 @@ function money(v: number) { return (v ?? 0).toLocaleString('fr-FR') + ' FCFA'; }
 function fdate(d?: string) { if (!d) return '—'; return new Date(d).toLocaleDateString('fr-FR'); }
 function initiales(nom: string) { return nom.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase().slice(0, 2); }
 
+// L'entité backend garde nom/prénom séparés (numeroTelephone, pas telephone) —
+// on affiche le nom complet partout dans cet écran mais on garde nom/prenom
+// séparés pour le formulaire et l'enregistrement (comme clients.page.ts Ionic).
+function nomComplet(c: Client): string {
+  const prenom = (c as any).prenom as string | undefined;
+  return [prenom, c.nom].filter(Boolean).join(' ').trim() || c.nom || '';
+}
+
 // ─── Couleurs avatar (déterministes selon client.id) ─────────────────────────
 const AVATAR_BG   = ['#1a56db22', '#16a34a22', '#f59e0b22'];
 const AVATAR_TEXT = ['#1a56db',   '#16a34a',   '#d97706'];
@@ -73,7 +81,7 @@ export default function ClientsScreen() {
   // ── Modal ajout / modification ─────────────────────────────────────────────
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [form, setForm] = useState({ nom: '', telephone: '', email: '', adresse: '' });
+  const [form, setForm] = useState({ nom: '', prenom: '', telephone: '', email: '', adresse: '' });
 
   // ── Modal détail ───────────────────────────────────────────────────────────
   const [showDetail, setShowDetail] = useState(false);
@@ -105,7 +113,18 @@ export default function ClientsScreen() {
       // Toujours tenter l'appel réel en premier — NetInfo.fetch() peut renvoyer
       // isConnected=null au premier appel et ferait sauter l'appel réel à tort.
       const res = await getClients();
-      const data: Client[] = res.data?.data || res.data || [];
+      // ClientController renvoie {success, clients, nombreClients} — PAS {data:[...]}.
+      // L'entité brute a numeroTelephone (pas telephone) ; on la remappe ici.
+      const raw: any[] = res.data?.clients || res.data?.data || (Array.isArray(res.data) ? res.data : []);
+      const data: Client[] = raw.map((c: any) => ({
+        id: c.id,
+        nom: c.nom || '',
+        prenom: c.prenom || '',
+        telephone: c.numeroTelephone || c.telephone || '',
+        email: c.email || '',
+        adresse: c.adresse || '',
+        soldeCredit: c.soldeCredit,
+      }));
       setClients(data);
       setFiltered(data);
       setFromCache(false);
@@ -130,14 +149,14 @@ export default function ClientsScreen() {
     if (!search) { setFiltered(clients); return; }
     const q = search.toLowerCase();
     setFiltered(clients.filter(c =>
-      c.nom.toLowerCase().includes(q) || (c.telephone ?? '').includes(q),
+      nomComplet(c).toLowerCase().includes(q) || (c.telephone ?? '').includes(q),
     ));
   }, [search, clients]);
 
   // ── Ajout / Modification ───────────────────────────────────────────────────
   const ouvrirFormAjout = () => {
     setEditingClient(null);
-    setForm({ nom: '', telephone: '', email: '', adresse: '' });
+    setForm({ nom: '', prenom: '', telephone: '', email: '', adresse: '' });
     setShowFormModal(true);
   };
 
@@ -145,6 +164,7 @@ export default function ClientsScreen() {
     setEditingClient(client);
     setForm({
       nom: client.nom,
+      prenom: (client as any).prenom || '',
       telephone: client.telephone ?? '',
       email: client.email ?? '',
       adresse: client.adresse ?? '',
@@ -155,14 +175,23 @@ export default function ClientsScreen() {
 
   const enregistrer = async () => {
     if (!form.nom.trim()) return;
+    // L'entité backend exige nom + prenom (NOT NULL tous les deux) et
+    // numeroTelephone (pas telephone) — voir clients.page.ts save() Ionic.
+    const payload = {
+      nom: form.nom.trim(),
+      prenom: form.prenom.trim(),
+      numeroTelephone: form.telephone.trim(),
+      email: form.email.trim(),
+      adresse: form.adresse.trim(),
+    };
     try {
       if (editingClient) {
-        await updateClient(editingClient.id, form);
+        await updateClient(editingClient.id, payload);
       } else {
-        await creerClientOffline(form);
+        await creerClientOffline(payload);
       }
       setShowFormModal(false);
-      setForm({ nom: '', telephone: '', email: '', adresse: '' });
+      setForm({ nom: '', prenom: '', telephone: '', email: '', adresse: '' });
       setEditingClient(null);
       await charger();
     } catch {
@@ -174,7 +203,7 @@ export default function ClientsScreen() {
   const confirmerSuppression = (client: Client) => {
     Alert.alert(
       'Supprimer ce client ?',
-      `${client.nom} sera définitivement supprimé.`,
+      `${nomComplet(client)} sera définitivement supprimé.`,
       [
         { text: tr('annuler', lang), style: 'cancel' },
         {
@@ -271,7 +300,7 @@ export default function ClientsScreen() {
         referencePaiement: avanceForm.referencePaiement.trim() || undefined,
       });
       setShowAvanceModal(false);
-      Alert.alert(tr('succes', lang), `Avance de ${money(montant)} enregistrée pour ${selectedClient.nom}`);
+      Alert.alert(tr('succes', lang), `Avance de ${money(montant)} enregistrée pour ${nomComplet(selectedClient)}`);
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Enregistrement de l\'avance impossible');
     }
@@ -306,7 +335,7 @@ export default function ClientsScreen() {
       await imprimerFactureRN({
         numero: vente.numeroVente || `#${vente.id}`,
         date: vente.dateVente || new Date().toISOString(),
-        clientNom: selectedClient?.nom,
+        clientNom: selectedClient ? nomComplet(selectedClient) : undefined,
         clientTelephone: selectedClient?.telephone,
         modePaiement: vente.modePaiement,
         estCredit: vente.estCredit,
@@ -389,11 +418,11 @@ export default function ClientsScreen() {
               <Card.Content style={styles.cardRow}>
                 <View style={[styles.avatar, { backgroundColor: AVATAR_BG[colorIdx] }]}>
                   <Text style={[styles.avatarTxt, { color: AVATAR_TEXT[colorIdx] }]}>
-                    {initiales(item.nom)}
+                    {initiales(nomComplet(item))}
                   </Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.cardName} numberOfLines={1}>{item.nom}</Text>
+                  <Text style={styles.cardName} numberOfLines={1}>{nomComplet(item)}</Text>
                   <Text style={styles.cardSub} numberOfLines={1}>
                     {item.telephone || item.email || item.adresse || '—'}
                   </Text>
@@ -439,6 +468,13 @@ export default function ClientsScreen() {
               label={tr('nom_client', lang)}
               value={form.nom}
               onChangeText={t => setForm({ ...form, nom: t })}
+              mode="outlined"
+              style={styles.input}
+            />
+            <TextInput
+              label={tr('prenom', lang)}
+              value={form.prenom}
+              onChangeText={t => setForm({ ...form, prenom: t })}
               mode="outlined"
               style={styles.input}
             />
@@ -495,11 +531,11 @@ export default function ClientsScreen() {
               <View style={styles.detailHeader}>
                 <View style={[styles.detailAvatar, { backgroundColor: AVATAR_BG[Number(selectedClient.id) % 3] }]}>
                   <Text style={[styles.detailAvatarText, { color: AVATAR_TEXT[Number(selectedClient.id) % 3] }]}>
-                    {initiales(selectedClient.nom)}
+                    {initiales(nomComplet(selectedClient))}
                   </Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.detailNom}>{selectedClient.nom}</Text>
+                  <Text style={styles.detailNom}>{nomComplet(selectedClient)}</Text>
                   {selectedClient.telephone ? (
                     <Text style={styles.detailSub}>{selectedClient.telephone}</Text>
                   ) : null}
@@ -536,7 +572,7 @@ export default function ClientsScreen() {
                 <View>
                   <View style={styles.infoCard}>
                     {[
-                      [tr('nom_client', lang).replace(' *', ''), selectedClient.nom],
+                      [tr('nom_client', lang).replace(' *', ''), nomComplet(selectedClient)],
                       [tr('telephone', lang), selectedClient.telephone ?? '—'],
                       [tr('email', lang), selectedClient.email ?? '—'],
                       [tr('adresse', lang), selectedClient.adresse ?? '—'],
@@ -740,7 +776,7 @@ export default function ClientsScreen() {
             <View style={styles.handle} />
             <View style={styles.detailHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.detailNom}>QR Code · {selectedClient?.nom}</Text>
+                <Text style={styles.detailNom}>QR Code · {selectedClient ? nomComplet(selectedClient) : ''}</Text>
               </View>
               <TouchableOpacity onPress={() => setShowQrModal(false)} style={styles.closeBtn}>
                 <Text style={styles.closeBtnText}>✕</Text>
@@ -757,7 +793,7 @@ export default function ClientsScreen() {
                   resizeMode="contain"
                 />
               ) : null}
-              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 12 }}>{selectedClient?.nom}</Text>
+              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 12 }}>{selectedClient ? nomComplet(selectedClient) : ''}</Text>
             </View>
           </View>
         </View>
@@ -782,7 +818,7 @@ export default function ClientsScreen() {
               <View style={styles.handle} />
               <View style={styles.detailHeader}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.detailNom}>Avance · {selectedClient?.nom}</Text>
+                  <Text style={styles.detailNom}>Avance · {selectedClient ? nomComplet(selectedClient) : ''}</Text>
                 </View>
                 <TouchableOpacity onPress={() => setShowAvanceModal(false)} style={styles.closeBtn}>
                   <Text style={styles.closeBtnText}>✕</Text>
@@ -852,7 +888,7 @@ export default function ClientsScreen() {
             <View style={styles.handle} />
             <View style={styles.detailHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.detailNom}>Avances · {selectedClient?.nom}</Text>
+                <Text style={styles.detailNom}>Avances · {selectedClient ? nomComplet(selectedClient) : ''}</Text>
               </View>
               <TouchableOpacity onPress={() => setShowHistoriqueAvance(false)} style={styles.closeBtn}>
                 <Text style={styles.closeBtnText}>✕</Text>

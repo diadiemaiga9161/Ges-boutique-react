@@ -84,7 +84,11 @@ export interface Vente {
 
 export interface Client {
   id: number;
+  // Nom de famille seul — l'entité backend garde nom/prénom séparés
+  // (colonnes `nom` + `prenom`, toutes deux NOT NULL). Utiliser
+  // nomComplet() (ClientsScreen) pour l'affichage, pas ce champ seul.
   nom: string;
+  prenom?: string;
   telephone?: string;
   email?: string;
   adresse?: string;

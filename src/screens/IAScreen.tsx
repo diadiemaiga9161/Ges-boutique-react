@@ -95,7 +95,7 @@ function prioriteStyle(p: string): { bg: string; text: string } {
 
 function fmt(n: number): string {
   if (!n && n !== 0) return '—';
-  return n.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' Ar';
+  return n.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' FCFA';
 }
 
 const PROFIL_INITIAL: ProfilIA = {

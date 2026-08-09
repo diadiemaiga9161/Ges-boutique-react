@@ -25,11 +25,18 @@ import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
+// L'entité backend est `Utilisateur` sous /api/utilisateurs (PAS /api/users) —
+// un seul champ `nomComplet` (pas nom+prenom séparés), voir user.service.ts
+// Ionic. Aucun endpoint de bascule actif/inactif ni de reset mot de passe
+// dédié : la désactivation passe par DELETE (soft-delete côté serveur,
+// UtilisateurServiceImpl.supprimerUtilisateur met actif=false) et la
+// réinitialisation du mot de passe se fait via PUT avec un champ password
+// optionnel dans le formulaire de modification — exactement comme
+// resources.page.ts (type 'vendeurs') sur Ionic.
 interface Vendeur {
   id: number;
-  nom: string;
-  prenom: string;
   username: string;
+  nomComplet: string;
   email: string;
   telephone?: string;
   role: 'ADMIN' | 'VENDEUR';
@@ -43,8 +50,9 @@ const ROLE_COLOR: Record<string, string> = {
   VENDEUR: '#4caf50',
 };
 
-function initiales(nom: string, prenom: string): string {
-  return ((prenom?.[0] || '') + (nom?.[0] || '')).toUpperCase() || '?';
+function initiales(nomComplet: string): string {
+  const parts = (nomComplet || '').trim().split(/\s+/);
+  return (parts[0]?.[0] || '') + (parts[1]?.[0] || '') || '?';
 }
 
 export default function VendeursScreen() {
@@ -57,8 +65,7 @@ export default function VendeursScreen() {
   // Modal ajout
   const [showAdd, setShowAdd] = useState(false);
   const [formAdd, setFormAdd] = useState({
-    nom: '',
-    prenom: '',
+    nomComplet: '',
     username: '',
     email: '',
     telephone: '',
@@ -67,28 +74,23 @@ export default function VendeursScreen() {
   });
   const [savingAdd, setSavingAdd] = useState(false);
 
-  // Modal modification
+  // Modal modification (inclut un champ mot de passe optionnel = reset,
+  // comme le formulaire unique de resources.page.ts qui sert aux deux cas)
   const [showEdit, setShowEdit] = useState(false);
   const [selected, setSelected] = useState<Vendeur | null>(null);
   const [formEdit, setFormEdit] = useState({
-    nom: '',
-    prenom: '',
-    username: '',
+    nomComplet: '',
     email: '',
     telephone: '',
     role: 'VENDEUR' as 'ADMIN' | 'VENDEUR',
+    motDePasse: '',
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Modal reset MDP
-  const [showReset, setShowReset] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
-  const [savingReset, setSavingReset] = useState(false);
-
   const charger = async () => {
     try {
-      const res = await api.get('/users');
-      const liste = res.data?.data || res.data || [];
+      const res = await api.get('/utilisateurs');
+      const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       setVendeurs(liste);
       setFromCache(false);
       sauvegarderCache('vendeurs', liste).catch(() => {});
@@ -110,54 +112,33 @@ export default function VendeursScreen() {
   const ouvrirModif = (v: Vendeur) => {
     setSelected(v);
     setFormEdit({
-      nom: v.nom,
-      prenom: v.prenom,
-      username: v.username,
+      nomComplet: v.nomComplet,
       email: v.email,
       telephone: v.telephone || '',
       role: v.role,
+      motDePasse: '',
     });
     setShowEdit(true);
   };
 
-  const ouvrirReset = (v: Vendeur) => {
-    setSelected(v);
-    setNewPassword('');
-    setShowReset(true);
-  };
-
-  const toggleStatut = (v: Vendeur) => {
-    Alert.alert(
-      v.actif ? 'Désactiver' : 'Activer',
-      `${v.actif ? 'Désactiver' : 'Activer'} ${v.prenom} ${v.nom} ?`,
-      [
-        { text: tr('annuler', lang), style: 'cancel' },
-        {
-          text: tr('confirmer', lang),
-          onPress: async () => {
-            try {
-              await executerOuMettreEnFile('vendeur_toggle', { id: v.id, actif: !v.actif }, () => api.patch(`/users/${v.id}/statut`, { actif: !v.actif }));
-              charger();
-            } catch {
-              Alert.alert(tr('erreur', lang), 'Impossible de modifier le statut');
-            }
-          },
-        },
-      ],
-    );
-  };
-
   const creerVendeur = async () => {
-    if (!formAdd.nom.trim() || !formAdd.username.trim() || !formAdd.motDePasse.trim()) {
+    if (!formAdd.nomComplet.trim() || !formAdd.username.trim() || !formAdd.motDePasse.trim()) {
       Alert.alert(tr('erreur', lang), tr('remplir_champs', lang));
       return;
     }
     setSavingAdd(true);
-    const payloadAdd = { nom: formAdd.nom.trim(), prenom: formAdd.prenom.trim(), username: formAdd.username.trim(), email: formAdd.email.trim(), telephone: formAdd.telephone.trim() || null, role: formAdd.role, motDePasse: formAdd.motDePasse };
+    const payloadAdd = {
+      username: formAdd.username.trim(),
+      password: formAdd.motDePasse,
+      nomComplet: formAdd.nomComplet.trim(),
+      email: formAdd.email.trim(),
+      telephone: formAdd.telephone.trim() || null,
+      role: formAdd.role,
+    };
     try {
-      await executerOuMettreEnFile('vendeur_create', payloadAdd, () => api.post('/users', payloadAdd));
+      await executerOuMettreEnFile('vendeur_create', payloadAdd, () => api.post('/utilisateurs', payloadAdd));
       setShowAdd(false);
-      setFormAdd({ nom: '', prenom: '', username: '', email: '', telephone: '', role: 'VENDEUR', motDePasse: '' });
+      setFormAdd({ nomComplet: '', username: '', email: '', telephone: '', role: 'VENDEUR', motDePasse: '' });
       charger();
     } catch {
       Alert.alert(tr('erreur', lang), 'Impossible de créer le vendeur');
@@ -167,14 +148,22 @@ export default function VendeursScreen() {
 
   const modifierVendeur = async () => {
     if (!selected) return;
-    if (!formEdit.nom.trim() || !formEdit.username.trim()) {
+    if (!formEdit.nomComplet.trim()) {
       Alert.alert(tr('erreur', lang), tr('remplir_champs', lang));
       return;
     }
     setSavingEdit(true);
-    const payloadEdit = { nom: formEdit.nom.trim(), prenom: formEdit.prenom.trim(), username: formEdit.username.trim(), email: formEdit.email.trim(), telephone: formEdit.telephone.trim() || null, role: formEdit.role };
+    // password: seulement si renseigné (= réinitialisation), comme
+    // UserUpdate.password optionnel côté Ionic/backend.
+    const payloadEdit: Record<string, any> = {
+      nomComplet: formEdit.nomComplet.trim(),
+      email: formEdit.email.trim(),
+      telephone: formEdit.telephone.trim() || null,
+      role: formEdit.role,
+    };
+    if (formEdit.motDePasse.trim()) payloadEdit.password = formEdit.motDePasse.trim();
     try {
-      await executerOuMettreEnFile('vendeur_update', { id: selected.id, data: payloadEdit }, () => api.put(`/users/${selected.id}`, payloadEdit));
+      await executerOuMettreEnFile('vendeur_update', { id: selected.id, data: payloadEdit }, () => api.put(`/utilisateurs/${selected.id}`, payloadEdit));
       setShowEdit(false);
       setSelected(null);
       charger();
@@ -184,23 +173,26 @@ export default function VendeursScreen() {
     setSavingEdit(false);
   };
 
-  const resetPassword = async () => {
-    if (!selected) return;
-    if (!newPassword.trim() || newPassword.trim().length < 4) {
-      Alert.alert(tr('erreur', lang), 'Le mot de passe doit faire au moins 4 caractères');
-      return;
-    }
-    setSavingReset(true);
-    try {
-      await api.post(`/users/${selected.id}/reset-password`, { newPassword: newPassword.trim() });
-      Alert.alert('Succès', 'Mot de passe réinitialisé');
-      setShowReset(false);
-      setSelected(null);
-      setNewPassword('');
-    } catch {
-      Alert.alert(tr('erreur', lang), 'Impossible de réinitialiser le mot de passe');
-    }
-    setSavingReset(false);
+  const confirmerSupprimer = (v: Vendeur) => {
+    Alert.alert(
+      'Supprimer cet utilisateur ?',
+      `${v.nomComplet} (@${v.username}) sera désactivé.`,
+      [
+        { text: tr('annuler', lang), style: 'cancel' },
+        {
+          text: tr('supprimer', lang),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await executerOuMettreEnFile('vendeur_delete', { id: v.id }, () => api.delete(`/utilisateurs/${v.id}`));
+              charger();
+            } catch {
+              Alert.alert(tr('erreur', lang), 'Impossible de supprimer');
+            }
+          },
+        },
+      ],
+    );
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
@@ -249,12 +241,12 @@ export default function VendeursScreen() {
               <View style={styles.row}>
                 {/* Avatar initiales */}
                 <View style={[styles.avatar, { backgroundColor: ROLE_COLOR[item.role] }]}>
-                  <Text style={styles.avatarText}>{initiales(item.nom, item.prenom)}</Text>
+                  <Text style={styles.avatarText}>{initiales(item.nomComplet)}</Text>
                 </View>
 
                 <View style={styles.infoCol}>
                   <Text variant="titleMedium" style={styles.nom}>
-                    {item.prenom} {item.nom}
+                    {item.nomComplet}
                   </Text>
                   <Text style={styles.username}>@{item.username}</Text>
                   {item.email ? <Text style={styles.sub}>{item.email}</Text> : null}
@@ -282,20 +274,9 @@ export default function VendeursScreen() {
                   <IconButton icon="pencil-outline" size={18} iconColor="#1a56db" style={styles.iconBtn} />
                   <Text style={styles.actionLabel}>Modifier</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => toggleStatut(item)}>
-                  <IconButton
-                    icon={item.actif ? 'account-off-outline' : 'account-check-outline'}
-                    size={18}
-                    iconColor={item.actif ? '#e53935' : '#4caf50'}
-                    style={styles.iconBtn}
-                  />
-                  <Text style={[styles.actionLabel, { color: item.actif ? '#e53935' : '#4caf50' }]}>
-                    {item.actif ? 'Désactiver' : 'Activer'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => ouvrirReset(item)}>
-                  <IconButton icon="lock-reset" size={18} iconColor="#ff9800" style={styles.iconBtn} />
-                  <Text style={[styles.actionLabel, { color: '#ff9800' }]}>Réinitialiser MDP</Text>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => confirmerSupprimer(item)}>
+                  <IconButton icon="account-off-outline" size={18} iconColor="#e53935" style={styles.iconBtn} />
+                  <Text style={[styles.actionLabel, { color: '#e53935' }]}>{tr('supprimer', lang)}</Text>
                 </TouchableOpacity>
               </View>
             </Card.Content>
@@ -313,8 +294,7 @@ export default function VendeursScreen() {
           contentContainerStyle={styles.modal}
         >
           <Text variant="titleLarge" style={styles.modalTitle}>Nouveau vendeur</Text>
-          <TextInput label="Nom *" value={formAdd.nom} onChangeText={t => setFormAdd({ ...formAdd, nom: t })} mode="outlined" style={styles.input} />
-          <TextInput label="Prénom" value={formAdd.prenom} onChangeText={t => setFormAdd({ ...formAdd, prenom: t })} mode="outlined" style={styles.input} />
+          <TextInput label="Nom complet *" value={formAdd.nomComplet} onChangeText={t => setFormAdd({ ...formAdd, nomComplet: t })} mode="outlined" style={styles.input} />
           <TextInput label="Username *" value={formAdd.username} onChangeText={t => setFormAdd({ ...formAdd, username: t })} mode="outlined" style={styles.input} autoCapitalize="none" />
           <TextInput label={tr('email', lang)} value={formAdd.email} onChangeText={t => setFormAdd({ ...formAdd, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" autoCapitalize="none" />
           <TextInput label={tr('telephone', lang)} value={formAdd.telephone} onChangeText={t => setFormAdd({ ...formAdd, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
@@ -337,18 +317,20 @@ export default function VendeursScreen() {
           </View>
         </Modal>
 
-        {/* Modal modification */}
+        {/* Modal modification (mot de passe optionnel = réinitialisation) */}
         <Modal
           visible={showEdit}
           onDismiss={() => { setShowEdit(false); setSelected(null); }}
           contentContainerStyle={styles.modal}
         >
           <Text variant="titleLarge" style={styles.modalTitle}>Modifier l'utilisateur</Text>
-          <TextInput label="Nom *" value={formEdit.nom} onChangeText={t => setFormEdit({ ...formEdit, nom: t })} mode="outlined" style={styles.input} />
-          <TextInput label="Prénom" value={formEdit.prenom} onChangeText={t => setFormEdit({ ...formEdit, prenom: t })} mode="outlined" style={styles.input} />
-          <TextInput label="Username *" value={formEdit.username} onChangeText={t => setFormEdit({ ...formEdit, username: t })} mode="outlined" style={styles.input} autoCapitalize="none" />
+          {selected && (
+            <Text style={styles.sub}>@{selected.username}</Text>
+          )}
+          <TextInput label="Nom complet *" value={formEdit.nomComplet} onChangeText={t => setFormEdit({ ...formEdit, nomComplet: t })} mode="outlined" style={[styles.input, { marginTop: 10 }]} />
           <TextInput label={tr('email', lang)} value={formEdit.email} onChangeText={t => setFormEdit({ ...formEdit, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" autoCapitalize="none" />
           <TextInput label={tr('telephone', lang)} value={formEdit.telephone} onChangeText={t => setFormEdit({ ...formEdit, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
+          <TextInput label="Nouveau mot de passe (optionnel)" value={formEdit.motDePasse} onChangeText={t => setFormEdit({ ...formEdit, motDePasse: t })} mode="outlined" style={styles.input} secureTextEntry />
 
           <Text style={styles.roleLabel}>Rôle</Text>
           <RadioButton.Group onValueChange={v => setFormEdit({ ...formEdit, role: v as any })} value={formEdit.role}>
@@ -363,36 +345,6 @@ export default function VendeursScreen() {
             </Button>
             <Button mode="contained" onPress={modifierVendeur} loading={savingEdit} disabled={savingEdit} style={{ flex: 1 }}>
               {tr('enregistrer', lang)}
-            </Button>
-          </View>
-        </Modal>
-
-        {/* Modal réinitialiser MDP */}
-        <Modal
-          visible={showReset}
-          onDismiss={() => { setShowReset(false); setSelected(null); setNewPassword(''); }}
-          contentContainerStyle={styles.modal}
-        >
-          <Text variant="titleLarge" style={styles.modalTitle}>Réinitialiser MDP</Text>
-          {selected && (
-            <Text style={styles.sub}>
-              {selected.prenom} {selected.nom} (@{selected.username})
-            </Text>
-          )}
-          <TextInput
-            label="Nouveau mot de passe *"
-            value={newPassword}
-            onChangeText={setNewPassword}
-            mode="outlined"
-            style={[styles.input, { marginTop: 14 }]}
-            secureTextEntry
-          />
-          <View style={styles.modalBtns}>
-            <Button mode="outlined" onPress={() => { setShowReset(false); setSelected(null); setNewPassword(''); }} style={{ flex: 1, marginRight: 8 }}>
-              {tr('annuler', lang)}
-            </Button>
-            <Button mode="contained" onPress={resetPassword} loading={savingReset} disabled={savingReset} style={{ flex: 1, backgroundColor: '#ff9800' }}>
-              Réinitialiser
             </Button>
           </View>
         </Modal>

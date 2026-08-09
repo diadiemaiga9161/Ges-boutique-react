@@ -19,34 +19,53 @@ import {
   Divider,
   IconButton,
 } from 'react-native-paper';
-import api from '../services/api.service';
+import api, { getFournisseurs, getProduits } from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 
+// Modèle réel (ObjectifFournisseurController/Dto) : un objectif est un
+// QUANTITATIF d'achat (objectifQuantite unités, sur un fournisseur+mois/année,
+// optionnellement lié à un produit précis) avec un bonus par unité — PAS un
+// "montant cible" en FCFA avec date limite comme une version précédente de cet
+// écran l'implémentait (endpoints /avancement, montantCible, dateLimite
+// inexistants côté backend). Voir objectif-fournisseur.service.ts (Ionic).
 interface ObjectifFournisseur {
   id: number;
+  fournisseurId: number;
   fournisseurNom: string;
-  description: string;
-  montantCible: number;
-  montantActuel: number;
-  pourcentage: number;
-  dateLimite: string;
-  statut: 'EN_COURS' | 'ATTEINT' | 'ECHOUE';
-  bonusPrevu?: number;
-  bonusAccorde?: number;
+  produitId?: number;
+  produitNom?: string;
+  mois: number;
+  annee: number;
+  objectifQuantite: number;
+  bonusParUnite: number;
+  quantiteAtteinte: number;
+  bonusCalcule: number;
+  quantiteBonusRecue: number;
+  statut: 'ATTEINT' | 'NON_ATTEINT';
+  observation?: string;
+  stockAjoute: boolean;
+  dateValidation?: string;
+  dateCreation: string;
 }
 
+interface FournisseurLite { id: number; nom: string }
+interface ProduitLite { id: number; nom: string }
+
+const MOIS_LABELS = [
+  '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+];
+
 const STATUT_LABEL: Record<string, string> = {
-  EN_COURS: 'En cours',
   ATTEINT: 'Atteint',
-  ECHOUE: 'Echoué',
+  NON_ATTEINT: 'Non atteint',
 };
 
 const STATUT_COLOR: Record<string, string> = {
-  EN_COURS: '#1a56db',
   ATTEINT: '#4caf50',
-  ECHOUE: '#e53935',
+  NON_ATTEINT: '#e53935',
 };
 
 function couleurProgression(pct: number): string {
@@ -55,6 +74,19 @@ function couleurProgression(pct: number): string {
   return '#e53935';
 }
 
+const money = (v: number) => `${Math.round(v || 0).toLocaleString('fr-FR')} FCFA`;
+
+const FORM_INITIAL = {
+  fournisseurId: 0,
+  produitId: undefined as number | undefined,
+  mois: new Date().getMonth() + 1,
+  annee: new Date().getFullYear(),
+  objectifQuantite: '',
+  bonusParUnite: '',
+  quantiteBonusRecue: '',
+  observation: '',
+};
+
 export default function ObjectifsFournisseurScreen() {
   const { lang } = useLang();
   const [objectifs, setObjectifs] = useState<ObjectifFournisseur[]>([]);
@@ -62,27 +94,25 @@ export default function ObjectifsFournisseurScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
 
-  // Modal ajout
+  const [fournisseurs, setFournisseurs] = useState<FournisseurLite[]>([]);
+  const [produits, setProduits] = useState<ProduitLite[]>([]);
+
+  // Modal ajout/modification
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({
-    fournisseurNom: '',
-    description: '',
-    montantCible: '',
-    dateLimite: '',
-    bonusPrevu: '',
-  });
+  const [editing, setEditing] = useState<ObjectifFournisseur | null>(null);
+  const [form, setForm] = useState({ ...FORM_INITIAL });
+  const [fournisseurSearch, setFournisseurSearch] = useState('');
+  const [produitSearch, setProduitSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Modal détails / avancement
+  // Modal détails
   const [selected, setSelected] = useState<ObjectifFournisseur | null>(null);
-  const [avancement, setAvancement] = useState<any>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [loadingAv, setLoadingAv] = useState(false);
 
   const charger = async () => {
     try {
       const res = await api.get('/objectifs-fournisseur');
-      const liste = res.data?.data || res.data || [];
+      const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       setObjectifs(liste);
       setFromCache(false);
       sauvegarderCache('objectifs_fournisseur', liste).catch(() => {});
@@ -95,41 +125,145 @@ export default function ObjectifsFournisseurScreen() {
     setRefreshing(false);
   };
 
-  useEffect(() => { charger(); }, []);
+  useEffect(() => {
+    charger();
+    getFournisseurs().then(res => {
+      const liste = res.data?.data || res.data?.fournisseurs || (Array.isArray(res.data) ? res.data : []);
+      setFournisseurs(liste.map((f: any) => ({ id: f.id, nom: f.nom })));
+    }).catch(() => {});
+    getProduits().then(res => {
+      const liste = res.data?.data || (Array.isArray(res.data) ? res.data : []);
+      setProduits(liste.map((p: any) => ({ id: p.id, nom: p.nom })));
+    }).catch(() => {});
+  }, []);
 
-  const nbActifs = objectifs.filter(o => o.statut === 'EN_COURS').length;
-  const totalBonus = objectifs.reduce(
-    (s, o) => s + (o.bonusAccorde || 0),
-    0,
-  );
+  const nbActifs = objectifs.filter(o => o.statut === 'NON_ATTEINT').length;
+  const totalBonus = objectifs.reduce((s, o) => s + (o.bonusCalcule || 0), 0);
   const nbAtteints = objectifs.filter(o => o.statut === 'ATTEINT').length;
 
-  const ouvrir = async (obj: ObjectifFournisseur) => {
-    setSelected(obj);
-    setShowDetails(true);
-    setLoadingAv(true);
-    try {
-      const res = await api.get(`/objectifs-fournisseur/${obj.id}/avancement`);
-      setAvancement(res.data?.data || res.data);
-    } catch { setAvancement(null); }
-    setLoadingAv(false);
+  const ouvrirCreation = () => {
+    setEditing(null);
+    setForm({ ...FORM_INITIAL });
+    setFournisseurSearch('');
+    setProduitSearch('');
+    setShowModal(true);
   };
 
-  const supprimer = (id: number) => {
+  const ouvrirModif = (o: ObjectifFournisseur) => {
+    setEditing(o);
+    setForm({
+      fournisseurId: o.fournisseurId,
+      produitId: o.produitId,
+      mois: o.mois,
+      annee: o.annee,
+      objectifQuantite: String(o.objectifQuantite),
+      bonusParUnite: String(o.bonusParUnite),
+      quantiteBonusRecue: o.quantiteBonusRecue ? String(o.quantiteBonusRecue) : '',
+      observation: o.observation || '',
+    });
+    setFournisseurSearch(o.fournisseurNom);
+    setProduitSearch(o.produitNom || '');
+    setShowModal(true);
+  };
+
+  const ouvrir = (o: ObjectifFournisseur) => {
+    setSelected(o);
+    setShowDetails(true);
+  };
+
+  const supprimer = (o: ObjectifFournisseur) => {
+    if (o.stockAjoute) {
+      Alert.alert(tr('erreur', lang), 'Impossible de supprimer un objectif déjà validé (stock ajouté)');
+      return;
+    }
+    Alert.alert('Confirmer', 'Supprimer cet objectif ?', [
+      { text: tr('annuler', lang), style: 'cancel' },
+      {
+        text: 'Supprimer',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await executerOuMettreEnFile('objectif_delete', { id: o.id }, () => api.delete(`/objectifs-fournisseur/${o.id}`));
+            charger();
+          } catch (err: any) {
+            Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Impossible de supprimer');
+          }
+        },
+      },
+    ]);
+  };
+
+  const enregistrer = async () => {
+    if (!form.fournisseurId) {
+      Alert.alert(tr('erreur', lang), 'Sélectionnez un fournisseur');
+      return;
+    }
+    const objectifQuantite = parseFloat(form.objectifQuantite);
+    if (!objectifQuantite || objectifQuantite <= 0) {
+      Alert.alert(tr('erreur', lang), "L'objectif de quantité doit être supérieur à 0");
+      return;
+    }
+    const bonusParUnite = parseFloat(form.bonusParUnite);
+    if (bonusParUnite === undefined || isNaN(bonusParUnite) || bonusParUnite < 0) {
+      Alert.alert(tr('erreur', lang), 'Le bonus par unité est invalide');
+      return;
+    }
+    setSaving(true);
+    // ObjectifFournisseurRequest : fournisseurId, produitId?, mois, annee,
+    // objectifQuantite, bonusParUnite, quantiteAtteinte?, quantiteBonusRecue?, observation?
+    const payload = {
+      fournisseurId: form.fournisseurId,
+      produitId: form.produitId,
+      mois: form.mois,
+      annee: form.annee,
+      objectifQuantite,
+      bonusParUnite,
+      quantiteAtteinte: editing?.quantiteAtteinte || 0,
+      quantiteBonusRecue: form.quantiteBonusRecue ? parseFloat(form.quantiteBonusRecue) : 0,
+      observation: form.observation.trim() || undefined,
+    };
+    try {
+      if (editing) {
+        await executerOuMettreEnFile('objectif_update', { id: editing.id, data: payload }, () => api.put(`/objectifs-fournisseur/${editing.id}`, payload));
+      } else {
+        await executerOuMettreEnFile('objectif_create', payload, () => api.post('/objectifs-fournisseur', payload));
+      }
+      setShowModal(false);
+      charger();
+    } catch (err: any) {
+      Alert.alert(tr('erreur', lang), err.response?.data?.message || "Impossible d'enregistrer l'objectif");
+    }
+    setSaving(false);
+  };
+
+  const confirmerValider = (o: ObjectifFournisseur) => {
+    if (o.statut !== 'ATTEINT') {
+      Alert.alert(tr('erreur', lang), 'Seuls les objectifs atteints peuvent être validés');
+      return;
+    }
+    if (!o.produitId) {
+      Alert.alert(tr('erreur', lang), 'Associez un produit avant de valider');
+      return;
+    }
+    if (!o.quantiteBonusRecue || o.quantiteBonusRecue <= 0) {
+      Alert.alert(tr('erreur', lang), 'Renseignez la quantité bonus reçue');
+      return;
+    }
     Alert.alert(
-      'Confirmer',
-      'Supprimer cet objectif ?',
+      'Valider le bonus ?',
+      `${o.quantiteBonusRecue} unités de "${o.produitNom}" seront ajoutées au stock.`,
       [
         { text: tr('annuler', lang), style: 'cancel' },
         {
-          text: 'Supprimer',
-          style: 'destructive',
+          text: 'Valider',
           onPress: async () => {
             try {
-              await executerOuMettreEnFile('objectif_delete', { id }, () => api.delete(`/objectifs-fournisseur/${id}`));
+              await api.patch(`/objectifs-fournisseur/${o.id}/valider`, {});
+              setShowDetails(false);
               charger();
-            } catch {
-              Alert.alert(tr('erreur', lang), 'Impossible de supprimer');
+              Alert.alert('✅ Stock mis à jour', `${o.quantiteBonusRecue} unité(s) de "${o.produitNom}" ajoutées au stock.`);
+            } catch (err: any) {
+              Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Validation impossible');
             }
           },
         },
@@ -137,23 +271,12 @@ export default function ObjectifsFournisseurScreen() {
     );
   };
 
-  const enregistrer = async () => {
-    if (!form.fournisseurNom.trim() || !form.montantCible.trim()) {
-      Alert.alert(tr('erreur', lang), tr('remplir_champs', lang));
-      return;
-    }
-    setSaving(true);
-    const payloadObj = { fournisseurNom: form.fournisseurNom.trim(), description: form.description.trim(), montantCible: parseFloat(form.montantCible), dateLimite: form.dateLimite.trim() || null, bonusPrevu: form.bonusPrevu ? parseFloat(form.bonusPrevu) : null };
-    try {
-      await executerOuMettreEnFile('objectif_create', payloadObj, () => api.post('/objectifs-fournisseur', payloadObj));
-      setShowModal(false);
-      setForm({ fournisseurNom: '', description: '', montantCible: '', dateLimite: '', bonusPrevu: '' });
-      charger();
-    } catch {
-      Alert.alert(tr('erreur', lang), "Impossible d'enregistrer l'objectif");
-    }
-    setSaving(false);
-  };
+  const fournisseursFiltres = fournisseurSearch.trim()
+    ? fournisseurs.filter(f => f.nom.toLowerCase().includes(fournisseurSearch.toLowerCase())).slice(0, 15)
+    : [];
+  const produitsFiltres = produitSearch.trim()
+    ? produits.filter(p => p.nom.toLowerCase().includes(produitSearch.toLowerCase())).slice(0, 15)
+    : [];
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
 
@@ -168,12 +291,12 @@ export default function ObjectifsFournisseurScreen() {
       <View style={styles.banner}>
         <View style={styles.bannerItem}>
           <Text style={styles.bannerVal}>{nbActifs}</Text>
-          <Text style={styles.bannerLabel}>Actifs</Text>
+          <Text style={styles.bannerLabel}>En cours</Text>
         </View>
         <View style={styles.bannerSep} />
         <View style={styles.bannerItem}>
           <Text style={styles.bannerVal}>{totalBonus.toLocaleString('fr-FR')}</Text>
-          <Text style={styles.bannerLabel}>Bonus gagnés (FCFA)</Text>
+          <Text style={styles.bannerLabel}>Bonus calculés (FCFA)</Text>
         </View>
         <View style={styles.bannerSep} />
         <View style={styles.bannerItem}>
@@ -196,7 +319,9 @@ export default function ObjectifsFournisseurScreen() {
           <Text style={styles.empty}>Aucun objectif enregistré</Text>
         }
         renderItem={({ item }) => {
-          const pct = Math.min(item.pourcentage || 0, 100);
+          const pct = item.objectifQuantite > 0
+            ? Math.min(Math.round((item.quantiteAtteinte / item.objectifQuantite) * 100), 100)
+            : 0;
           const couleur = couleurProgression(pct);
           return (
             <TouchableOpacity onPress={() => ouvrir(item)}>
@@ -204,27 +329,34 @@ export default function ObjectifsFournisseurScreen() {
                 <Card.Content>
                   {/* Ligne titre + statut + supprimer */}
                   <View style={styles.row}>
-                    <Text variant="titleMedium" style={styles.fournisseurNom}>
-                      {item.fournisseurNom}
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="titleMedium" style={styles.fournisseurNom}>
+                        {item.fournisseurNom}
+                      </Text>
+                      <Text style={styles.sub}>{MOIS_LABELS[item.mois]} {item.annee}{item.produitNom ? ` · ${item.produitNom}` : ''}</Text>
+                    </View>
                     <View style={styles.rowEnd}>
                       <View style={[styles.badge, { backgroundColor: STATUT_COLOR[item.statut] + '22' }]}>
                         <Text style={[styles.badgeText, { color: STATUT_COLOR[item.statut] }]}>
                           {STATUT_LABEL[item.statut] || item.statut}
                         </Text>
                       </View>
+                      {!item.stockAjoute && (
+                        <IconButton
+                          icon="pencil-outline"
+                          size={18}
+                          iconColor="#1a56db"
+                          onPress={() => ouvrirModif(item)}
+                        />
+                      )}
                       <IconButton
                         icon="delete-outline"
                         size={18}
                         iconColor="#e53935"
-                        onPress={() => supprimer(item.id)}
+                        onPress={() => supprimer(item)}
                       />
                     </View>
                   </View>
-
-                  {item.description ? (
-                    <Text style={styles.sub}>{item.description}</Text>
-                  ) : null}
 
                   {/* Barre de progression */}
                   <View style={styles.progressBg}>
@@ -237,28 +369,22 @@ export default function ObjectifsFournisseurScreen() {
                   </View>
                   <View style={styles.row}>
                     <Text style={styles.progLabel}>
-                      {item.montantActuel?.toLocaleString('fr-FR')} / {item.montantCible?.toLocaleString('fr-FR')} FCFA
+                      {item.quantiteAtteinte?.toLocaleString('fr-FR')} / {item.objectifQuantite?.toLocaleString('fr-FR')} unités
                     </Text>
-                    <Text style={[styles.progPct, { color: couleur }]}>{pct.toFixed(0)}%</Text>
+                    <Text style={[styles.progPct, { color: couleur }]}>{pct}%</Text>
                   </View>
 
                   <Divider style={{ marginVertical: 6 }} />
 
                   <View style={styles.row}>
-                    {item.dateLimite ? (
-                      <Text style={styles.date}>
-                        Limite : {new Date(item.dateLimite).toLocaleDateString('fr-FR')}
-                      </Text>
-                    ) : (
-                      <Text style={styles.date}>Sans date limite</Text>
-                    )}
-                    {item.bonusAccorde ? (
+                    <Text style={styles.date}>Bonus/unité : {money(item.bonusParUnite)}</Text>
+                    {item.stockAjoute ? (
                       <Text style={styles.bonusOk}>
-                        Bonus accordé : {item.bonusAccorde.toLocaleString('fr-FR')} FCFA
+                        Stock ajouté : {item.quantiteBonusRecue} u.
                       </Text>
-                    ) : item.bonusPrevu ? (
+                    ) : item.quantiteBonusRecue ? (
                       <Text style={styles.bonusPrevu}>
-                        Bonus prévu : {item.bonusPrevu.toLocaleString('fr-FR')} FCFA
+                        Bonus reçu : {item.quantiteBonusRecue} u.
                       </Text>
                     ) : null}
                   </View>
@@ -269,79 +395,145 @@ export default function ObjectifsFournisseurScreen() {
         }}
       />
 
-      <FAB icon="plus" style={styles.fab} onPress={() => setShowModal(true)} />
+      <FAB icon="plus" style={styles.fab} onPress={ouvrirCreation} />
 
       <Portal>
-        {/* Modal ajout */}
+        {/* Modal ajout / modification */}
         <Modal
           visible={showModal}
           onDismiss={() => setShowModal(false)}
           contentContainerStyle={styles.modal}
         >
           <Text variant="titleLarge" style={styles.modalTitle}>
-            Nouvel objectif
+            {editing ? 'Modifier l\'objectif' : 'Nouvel objectif'}
           </Text>
+
+          <Text style={styles.fieldLabel}>Fournisseur *</Text>
           <TextInput
-            label="Fournisseur *"
-            value={form.fournisseurNom}
-            onChangeText={t => setForm({ ...form, fournisseurNom: t })}
+            value={fournisseurSearch}
+            onChangeText={t => { setFournisseurSearch(t); setForm({ ...form, fournisseurId: 0 }); }}
             mode="outlined"
+            placeholder="Rechercher un fournisseur..."
+            style={styles.input}
+          />
+          {fournisseursFiltres.length > 0 && !form.fournisseurId && (
+            <View style={styles.pickerList}>
+              {fournisseursFiltres.map(f => (
+                <TouchableOpacity
+                  key={f.id}
+                  style={styles.pickerItem}
+                  onPress={() => { setForm({ ...form, fournisseurId: f.id }); setFournisseurSearch(f.nom); }}
+                >
+                  <Text style={styles.pickerItemText}>{f.nom}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.fieldLabel}>Produit concerné (pour le bonus stock)</Text>
+          <TextInput
+            value={produitSearch}
+            onChangeText={t => { setProduitSearch(t); setForm({ ...form, produitId: undefined }); }}
+            mode="outlined"
+            placeholder="Rechercher un produit..."
+            style={styles.input}
+          />
+          {produitsFiltres.length > 0 && !form.produitId && (
+            <View style={styles.pickerList}>
+              {produitsFiltres.map(p => (
+                <TouchableOpacity
+                  key={p.id}
+                  style={styles.pickerItem}
+                  onPress={() => { setForm({ ...form, produitId: p.id }); setProduitSearch(p.nom); }}
+                >
+                  <Text style={styles.pickerItemText}>{p.nom}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.rowFields}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldLabel}>Mois *</Text>
+              <View style={styles.moisRow}>
+                {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+                  <TouchableOpacity
+                    key={m}
+                    style={[styles.moisChip, form.mois === m && styles.moisChipActive]}
+                    onPress={() => setForm({ ...form, mois: m })}
+                  >
+                    <Text style={[styles.moisChipText, form.mois === m && { color: '#fff' }]}>{MOIS_LABELS[m].slice(0, 3)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+          <TextInput
+            label="Année *"
+            value={String(form.annee)}
+            onChangeText={t => setForm({ ...form, annee: parseInt(t) || form.annee })}
+            mode="outlined"
+            keyboardType="numeric"
+            style={styles.input}
+          />
+          <TextInput
+            label="Objectif quantité *"
+            value={form.objectifQuantite}
+            onChangeText={t => setForm({ ...form, objectifQuantite: t })}
+            mode="outlined"
+            keyboardType="numeric"
+            placeholder="ex: 50000"
+            style={styles.input}
+          />
+          <TextInput
+            label="Bonus/unité (FCFA) *"
+            value={form.bonusParUnite}
+            onChangeText={t => setForm({ ...form, bonusParUnite: t })}
+            mode="outlined"
+            keyboardType="numeric"
+            placeholder="ex: 25"
+            style={styles.input}
+          />
+          {editing && (
+            <TextInput
+              label="Quantité atteinte"
+              value={String(editing.quantiteAtteinte)}
+              mode="outlined"
+              disabled
+              style={styles.input}
+            />
+          )}
+          <TextInput
+            label="Quantité bonus reçue"
+            value={form.quantiteBonusRecue}
+            onChangeText={t => setForm({ ...form, quantiteBonusRecue: t })}
+            mode="outlined"
+            keyboardType="numeric"
             style={styles.input}
           />
           <TextInput
             label={tr('description', lang)}
-            value={form.description}
-            onChangeText={t => setForm({ ...form, description: t })}
+            value={form.observation}
+            onChangeText={t => setForm({ ...form, observation: t })}
             mode="outlined"
+            multiline
             style={styles.input}
           />
-          <TextInput
-            label="Montant cible *"
-            value={form.montantCible}
-            onChangeText={t => setForm({ ...form, montantCible: t })}
-            mode="outlined"
-            keyboardType="numeric"
-            style={styles.input}
-          />
-          <TextInput
-            label="Date limite (AAAA-MM-JJ)"
-            value={form.dateLimite}
-            onChangeText={t => setForm({ ...form, dateLimite: t })}
-            mode="outlined"
-            style={styles.input}
-          />
-          <TextInput
-            label="Bonus prévu si atteint"
-            value={form.bonusPrevu}
-            onChangeText={t => setForm({ ...form, bonusPrevu: t })}
-            mode="outlined"
-            keyboardType="numeric"
-            style={styles.input}
-          />
+
           <View style={styles.modalBtns}>
-            <Button
-              mode="outlined"
-              onPress={() => setShowModal(false)}
-              style={{ flex: 1, marginRight: 8 }}
-            >
+            <Button mode="outlined" onPress={() => setShowModal(false)} style={{ flex: 1, marginRight: 8 }}>
               {tr('annuler', lang)}
             </Button>
-            <Button
-              mode="contained"
-              onPress={enregistrer}
-              loading={saving}
-              disabled={saving}
-              style={{ flex: 1 }}
-            >
+            <Button mode="contained" onPress={enregistrer} loading={saving} disabled={saving} style={{ flex: 1 }}>
               {tr('enregistrer', lang)}
             </Button>
           </View>
         </Modal>
 
-        {/* Modal détails avancement */}
+        {/* Modal détails */}
         <Modal
           visible={showDetails}
-          onDismiss={() => { setShowDetails(false); setSelected(null); setAvancement(null); }}
+          onDismiss={() => { setShowDetails(false); setSelected(null); }}
           contentContainerStyle={styles.modal}
         >
           {selected && (
@@ -349,9 +541,9 @@ export default function ObjectifsFournisseurScreen() {
               <Text variant="titleLarge" style={styles.modalTitle}>
                 {selected.fournisseurNom}
               </Text>
-              <Text style={styles.sub}>{selected.description}</Text>
+              <Text style={styles.sub}>{MOIS_LABELS[selected.mois]} {selected.annee}{selected.produitNom ? ` · ${selected.produitNom}` : ' · Aucun produit lié'}</Text>
 
-              <View style={[styles.badge, { alignSelf: 'flex-start', marginBottom: 10, backgroundColor: STATUT_COLOR[selected.statut] + '22' }]}>
+              <View style={[styles.badge, { alignSelf: 'flex-start', marginTop: 10, marginBottom: 10, backgroundColor: STATUT_COLOR[selected.statut] + '22' }]}>
                 <Text style={[styles.badgeText, { color: STATUT_COLOR[selected.statut] }]}>
                   {STATUT_LABEL[selected.statut] || selected.statut}
                 </Text>
@@ -362,56 +554,41 @@ export default function ObjectifsFournisseurScreen() {
                   style={[
                     styles.progressFill,
                     {
-                      width: `${Math.min(selected.pourcentage || 0, 100)}%` as any,
-                      backgroundColor: couleurProgression(selected.pourcentage || 0),
+                      width: `${selected.objectifQuantite > 0 ? Math.min(Math.round((selected.quantiteAtteinte / selected.objectifQuantite) * 100), 100) : 0}%` as any,
+                      backgroundColor: couleurProgression(selected.objectifQuantite > 0 ? (selected.quantiteAtteinte / selected.objectifQuantite) * 100 : 0),
                     },
                   ]}
                 />
               </View>
-              <Text style={[styles.progPct, { color: couleurProgression(selected.pourcentage || 0), marginBottom: 12 }]}>
-                {(selected.pourcentage || 0).toFixed(1)}% — {selected.montantActuel?.toLocaleString('fr-FR')} / {selected.montantCible?.toLocaleString('fr-FR')} FCFA
+              <Text style={[styles.progPct, { marginBottom: 12 }]}>
+                {selected.quantiteAtteinte?.toLocaleString('fr-FR')} / {selected.objectifQuantite?.toLocaleString('fr-FR')} unités
               </Text>
 
               <Divider style={{ marginBottom: 10 }} />
 
-              {loadingAv ? (
-                <ActivityIndicator />
-              ) : avancement ? (
-                <>
-                  <Text style={styles.detailLine}>
-                    Achats liés : {avancement.nombreAchats ?? '—'}
-                  </Text>
-                  {avancement.derniersAchats?.length > 0 && (
-                    <>
-                      <Text style={[styles.sub, { marginTop: 6 }]}>Derniers achats :</Text>
-                      {avancement.derniersAchats.slice(0, 5).map((a: any, i: number) => (
-                        <View key={i} style={styles.row}>
-                          <Text style={styles.date}>
-                            {a.date ? new Date(a.date).toLocaleDateString('fr-FR') : '—'}
-                          </Text>
-                          <Text style={styles.bold}>{a.montant?.toLocaleString('fr-FR')} FCFA</Text>
-                        </View>
-                      ))}
-                    </>
-                  )}
-                  {selected.bonusAccorde ? (
-                    <Text style={[styles.bonusOk, { marginTop: 8 }]}>
-                      Bonus accordé : {selected.bonusAccorde.toLocaleString('fr-FR')} FCFA
-                    </Text>
-                  ) : selected.bonusPrevu ? (
-                    <Text style={[styles.bonusPrevu, { marginTop: 8 }]}>
-                      Bonus prévu : {selected.bonusPrevu.toLocaleString('fr-FR')} FCFA
-                    </Text>
-                  ) : null}
-                </>
+              <Text style={styles.detailLine}>Bonus par unité : {money(selected.bonusParUnite)}</Text>
+              <Text style={styles.detailLine}>Bonus calculé : {money(selected.bonusCalcule)}</Text>
+              <Text style={styles.detailLine}>Quantité bonus reçue : {selected.quantiteBonusRecue || 0}</Text>
+              {!!selected.observation && <Text style={[styles.sub, { marginTop: 6 }]}>{selected.observation}</Text>}
+
+              {selected.stockAjoute ? (
+                <Text style={[styles.bonusOk, { marginTop: 8 }]}>
+                  ✅ Stock déjà ajouté{selected.dateValidation ? ` le ${new Date(selected.dateValidation).toLocaleDateString('fr-FR')}` : ''}
+                </Text>
               ) : (
-                <Text style={styles.empty}>Aucun avancement disponible</Text>
+                <Button
+                  mode="contained"
+                  onPress={() => confirmerValider(selected)}
+                  style={{ marginTop: 12, backgroundColor: '#4caf50' }}
+                >
+                  Valider et ajouter au stock
+                </Button>
               )}
 
               <Button
                 mode="outlined"
-                onPress={() => { setShowDetails(false); setSelected(null); setAvancement(null); }}
-                style={{ marginTop: 16 }}
+                onPress={() => { setShowDetails(false); setSelected(null); }}
+                style={{ marginTop: 10 }}
               >
                 {tr('fermer', lang)}
               </Button>
@@ -442,9 +619,10 @@ const styles = StyleSheet.create({
 
   // Cards
   card: { marginBottom: 10, borderRadius: 12 },
-  fournisseurNom: { fontWeight: 'bold', flex: 1 },
+  fournisseurNom: { fontWeight: 'bold' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowEnd: { flexDirection: 'row', alignItems: 'center' },
+  rowFields: { marginBottom: 4 },
 
   // Badge statut
   badge: {
@@ -494,4 +672,16 @@ const styles = StyleSheet.create({
   modalTitle: { fontWeight: 'bold', marginBottom: 14, color: '#1a56db' },
   modalBtns: { flexDirection: 'row', marginTop: 8 },
   input: { marginBottom: 10 },
+  fieldLabel: { fontSize: 12, color: '#666', fontWeight: '600', marginBottom: 4, marginTop: 4 },
+
+  // Picker fournisseur/produit
+  pickerList: { maxHeight: 150, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, marginBottom: 10 },
+  pickerItem: { paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  pickerItemText: { fontSize: 13, color: '#1e293b' },
+
+  // Chips mois
+  moisRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  moisChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: '#d1d5db' },
+  moisChipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
+  moisChipText: { fontSize: 11, color: '#374151', fontWeight: '600' },
 });
