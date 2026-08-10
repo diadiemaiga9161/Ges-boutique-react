@@ -12,7 +12,7 @@ import api, {
   createCompte, deleteCompte, versementCompte, retraitCompte,
   createObjectifFournisseur, deleteObjectifFournisseur,
   createVendeur, updateVendeur, toggleStatutVendeur,
-  updateBoutique,
+  updateBoutique, annulerVente, modifierLignesVente, effectuerRetourVente,
 } from './api.service';
 import {
   getVentesPending, marquerVenteSynced, saveVentePending, countVentesPending,
@@ -50,6 +50,7 @@ const LABELS_OPERATION: Record<string, string> = {
   vendeur_create: 'Création vendeur', vendeur_update: 'Modification vendeur', vendeur_toggle: 'Statut vendeur',
   boutique_update: 'Paramètres boutique',
   transfert_partenaire_create: 'Création boutique partenaire', transfert_partenaire_update: 'Modification boutique partenaire',
+  vente_annuler: 'Annulation vente', vente_modifier: 'Modification vente', vente_retour: 'Retour articles vente',
 };
 
 function libelleOperation(type: string): string {
@@ -381,6 +382,13 @@ async function executerOperation(type: string, payload: any): Promise<void> {
     // Boutiques partenaires (transferts)
     case 'transfert_partenaire_create': await api.post('/transferts/partenaires', payload); break;
     case 'transfert_partenaire_update': await api.put(`/transferts/partenaires/${payload.id}`, payload.data); break;
+    // Modification / annulation / retour sur une vente déjà synchronisée.
+    // Risque de conflit assumé (skill offline-first) : le serveur reste
+    // l'arbitre final au rejeu ; en cas d'échec, l'opération n'est jamais
+    // perdue silencieusement (voir syncOperationsPending / attempts).
+    case 'vente_annuler': await annulerVente(payload.venteId); break;
+    case 'vente_modifier': await modifierLignesVente(payload.venteId, payload.data); break;
+    case 'vente_retour': await effectuerRetourVente(payload); break;
     default: throw new Error(`Type opération inconnu: ${type}`);
   }
 }

@@ -8,7 +8,6 @@ import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
 import {
   getVentes, getVentesJour, getVentesParPeriode,
   getVenteDetail, annulerVente, getVentesAnnulees,
@@ -16,7 +15,7 @@ import {
   getStatistiquesChiffreAffaire, getTopProduits,
   getProduits,
 } from '../services/api.service';
-import { sauvegarderCache, lireCache } from '../services/offline.service';
+import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { imprimerFactureRN } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -313,18 +312,19 @@ export default function HistoriqueVentesScreen() {
         {
           text: tr('oui', lang) + ', ' + tr('annuler', lang).toLowerCase(), style: 'destructive',
           onPress: async () => {
-            const net = await NetInfo.fetch();
-            if (!net.isConnected) {
-              Alert.alert('Connexion requise', 'Connexion internet requise pour annuler une vente.');
-              return;
-            }
             setAnnulationEnCours(true);
             try {
-              await annulerVente(vente.id);
+              const { offline } = await executerOuMettreEnFile(
+                'vente_annuler', { venteId: vente.id }, () => annulerVente(vente.id)
+              );
               setShowModal(false);
-              setLoading(true);
-              charger(activePeriod);
-              chargerAnnulees();
+              if (offline) {
+                Alert.alert(tr('hors_ligne', lang), 'Annulation enregistrée localement — sera synchronisée au retour du réseau.');
+              } else {
+                setLoading(true);
+                charger(activePeriod);
+                chargerAnnulees();
+              }
             } catch (e: any) {
               Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
             }
@@ -472,15 +472,22 @@ export default function HistoriqueVentesScreen() {
       return;
     }
     setSavingModify(true);
+    const data = {
+      lignes: modifyLines.map(l => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: l.prixUnitaire })),
+      utilisateurId: userId,
+      motif: modifyMotif.trim() || undefined,
+    };
     try {
-      await modifierLignesVente(selectedVente.id, {
-        lignes: modifyLines.map(l => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: l.prixUnitaire })),
-        utilisateurId: userId,
-        motif: modifyMotif.trim() || undefined,
-      });
+      const { offline } = await executerOuMettreEnFile(
+        'vente_modifier', { venteId: selectedVente.id, data }, () => modifierLignesVente(selectedVente.id, data)
+      );
       setShowModifyModal(false);
-      charger(activePeriod);
-      Alert.alert(tr('succes', lang), 'Vente modifiée');
+      if (offline) {
+        Alert.alert(tr('hors_ligne', lang), 'Modification enregistrée localement — sera synchronisée au retour du réseau.');
+      } else {
+        charger(activePeriod);
+        Alert.alert(tr('succes', lang), 'Vente modifiée');
+      }
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || e.message || 'Modification impossible');
     }
@@ -514,20 +521,25 @@ export default function HistoriqueVentesScreen() {
       return;
     }
     setSavingRetour(true);
+    const data = {
+      venteId: selectedVente.id,
+      motif: retourMotif.trim() || undefined,
+      utilisateurId: userId,
+      lignes: lignesSelectionnees.map(l => ({
+        produitId: l.produitId,
+        quantiteRetournee: l.quantiteRetournee,
+        prixUnitaire: l.prixUnitaire,
+      })),
+    };
     try {
-      await effectuerRetourVente({
-        venteId: selectedVente.id,
-        motif: retourMotif.trim() || undefined,
-        utilisateurId: userId,
-        lignes: lignesSelectionnees.map(l => ({
-          produitId: l.produitId,
-          quantiteRetournee: l.quantiteRetournee,
-          prixUnitaire: l.prixUnitaire,
-        })),
-      });
+      const { offline } = await executerOuMettreEnFile('vente_retour', data, () => effectuerRetourVente(data));
       setShowRetourModal(false);
-      charger(activePeriod);
-      Alert.alert(tr('succes', lang), 'Retour enregistré');
+      if (offline) {
+        Alert.alert(tr('hors_ligne', lang), 'Retour enregistré localement — sera synchronisé au retour du réseau.');
+      } else {
+        charger(activePeriod);
+        Alert.alert(tr('succes', lang), 'Retour enregistré');
+      }
     } catch (e: any) {
       Alert.alert(tr('erreur', lang), e.response?.data?.message || e.message || 'Retour impossible');
     }
