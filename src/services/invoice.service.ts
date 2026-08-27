@@ -294,6 +294,7 @@ export interface DocumentPdfConfig {
   lignes: string[][];
   totaux?: string[];
   pied?: string;
+  paysage?: boolean;
 }
 
 function buildDocumentPdfHtml(config: DocumentPdfConfig, design: DesignFacture = 1): string {
@@ -310,13 +311,13 @@ function buildDocumentPdfHtml(config: DocumentPdfConfig, design: DesignFacture =
   return `<!doctype html><html><head><meta charset="utf-8"><title>${config.titre}</title>
     <style>
       body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f0f4f8}
-      .doc{background:#fff;border-radius:8px;padding:24px;max-width:900px;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+      .doc{background:#fff;border-radius:8px;padding:24px;max-width:${config.paysage ? '1400px' : '900px'};margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.08)}
       .header{background:${fond};color:#fff;padding:16px 24px;border-radius:6px;margin-bottom:20px}
       .header h1{margin:0;font-size:20px;color:${couleur}}
       .header p{margin:4px 0 0;font-size:12px;opacity:.85}
       table{width:100%;border-collapse:collapse;margin-top:12px}
       .totaux{margin-top:14px;border-top:2px solid ${couleur};padding-top:10px}
-      @media print{@page{size:A4;margin:8mm}body{background:#fff;padding:0}.doc{box-shadow:none}}
+      @media print{@page{size:A4 ${config.paysage ? 'landscape' : 'portrait'};margin:8mm}body{background:#fff;padding:0}.doc{box-shadow:none}}
     </style></head><body>
     <div class="doc">
       <div class="header">

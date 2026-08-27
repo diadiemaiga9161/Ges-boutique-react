@@ -11,17 +11,18 @@ import api, {
   createDetteAncienne, deleteDetteAncienne, ajouterReglementDetteAncienne,
   createCompte, deleteCompte, versementCompte, retraitCompte,
   createObjectifFournisseur, deleteObjectifFournisseur,
+  createObjectifVendeur, updateObjectifVendeur, deleteObjectifVendeur,
   createVendeur, updateVendeur, toggleStatutVendeur,
   updateBoutique, annulerVente, modifierLignesVente, effectuerRetourVente,
 } from './api.service';
 import {
-  getVentesPending, marquerVenteSynced, saveVentePending, countVentesPending,
-  saveProduitPending, getProduitsPending, marquerProduitPendingSynced,
-  saveProduitUpdatePending, getProduitsUpdatesPending, marquerProduitUpdateSynced,
+  getVentesPending, marquerVenteSynced, saveVentePending, countVentesPending, incrementVenteAttempts,
+  saveProduitPending, getProduitsPending, marquerProduitPendingSynced, incrementProduitAttempts,
+  saveProduitUpdatePending, getProduitsUpdatesPending, marquerProduitUpdateSynced, incrementProduitUpdateAttempts,
   countProduitsPending,
-  saveDepensePending, getDepensesPending, marquerDepenseSynced,
-  saveClientPending, getClientsPending, marquerClientPendingSynced,
-  saveCommandePending, getCommandesPending, marquerCommandePendingSynced,
+  saveDepensePending, getDepensesPending, marquerDepenseSynced, incrementDepenseAttempts,
+  saveClientPending, getClientsPending, marquerClientPendingSynced, incrementClientAttempts,
+  saveCommandePending, getCommandesPending, marquerCommandePendingSynced, incrementCommandeAttempts,
   saveOperation, getOperationsPending, markOperationSynced, incrementOperationAttempts, countOperationsPending,
   marquerOperationEchecNotifie, getOperationsEchecDefinitif, countOperationsEchecDefinitif,
 } from '../db/database';
@@ -47,6 +48,8 @@ const LABELS_OPERATION: Record<string, string> = {
   compte_create: 'Création compte', compte_update: 'Modification compte', compte_delete: 'Suppression compte',
   compte_versement: 'Versement compte', compte_retrait: 'Retrait compte',
   objectif_create: 'Création objectif', objectif_delete: 'Suppression objectif',
+  objectif_vendeur_create: 'Création prime vendeur', objectif_vendeur_update: 'Modification prime vendeur',
+  objectif_vendeur_delete: 'Suppression prime vendeur',
   vendeur_create: 'Création vendeur', vendeur_update: 'Modification vendeur', vendeur_toggle: 'Statut vendeur',
   boutique_update: 'Paramètres boutique',
   transfert_partenaire_create: 'Création boutique partenaire', transfert_partenaire_update: 'Modification boutique partenaire',
@@ -58,22 +61,43 @@ function libelleOperation(type: string): string {
 }
 
 let syncInProgress = false;
+// Garde globale distincte de syncInProgress (propre à syncVentesPending) —
+// protège tout le cycle demarrerAutoSync (ventes+produits+depenses+clients+
+// commandes+operations) contre deux événements NetInfo rapprochés qui
+// lanceraient deux synchronisations en parallèle.
+let autoSyncInProgress = false;
 
 export function genererLocalId(): string {
   return `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Extrait le code d'erreur structuré du backend UNIQUEMENT si status===409
+// ET errorCode==='OPTIMISTIC_LOCK_CONFLICT' — jamais pour un autre 409 (ex.
+// DATA_INTEGRITY_VIOLATION), qui doit continuer à suivre le comportement
+// générique. Retourne undefined pour toute autre erreur (réseau, 400, etc.).
+function extraireConflitStock(e: any): string | undefined {
+  return e?.response?.status === 409 && e?.response?.data?.errorCode === 'OPTIMISTIC_LOCK_CONFLICT'
+    ? e.response.data.errorCode
+    : undefined;
+}
+
 // ─── Ventes ─────────────────────────────────────────────────────────────────
 
 export async function enregistrerVente(vente: any): Promise<{ success: boolean; offline: boolean; error?: string }> {
+  // Généré une seule fois, avant le tout premier envoi, et réutilisé pour la
+  // mise en file / tous les rejeux — c'est ce même identifiant qui est envoyé
+  // en X-Client-Request-ID, y compris sur cette première tentative : si elle
+  // aboutit côté serveur mais que la réponse se perd, le rejeu ultérieur avec
+  // ce même identifiant sera reconnu comme un doublon par le backend au lieu
+  // de recréer la vente.
+  const clientRequestId = genererLocalId();
   const state = await NetInfo.fetch();
   if (!state.isConnected) {
-    const localId = genererLocalId();
-    await saveVentePending(localId, vente);
+    await saveVentePending(clientRequestId, vente);
     return { success: true, offline: true };
   }
   try {
-    await createVente(vente);
+    await createVente(vente, clientRequestId);
     return { success: true, offline: false };
   } catch (e: any) {
     // Pas de statut HTTP exploitable = le serveur n'a jamais répondu (coupure, timeout) :
@@ -81,8 +105,7 @@ export async function enregistrerVente(vente: any): Promise<{ success: boolean; 
     // peine de perdre le message d'erreur réel ou, à l'inverse, de mettre en file une
     // vente invalide qui échouera indéfiniment à la synchronisation.
     if (!e?.response?.status) {
-      const localId = genererLocalId();
-      await saveVentePending(localId, vente);
+      await saveVentePending(clientRequestId, vente);
       return { success: true, offline: true };
     }
     return { success: false, offline: false, error: e.response?.data?.message || "Erreur lors de l'enregistrement de la vente" };
@@ -98,12 +121,19 @@ export async function syncVentesPending(): Promise<number> {
   try {
     const pending = await getVentesPending();
     for (const vente of pending) {
+      if (vente.attempts >= 5) continue;
       try {
-        const { localId, ...data } = vente;
-        await createVente(data);
+        const { localId, attempts, lastError, errorCode, ...data } = vente;
+        await createVente(data, localId);
         await marquerVenteSynced(localId);
         synced++;
-      } catch { }
+      } catch (e) {
+        // Comportement inchangé : un conflit de stock est simplement
+        // enregistré (error_code), le plafond de 5 tentatives existant
+        // reste la seule limite — un rejeu de vente est un delta auto-
+        // protégé (StockInsuffisantException si besoin), pas dangereux.
+        await incrementVenteAttempts(vente.localId, String(e), extraireConflitStock(e));
+      }
     }
   } finally {
     syncInProgress = false;
@@ -158,26 +188,40 @@ export async function syncProduitsPending(): Promise<number> {
   if (!state.isConnected) return 0;
   let synced = 0;
 
-  // Sync nouvelles créations
+  // Sync nouvelles créations — comportement inchangé : une création n'a pas
+  // de risque d'écrasement (il n'existe pas encore de ligne à corrompre), un
+  // conflit de stock est simplement enregistré, le plafond de 5 reste seul.
   const pendingCreate = await getProduitsPending();
   for (const p of pendingCreate) {
+    if (p.attempts >= 5) continue;
     try {
-      const { localId, ...data } = p;
+      const { localId, attempts, lastError, errorCode, ...data } = p;
       await createProduit(data);
       await marquerProduitPendingSynced(localId);
       synced++;
-    } catch { }
+    } catch (e) {
+      await incrementProduitAttempts(p.localId, String(e), extraireConflitStock(e));
+    }
   }
 
-  // Sync modifications
+  // Sync modifications — la requête transporte une quantité ABSOLUE
+  // (ProduitServiceImpl.modifierProduit écrase produit.quantite sans
+  // condition) : rejouer une modification restée périmée après un conflit
+  // écraserait silencieusement un stock modifié entre-temps. En cas de
+  // OPTIMISTIC_LOCK_CONFLICT, on bloque donc immédiatement (attempts=5) au
+  // lieu de laisser le mécanisme de retry normal la rejouer.
   const pendingUpdate = await getProduitsUpdatesPending();
   for (const p of pendingUpdate) {
+    if (p.attempts >= 5) continue;
     try {
-      const { localId, produitId, ...data } = p;
+      const { localId, produitId, attempts, lastError, errorCode, ...data } = p;
       await updateProduit(produitId, data);
       await marquerProduitUpdateSynced(localId);
       synced++;
-    } catch { }
+    } catch (e) {
+      const conflitStock = extraireConflitStock(e);
+      await incrementProduitUpdateAttempts(p.localId, String(e), conflitStock, !!conflitStock);
+    }
   }
 
   return synced;
@@ -213,12 +257,15 @@ export async function syncDepensesPending(): Promise<number> {
   let synced = 0;
   const pending = await getDepensesPending();
   for (const d of pending) {
+    if (d.attempts >= 5) continue;
     try {
-      const { localId, ...data } = d;
+      const { localId, attempts, lastError, errorCode, ...data } = d;
       await createDepense(data);
       await marquerDepenseSynced(localId);
       synced++;
-    } catch { }
+    } catch (e) {
+      await incrementDepenseAttempts(d.localId, String(e), extraireConflitStock(e));
+    }
   }
   return synced;
 }
@@ -249,12 +296,15 @@ export async function syncClientsPending(): Promise<number> {
   let synced = 0;
   const pending = await getClientsPending();
   for (const c of pending) {
+    if (c.attempts >= 5) continue;
     try {
-      const { localId, ...data } = c;
+      const { localId, attempts, lastError, errorCode, ...data } = c;
       await createClient(data);
       await marquerClientPendingSynced(localId);
       synced++;
-    } catch { }
+    } catch (e) {
+      await incrementClientAttempts(c.localId, String(e), extraireConflitStock(e));
+    }
   }
   return synced;
 }
@@ -285,12 +335,15 @@ export async function syncCommandesPending(): Promise<number> {
   let synced = 0;
   const pending = await getCommandesPending();
   for (const c of pending) {
+    if (c.attempts >= 5) continue;
     try {
-      const { localId, ...data } = c;
+      const { localId, attempts, lastError, errorCode, ...data } = c;
       await createCommande(data);
       await marquerCommandePendingSynced(localId);
       synced++;
-    } catch { }
+    } catch (e) {
+      await incrementCommandeAttempts(c.localId, String(e), extraireConflitStock(e));
+    }
   }
   return synced;
 }
@@ -359,20 +412,24 @@ async function executerOperation(type: string, payload: any): Promise<void> {
     case 'employe_update': await updateEmploye(payload.id, payload.data); break;
     case 'employe_toggle': await toggleStatutEmploye(payload.id, payload.actif); break;
     case 'employe_delete': await deleteEmploye(payload.id); break;
-    case 'paiement_employe': await createPaiementEmploye(payload.employeId, payload.data); break;
+    case 'paiement_employe': await createPaiementEmploye(payload); break;
     // Dettes anciennes
     case 'dette_create': await createDetteAncienne(payload); break;
     case 'dette_delete': await deleteDetteAncienne(payload.id); break;
-    case 'dette_reglement': await ajouterReglementDetteAncienne(payload.detteId, payload.data); break;
+    case 'dette_reglement': await ajouterReglementDetteAncienne(payload); break;
     // Comptes bancaires
     case 'compte_create': await createCompte(payload); break;
     case 'compte_update': await api.put(`/comptes/${payload.id}`, payload.data); break;
     case 'compte_delete': await deleteCompte(payload.id); break;
-    case 'compte_versement': await versementCompte(payload.id, payload.data); break;
-    case 'compte_retrait': await retraitCompte(payload.id, payload.data); break;
+    case 'compte_versement': await versementCompte(payload); break;
+    case 'compte_retrait': await retraitCompte(payload); break;
     // Objectifs fournisseurs
     case 'objectif_create': await createObjectifFournisseur(payload); break;
     case 'objectif_delete': await deleteObjectifFournisseur(payload.id); break;
+    // Objectifs vendeurs (primes hebdomadaires)
+    case 'objectif_vendeur_create': await createObjectifVendeur(payload); break;
+    case 'objectif_vendeur_update': await updateObjectifVendeur(payload.id, payload.data); break;
+    case 'objectif_vendeur_delete': await deleteObjectifVendeur(payload.id); break;
     // Vendeurs
     case 'vendeur_create': await createVendeur(payload); break;
     case 'vendeur_update': await updateVendeur(payload.id, payload.data); break;
@@ -386,7 +443,7 @@ async function executerOperation(type: string, payload: any): Promise<void> {
     // Risque de conflit assumé (skill offline-first) : le serveur reste
     // l'arbitre final au rejeu ; en cas d'échec, l'opération n'est jamais
     // perdue silencieusement (voir syncOperationsPending / attempts).
-    case 'vente_annuler': await annulerVente(payload.venteId); break;
+    case 'vente_annuler': await annulerVente(payload.venteId, payload.motif, payload.estCredit, payload.utilisateurId); break;
     case 'vente_modifier': await modifierLignesVente(payload.venteId, payload.data); break;
     case 'vente_retour': await effectuerRetourVente(payload); break;
     default: throw new Error(`Type opération inconnu: ${type}`);
@@ -414,7 +471,21 @@ export async function syncOperationsPending(): Promise<number> {
       await markOperationSynced(op.id);
       synced++;
     } catch (e) {
-      await incrementOperationAttempts(op.id, String(e));
+      const conflitStock = extraireConflitStock(e);
+      // Un ajustement de stock transporte une quantité ABSOLUE (voir
+      // ajusterStock côté backend, qui recalcule un delta contre l'état
+      // courant à chaque tentative) : rejouer un ajustement resté périmé
+      // après un conflit de verrouillage optimiste écraserait silencieusement
+      // un stock modifié entre-temps. On bloque donc immédiatement (passage
+      // direct à 5 tentatives, comme un abandon normal — la notification
+      // existante à l'utilisateur se déclenche naturellement au prochain
+      // cycle via le mécanisme déjà en place ci-dessus) au lieu de laisser
+      // les 5 tentatives normales rejouer la même donnée dangereuse. Tous
+      // les autres types (dont les autres opérations de stock — entrée,
+      // sortie, retour, achat — qui appliquent un delta auto-protégé et
+      // sûr à rejouer) suivent le plafond normal, inchangé.
+      const bloquerImmediatement = op.type === 'mouvement_ajustement' && !!conflitStock;
+      await incrementOperationAttempts(op.id, String(e), conflitStock, bloquerImmediatement);
     }
   }
   if (echecsAnnoncer.length > 0) {
@@ -461,14 +532,23 @@ export async function lireCache<T>(key: string): Promise<T[]> {
 export function demarrerAutoSync(onSync?: (n: number) => void): () => void {
   const unsubscribe = NetInfo.addEventListener(async (state) => {
     if (state.isConnected) {
-      const nVentes = await syncVentesPending();
-      const nProduits = await syncProduitsPending();
-      const nDepenses = await syncDepensesPending();
-      const nClients = await syncClientsPending();
-      const nCommandes = await syncCommandesPending();
-      const nOperations = await syncOperationsPending();
-      const total = nVentes + nProduits + nDepenses + nClients + nCommandes + nOperations;
-      if (total > 0 && onSync) onSync(total);
+      // Synchronisation déjà en cours (événement NetInfo rapproché) : on
+      // ignore proprement ce second déclenchement plutôt que de lancer un
+      // cycle de sync en parallèle.
+      if (autoSyncInProgress) return;
+      autoSyncInProgress = true;
+      try {
+        const nVentes = await syncVentesPending();
+        const nProduits = await syncProduitsPending();
+        const nDepenses = await syncDepensesPending();
+        const nClients = await syncClientsPending();
+        const nCommandes = await syncCommandesPending();
+        const nOperations = await syncOperationsPending();
+        const total = nVentes + nProduits + nDepenses + nClients + nCommandes + nOperations;
+        if (total > 0 && onSync) onSync(total);
+      } finally {
+        autoSyncInProgress = false;
+      }
     }
   });
   return unsubscribe;

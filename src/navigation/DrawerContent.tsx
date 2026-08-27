@@ -92,6 +92,7 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
     { icon: 'business-outline', label: 'Fournisseurs', navigate: go('Fournisseurs') },
     { icon: 'lock-closed-outline', label: 'Coffre / Dépôts garde', navigate: go('Depots') },
     { icon: 'trophy-outline', label: 'Objectifs fournisseurs', navigate: go('ObjectifsFournisseur') },
+    { icon: 'cash-outline', label: 'Primes vendeurs', navigate: go('ObjectifsVendeur') },
     { icon: 'people-circle-outline', label: 'Vendeurs', navigate: go('Vendeurs') },
     { icon: 'bar-chart-outline', label: 'Historique vendeur', navigate: go('HistoriqueVendeur') },
     { icon: 'storefront-outline', label: 'Boutique', navigate: go('BoutiqueSettings') },
@@ -105,14 +106,18 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
   ];
 
   const analyseItems: MenuItem[] = [
+    { icon: 'stats-chart-outline', label: 'Rapports', navigate: goTab('Rapports') },
     { icon: 'sparkles-outline', label: 'IA Boutique', navigate: go('IA') },
-    { icon: 'trending-up-outline', label: 'Bénéfices', navigate: goTab('Rapports') },
+    { icon: 'trending-up-outline', label: 'Bénéfices', navigate: go('Benefices') },
     { icon: 'gift-outline', label: 'Bonus fournisseurs', navigate: go('BonusFournisseurs') },
     { icon: 'trending-down-outline', label: 'Dépenses', navigate: go('Depenses') },
     { icon: 'pricetag-outline', label: 'Promotions', navigate: go('Promotions') },
     { icon: 'analytics-outline', label: 'Résultat net', navigate: go('ResultatNet') },
     { icon: 'close-circle-outline', label: 'Annulation paiements', navigate: go('AnnulationPaiements'), danger: true },
     { icon: 'settings-outline', label: 'Paramètres', navigate: go('Parametres') },
+    { icon: 'download-outline', label: 'Export de données', navigate: go('ExportDonnees') },
+    { icon: 'shield-checkmark-outline', label: "Journal d'audit", navigate: go('JournalAudit') },
+    { icon: 'cloud-upload-outline', label: 'Sauvegardes', navigate: go('Sauvegardes') },
     { icon: 'notifications-outline', label: 'Notifications', navigate: go('Notifications'), badge: notifCount },
   ];
 

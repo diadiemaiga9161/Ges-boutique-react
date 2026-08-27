@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl, Image,
   TouchableOpacity, Modal, ScrollView, KeyboardAvoidingView, Platform,
@@ -20,6 +20,7 @@ import ClientReleveModal from '../components/ClientReleveModal';
 import { Client } from '../types';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useMontantInput } from '../components/MontantInput';
 
 // ─── Types locaux ─────────────────────────────────────────────────────────────
 interface VenteClient {
@@ -50,7 +51,7 @@ function estEnRetard(c: CreditClient): boolean {
 type Onglet = 'infos' | 'achats' | 'credits';
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
-function money(v: number) { return (v ?? 0).toLocaleString('fr-FR') + ' FCFA'; }
+function money(v: number) { return (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA'; }
 function fdate(d?: string) { if (!d) return '—'; return new Date(d).toLocaleDateString('fr-FR'); }
 function initiales(nom: string) { return nom.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase().slice(0, 2); }
 
@@ -101,7 +102,8 @@ export default function ClientsScreen() {
 
   // ── Avance client (dépôt + historique) ──────────────────────────────────────
   const [showAvanceModal, setShowAvanceModal] = useState(false);
-  const [avanceForm, setAvanceForm] = useState({ montant: '', modePaiement: 'ESPECES', referencePaiement: '', motif: '' });
+  const [avanceForm, setAvanceForm] = useState({ montant: 0, modePaiement: 'ESPECES', referencePaiement: '', motif: '' });
+  const montantAvanceInput = useMontantInput(avanceForm.montant, v => setAvanceForm(f => ({ ...f, montant: v })));
   const [savingAvance, setSavingAvance] = useState(false);
   const [showHistoriqueAvance, setShowHistoriqueAvance] = useState(false);
   const [loadingHistoriqueAvance, setLoadingHistoriqueAvance] = useState(false);
@@ -274,13 +276,13 @@ export default function ClientsScreen() {
   // vente à crédit permettait déjà d'UTILISER une avance, mais rien ne
   // permettait d'en DÉPOSER une depuis la fiche client) ─────────────────────
   const ouvrirAvanceModal = () => {
-    setAvanceForm({ montant: '', modePaiement: 'ESPECES', referencePaiement: '', motif: '' });
+    setAvanceForm({ montant: 0, modePaiement: 'ESPECES', referencePaiement: '', motif: '' });
     setShowAvanceModal(true);
   };
 
   const enregistrerAvanceFn = async () => {
     if (!selectedClient) return;
-    const montant = parseFloat(avanceForm.montant);
+    const montant = avanceForm.montant;
     if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
     if (avanceForm.modePaiement !== 'ESPECES' && !avanceForm.referencePaiement.trim()) {
       Alert.alert(tr('erreur', lang), 'Référence obligatoire pour ce mode de paiement');
@@ -387,13 +389,6 @@ export default function ClientsScreen() {
         </View>
       </View>
 
-      {/* ── Bandeau offline ─────────────────────────────────────────────────── */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* ── Barre de recherche ──────────────────────────────────────────────── */}
       <Searchbar
@@ -827,8 +822,8 @@ export default function ClientsScreen() {
               <ScrollView style={styles.detailBody} contentContainerStyle={{ paddingBottom: 20 }}>
                 <TextInput
                   label="Montant *"
-                  value={avanceForm.montant}
-                  onChangeText={v => setAvanceForm(f => ({ ...f, montant: v }))}
+                  value={montantAvanceInput.texte}
+                  onChangeText={montantAvanceInput.onChangeText}
                   keyboardType="numeric"
                   mode="outlined"
                   style={styles.input}
@@ -968,7 +963,8 @@ const styles = StyleSheet.create({
   search: { margin: 12 },
 
   // Card design system
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  // STYLE (2026-08-16) : coins plus arrondis pour un rendu plus premium.
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   avatarTxt: { fontWeight: 'bold', fontSize: 15 },
@@ -985,12 +981,12 @@ const styles = StyleSheet.create({
   fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
 
   // Modal ajout / modification (Paper)
-  paperModal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20 },
+  paperModal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20 },
   input: { marginBottom: 12 },
 
   // Modal detail (RN)
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%' },
   handle: {
     width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2,
     alignSelf: 'center', marginTop: 10,
@@ -1028,7 +1024,7 @@ const styles = StyleSheet.create({
 
   // Infos
   infoCard: {
-    backgroundColor: '#f8fafc', borderRadius: 12, padding: 12, marginBottom: 14,
+    backgroundColor: '#f8fafc', borderRadius: 14, padding: 12, marginBottom: 14,
     borderWidth: 1, borderColor: '#e2e8f0',
   },
   infoRow: {
@@ -1048,7 +1044,7 @@ const styles = StyleSheet.create({
   // Bouton relevé complet
   btnReleve: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#eff6ff', borderRadius: 10, paddingVertical: 12,
+    backgroundColor: '#eff6ff', borderRadius: 12, paddingVertical: 12,
     borderWidth: 1, borderColor: '#bfdbfe', marginBottom: 14,
   },
   btnReleveText: { color: '#1a56db', fontWeight: 'bold', fontSize: 14 },
@@ -1056,13 +1052,13 @@ const styles = StyleSheet.create({
   // Boutons avance
   btnAvance: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#ecfdf5', borderRadius: 10, paddingVertical: 11,
+    backgroundColor: '#ecfdf5', borderRadius: 12, paddingVertical: 11,
     borderWidth: 1, borderColor: '#a7f3d0',
   },
   btnAvanceText: { color: '#0e9f6e', fontWeight: 'bold', fontSize: 13 },
   btnHistorique: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#eff6ff', borderRadius: 10, paddingVertical: 11,
+    backgroundColor: '#eff6ff', borderRadius: 12, paddingVertical: 11,
     borderWidth: 1, borderColor: '#bfdbfe',
   },
   btnHistoriqueText: { color: '#1a56db', fontWeight: 'bold', fontSize: 13 },
@@ -1070,7 +1066,7 @@ const styles = StyleSheet.create({
   // Bouton QR code
   btnQr: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#f5f3ff', borderRadius: 10, paddingVertical: 12,
+    backgroundColor: '#f5f3ff', borderRadius: 12, paddingVertical: 12,
     borderWidth: 1, borderColor: '#ddd6fe', marginTop: 10,
   },
   btnQrText: { color: '#7c3aed', fontWeight: 'bold', fontSize: 13 },
@@ -1098,12 +1094,13 @@ const styles = StyleSheet.create({
   // Actions infos
   actionsRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   btnModifier: {
-    flex: 1, backgroundColor: '#1a56db', borderRadius: 10,
+    flex: 1, backgroundColor: '#1a56db', borderRadius: 12,
     paddingVertical: 12, alignItems: 'center',
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
   },
   btnModifierText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   btnSupprimer: {
-    flex: 1, backgroundColor: '#fef2f2', borderRadius: 10,
+    flex: 1, backgroundColor: '#fef2f2', borderRadius: 12,
     paddingVertical: 12, alignItems: 'center',
     borderWidth: 1, borderColor: '#fca5a5',
   },
@@ -1111,7 +1108,7 @@ const styles = StyleSheet.create({
 
   // KPI achats / credits
   kpiBox: {
-    backgroundColor: '#eff6ff', borderRadius: 12, padding: 14,
+    backgroundColor: '#eff6ff', borderRadius: 14, padding: 14,
     marginBottom: 14, alignItems: 'center',
     borderWidth: 1, borderColor: '#bfdbfe',
   },

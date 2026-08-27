@@ -1,5 +1,5 @@
 import React from 'react';
-import { TouchableOpacity, Platform } from 'react-native';
+import { TouchableOpacity, Platform, View, Text, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer, useNavigation, DrawerActions } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -9,6 +9,7 @@ import { enableScreens } from 'react-native-screens';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DrawerContent from './DrawerContent';
+import NetworkStatusDot from '../components/NetworkStatusDot';
 
 // Voir App.tsx : désactivé sur web, sinon les ScrollView des écrans ne
 // défilent plus (react-native-screens force des conteneurs overflow:hidden
@@ -52,12 +53,16 @@ import PaiementsEmployeScreen from '../screens/PaiementsEmployeScreen';
 import DettesAnciennesScreen from '../screens/DettesAnciennesScreen';
 import ComptesScreen from '../screens/ComptesScreen';
 import ObjectifsFournisseurScreen from '../screens/ObjectifsFournisseurScreen';
+import ObjectifsVendeurScreen from '../screens/ObjectifsVendeurScreen';
 import VendeursScreen from '../screens/VendeursScreen';
 import HistoriqueVendeurScreen from '../screens/HistoriqueVendeurScreen';
 import HomeScreen from '../screens/HomeScreen';
 import AnnulationPaiementsScreen from '../screens/AnnulationPaiementsScreen';
 import SortiesScreen from '../screens/SortiesScreen';
 import ParametresScreen from '../screens/ParametresScreen';
+import ExportDonneesScreen from '../screens/ExportDonneesScreen';
+import JournalAuditScreen from '../screens/JournalAuditScreen';
+import SauvegardesScreen from '../screens/SauvegardesScreen';
 
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
@@ -68,6 +73,9 @@ const HEADER = {
   headerStyle: { backgroundColor: '#081648' },
   headerTintColor: '#fff' as const,
   headerTitleStyle: { fontWeight: 'bold' as const, fontSize: 17 },
+  // Point de statut réseau — vert/orange, sur TOUS les écrans (Stack + Tabs
+  // héritent tous les deux de HEADER), plutôt qu'un bandeau par page.
+  headerRight: () => <NetworkStatusDot />,
 };
 
 /** Bouton hamburger dans l'en-tête — ouvre le tiroir latéral (équivalent de
@@ -81,36 +89,138 @@ function DrawerMenuButton() {
   );
 }
 
+// Icône d'onglet "premium" (design-premium) : pastille bleu clair douce autour
+// de l'icône active, comme les pastilles de statut de stock du reste de
+// l'appli — remplace le simple changement de couleur plat d'avant.
+function TabIcon({ name, focused, color, size, dark }: { name: any; focused: boolean; color: string; size: number; dark: boolean }) {
+  return (
+    <View
+      style={{
+        width: 42,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: focused ? (dark ? 'rgba(59,114,246,0.22)' : '#dbeafe') : 'transparent',
+      }}
+    >
+      <Ionicons name={name} color={color} size={size} />
+    </View>
+  );
+}
+
+// Bouton central flottant "Vendre" — même intention que .tab-btn--fab côté
+// Ionic (bouton "+" bleu qui dépasse au-dessus de la barre, raccourci direct
+// vers une nouvelle vente). Rendu via tabBarButton pour un onglet factice
+// (voir plus bas) : tabPress est intercepté pour naviguer sur l'écran Vente
+// du Stack parent plutôt que d'activer un vrai onglet.
+function TabFabButton({ onPress }: { onPress?: (e: any) => void }) {
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={{ flex: 1, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <View
+        style={{
+          width: 52,
+          height: 52,
+          borderRadius: 16,
+          backgroundColor: '#1a56db',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginTop: -14,
+          shadowColor: '#1a56db',
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.4,
+          shadowRadius: 10,
+          elevation: 8,
+        }}
+      >
+        <Ionicons name="add" color="#ffffff" size={28} />
+      </View>
+      <Text style={{ fontSize: 10, fontWeight: '800', color: '#1a56db', marginTop: 4 }}>Vente</Text>
+    </TouchableOpacity>
+  );
+}
+
 // Disposition identique à Ionic (tabs.page.html) : Caisse et Rapports réservés
-// à l'ADMIN (invisibles pour un vendeur), même ordre Caisse/Ventes/Produits/
-// Inventaire/Rapports, mêmes icônes (Ionicons — la bibliothèque qu'Ionic
-// utilise en interne pour ion-icon).
+// à l'ADMIN (invisibles pour un vendeur), Produits ↔ Ventes échangés, bouton
+// central "Vendre" ajouté au milieu — mêmes icônes (Ionicons — la
+// bibliothèque qu'Ionic utilise en interne pour ion-icon).
+//
+// Style (design-premium) : coins arrondis + ombre légère au lieu du filet gris
+// plat d'avant, palette bleu/blanc de la charte, et suivi automatique du mode
+// sombre système (useColorScheme) — jamais de fond blanc figé la nuit.
 function MainTabs({ isAdmin }: { isAdmin: boolean }) {
   const insets = useSafeAreaInsets();
+  const dark = useColorScheme() === 'dark';
+  const palette = {
+    // BUG FIX (build natif Android cassé) : la version précédente utilisait expo-blur
+    // (BlurView) pour un vrai effet verre dépoli — mais c'est un module NATIF, pas du JS. Il
+    // faut reconstruire l'appli Android (expo run:android) pour le lier, et ce PC tombe sur un
+    // bug d'environnement Windows connu (ninja/CMake en boucle infinie, indépendant de ce
+    // projet — ça arrive même sur des modules déjà présents avant nos changements) qui empêche
+    // ce rebuild natif pour l'instant. On revient donc à un fond translucide sans flou réel
+    // (comme le filet de sécurité @supports côté Ionic) : moins spectaculaire, mais 100% JS,
+    // donc ça marche immédiatement sans reconstruire l'appli. Opacité plus haute qu'avant
+    // (0.68→0.94) car sans flou pour masquer le contenu qui défile derrière, un fond trop
+    // transparent laisse le texte des écrans se voir à travers la barre.
+    bg: dark ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.94)',
+    active: dark ? '#3b72f6' : '#1a56db',
+    inactive: dark ? '#64748b' : '#94a3b8',
+  };
   return (
     <Tab.Navigator
       screenOptions={{
-        tabBarActiveTintColor: '#1a56db',
-        tabBarInactiveTintColor: '#aaa',
-        tabBarStyle: { height: 62 + insets.bottom, paddingBottom: insets.bottom + 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarActiveTintColor: palette.active,
+        tabBarInactiveTintColor: palette.inactive,
+        tabBarStyle: {
+          height: 64 + insets.bottom,
+          paddingBottom: insets.bottom + 6,
+          paddingTop: 8,
+          backgroundColor: palette.bg,
+          borderTopWidth: 0,
+          borderTopLeftRadius: 22,
+          borderTopRightRadius: 22,
+          shadowColor: '#081648',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: dark ? 0.35 : 0.08,
+          shadowRadius: 12,
+          elevation: 14,
+        },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+        tabBarItemStyle: { paddingTop: 2 },
         headerLeft: () => <DrawerMenuButton />,
         ...HEADER,
       }}
     >
       {isAdmin && (
         <Tab.Screen name="Caisse" component={CaisseScreen}
-          options={{ title: 'Caisse', tabBarIcon: ({ color, size }) => <Ionicons name="cash-outline" color={color} size={size} /> }} />
+          options={{ title: 'Caisse', tabBarIcon: ({ color, size, focused }) => <TabIcon name="cash-outline" color={color} size={size} focused={focused} dark={dark} /> }} />
       )}
-      <Tab.Screen name="Ventes" component={HistoriqueVentesScreen}
-        options={{ title: 'Ventes', tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" color={color} size={size} /> }} />
       <Tab.Screen name="Produits" component={ProduitsScreen}
-        options={{ title: 'Produits', tabBarIcon: ({ color, size }) => <Ionicons name="cube-outline" color={color} size={size} /> }} />
+        options={{ title: 'Produits', tabBarIcon: ({ color, size, focused }) => <TabIcon name="cube-outline" color={color} size={size} focused={focused} dark={dark} /> }} />
+      <Tab.Screen name="VenteFAB" component={ProduitsScreen}
+        options={{
+          tabBarButton: (props) => <TabFabButton onPress={props.onPress} />,
+        }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.getParent()?.navigate('Vente');
+          },
+        })}
+      />
+      {/* Ventes et Rapports ne sont plus des boutons visibles de la barre — alignement sur
+          la tab bar Ionic (tabs.page.html), qui n'a que 4 vrais onglets : Caisse, Produits,
+          Ventes, Inventaire (+ FAB Vente). Rapports y est uniquement dans le menu latéral
+          (ion-menu → section Analyses), pas dans la tab bar. Les deux restent des onglets
+          enregistrés et accessibles depuis le tiroir latéral (DrawerContent), donc pas de
+          lien cassé : tabBarButton:null les cache juste visuellement de la barre du bas. */}
+      <Tab.Screen name="Ventes" component={HistoriqueVentesScreen}
+        options={{ title: 'Ventes', tabBarButton: () => null }} />
       <Tab.Screen name="Inventaire" component={InventaireScreen}
-        options={{ title: 'Inventaire', tabBarIcon: ({ color, size }) => <Ionicons name="clipboard-outline" color={color} size={size} /> }} />
+        options={{ title: 'Inventaire', tabBarIcon: ({ color, size, focused }) => <TabIcon name="clipboard-outline" color={color} size={size} focused={focused} dark={dark} /> }} />
       {isAdmin && (
         <Tab.Screen name="Rapports" component={RapportsScreen}
-          options={{ title: 'Rapports', tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart-outline" color={color} size={size} /> }} />
+          options={{ title: 'Rapports', tabBarButton: () => null }} />
       )}
     </Tab.Navigator>
   );
@@ -181,12 +291,16 @@ function MainStack({ onLogout, onChangeBoutique, isAdmin, user }: { onLogout: ()
       <Stack.Screen name="DettesAnciennes"    component={DettesAnciennesScreen}       options={{ title: 'Dettes anciennes' }} />
       <Stack.Screen name="Comptes"            component={ComptesScreen}               options={{ title: 'Comptes bancaires' }} />
       <Stack.Screen name="ObjectifsFournisseur" component={ObjectifsFournisseurScreen} options={{ title: 'Objectifs fournisseurs' }} />
+      <Stack.Screen name="ObjectifsVendeur" component={ObjectifsVendeurScreen} options={{ title: 'Primes vendeurs' }} />
       <Stack.Screen name="Vendeurs"           component={VendeursScreen}              options={{ title: 'Vendeurs' }} />
       <Stack.Screen name="HistoriqueVendeur"  component={HistoriqueVendeurScreen}     options={{ title: 'Historique vendeur' }} />
       <Stack.Screen name="AnnulationPaiements" component={AnnulationPaiementsScreen}  options={{ title: 'Annulation paiements' }} />
       <Stack.Screen name="Sorties"             component={SortiesScreen}              options={{ title: 'Sorties stock' }} />
       <Stack.Screen name="IA"                  component={IAScreen}                   options={{ title: 'IA Boutique' }} />
       <Stack.Screen name="Parametres"          component={ParametresScreen}           options={{ title: 'Paramètres' }} />
+      <Stack.Screen name="ExportDonnees"       component={ExportDonneesScreen}         options={{ title: 'Export de données' }} />
+      <Stack.Screen name="JournalAudit"        component={JournalAuditScreen}          options={{ title: "Journal d'audit" }} />
+      <Stack.Screen name="Sauvegardes"         component={SauvegardesScreen}           options={{ title: 'Sauvegardes' }} />
     </Stack.Navigator>
   );
 }

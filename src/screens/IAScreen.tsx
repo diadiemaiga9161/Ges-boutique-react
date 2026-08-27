@@ -722,7 +722,7 @@ const styles = StyleSheet.create({
   // ── Card generique ────────────────────────────────────────────────────────
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     marginBottom: 14,
     ...CARD_SHADOW,
@@ -755,7 +755,7 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 14,
     width: (SW - 42) / 2,
     alignItems: 'center',

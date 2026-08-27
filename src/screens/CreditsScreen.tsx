@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
   TextInput, Alert, ScrollView, Modal
@@ -12,6 +12,7 @@ import { buildRecuReglementCreditHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
+import { MontantInput } from '../components/MontantInput';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CreditInfo {
@@ -96,7 +97,7 @@ const MODE_LABELS: Record<Mode, string> = {
 const ITEMS_PAR_PAGE = 10;
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
-const money = (v: number) => (v ?? 0).toLocaleString('fr-FR') + ' FCFA';
+const money = (v: number) => (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 
 // ─── Composant principal ──────────────────────────────────────────────────────
@@ -140,7 +141,7 @@ export default function CreditsScreen() {
   const [selectedCredit, setSelectedCredit] = useState<CreditInfo | null>(null);
   const [simpleVente, setSimpleVente] = useState<VenteDetail | null>(null);
   const [loadingVente, setLoadingVente] = useState(false);
-  const [simpleMontant, setSimpleMontant] = useState('');
+  const [simpleMontant, setSimpleMontant] = useState(0);
   const [simpleMode, setSimpleMode] = useState<Mode>('ESPECES');
   const [simpleRef, setSimpleRef] = useState('');
   const [savingSimple, setSavingSimple] = useState(false);
@@ -149,7 +150,7 @@ export default function CreditsScreen() {
   const [showGroupe, setShowGroupe] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ClientGroup | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [groupeMontant, setGroupeMontant] = useState('');
+  const [groupeMontant, setGroupeMontant] = useState(0);
   const [groupeMode, setGroupeMode] = useState<Mode>('ESPECES');
   const [groupeRef, setGroupeRef] = useState('');
   const [savingGroupe, setSavingGroupe] = useState(false);
@@ -666,7 +667,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
   const openSimple = (credit: CreditInfo) => {
     if (credit.estReglee) return;
     setSelectedCredit(credit);
-    setSimpleMontant(String(credit.montantRestant));
+    setSimpleMontant(credit.montantRestant);
     setSimpleMode('ESPECES');
     setSimpleRef('');
     setSimpleVente(null);
@@ -676,7 +677,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
 
   const saveSimple = async () => {
     if (!selectedCredit) return;
-    const montant = parseFloat(simpleMontant);
+    const montant = simpleMontant;
     if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
     if (montant > selectedCredit.montantRestant) {
       Alert.alert(tr('erreur', lang), `Montant max : ${money(selectedCredit.montantRestant)}`); return;
@@ -730,7 +731,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
     setSelectedGroup(group);
     setSelectedIds(new Set(group.credits.filter(c => !c.estReglee).map(c => c.venteId)));
     const total = group.credits.filter(c => !c.estReglee).reduce((s, c) => s + c.montantRestant, 0);
-    setGroupeMontant(String(total));
+    setGroupeMontant(total);
     setGroupeMode('ESPECES');
     setGroupeRef('');
     setShowGroupe(true);
@@ -743,7 +744,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
       const total = (selectedGroup?.credits || [])
         .filter(c => !c.estReglee && next.has(c.venteId))
         .reduce((s, c) => s + c.montantRestant, 0);
-      setGroupeMontant(String(total));
+      setGroupeMontant(total);
       return next;
     });
   };
@@ -755,7 +756,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
   const saveGroupe = async () => {
     const creditsSelec = (selectedGroup?.credits || []).filter(c => !c.estReglee && selectedIds.has(c.venteId));
     if (!creditsSelec.length) { Alert.alert(tr('erreur', lang), 'Sélectionnez au moins un crédit'); return; }
-    const montant = parseFloat(groupeMontant);
+    const montant = groupeMontant;
     if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
 
     Alert.alert(
@@ -858,7 +859,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
             </View>
             {montantTotalApporteGroupe && (
               <Text style={s.groupeBannerSub}>
-                Montant total apporté : {Number(montantTotalApporteGroupe.replace(/\s/g, '')).toLocaleString('fr-FR')} FCFA
+                Montant total apporté : {Number(montantTotalApporteGroupe.replace(/\s/g, '')).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
               </Text>
             )}
           </View>
@@ -1009,12 +1010,6 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         </View>
       </View>
 
-      {fromCache && (
-        <View style={s.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={s.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* Onglets statut + bouton PDF */}
       <View style={[s.statutTabs, { justifyContent: 'space-between' }]}>
@@ -1031,7 +1026,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
               <MaterialCommunityIcons
                 name={icons[s2] as any}
                 size={14}
-                color={statutFilter === s2 ? '#9c27b0' : '#999'}
+                color={statutFilter === s2 ? '#1a56db' : '#999'}
               />
               <Text style={[s.stabText, statutFilter === s2 && s.stabTextActive]}>{labels[s2]}</Text>
             </TouchableOpacity>
@@ -1075,7 +1070,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
       {/* Filtre par plage de dates */}
       <View style={s.dateFilterRow}>
         <View style={s.dateInputWrap}>
-          <MaterialCommunityIcons name="calendar-start" size={14} color="#9c27b0" />
+          <MaterialCommunityIcons name="calendar-start" size={14} color="#1a56db" />
           <TextInput
             style={s.dateInput}
             value={dateDebut}
@@ -1086,7 +1081,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
         </View>
         <Text style={s.dateSep}>→</Text>
         <View style={s.dateInputWrap}>
-          <MaterialCommunityIcons name="calendar-end" size={14} color="#9c27b0" />
+          <MaterialCommunityIcons name="calendar-end" size={14} color="#1a56db" />
           <TextInput
             style={s.dateInput}
             value={dateFin}
@@ -1189,7 +1184,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                 </Text>
                 {g.totalRestant > 0 && (
                   <TouchableOpacity style={s.groupeBtn} onPress={() => openGroupe(g)}>
-                    <MaterialCommunityIcons name="account-group" size={13} color="#9c27b0" />
+                    <MaterialCommunityIcons name="account-group" size={13} color="#1a56db" />
                     <Text style={s.groupeBtnText}>Groupé</Text>
                   </TouchableOpacity>
                 )}
@@ -1269,7 +1264,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                 {/* Actions */}
                 <View style={s.creditBtns}>
                   <TouchableOpacity style={s.detailBtn} onPress={() => openDetail(credit)}>
-                    <MaterialCommunityIcons name="eye-outline" size={14} color="#9c27b0" />
+                    <MaterialCommunityIcons name="eye-outline" size={14} color="#1a56db" />
                     <Text style={s.detailBtnText}>Voir</Text>
                   </TouchableOpacity>
                   {!credit.estReglee && (
@@ -1309,7 +1304,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                 onPress={() => setPageActuelle(p => Math.max(1, p - 1))}
                 disabled={pageActuelle === 1}
               >
-                <MaterialCommunityIcons name="chevron-left" size={18} color={pageActuelle === 1 ? '#ccc' : '#9c27b0'} />
+                <MaterialCommunityIcons name="chevron-left" size={18} color={pageActuelle === 1 ? '#ccc' : '#1a56db'} />
                 <Text style={[s.pageBtnText, pageActuelle === 1 && { color: '#ccc' }]}>Précédent</Text>
               </TouchableOpacity>
               <Text style={s.pageInfo}>Page {pageActuelle}/{totalPages}</Text>
@@ -1319,7 +1314,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                 disabled={pageActuelle === totalPages}
               >
                 <Text style={[s.pageBtnText, pageActuelle === totalPages && { color: '#ccc' }]}>Suivant</Text>
-                <MaterialCommunityIcons name="chevron-right" size={18} color={pageActuelle === totalPages ? '#ccc' : '#9c27b0'} />
+                <MaterialCommunityIcons name="chevron-right" size={18} color={pageActuelle === totalPages ? '#ccc' : '#1a56db'} />
               </TouchableOpacity>
             </View>
           ) : null
@@ -1452,7 +1447,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                   <Text style={{ color: '#78350f', fontSize: 12, marginTop: 2 }}>
                     {pg.date ? new Date(pg.date).toLocaleDateString('fr-FR') : '—'}
                     {'  ·  Apporté : '}
-                    {(pg.montantTotalApporte ?? 0).toLocaleString('fr-FR')} FCFA
+                    {(pg.montantTotalApporte ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                   </Text>
                   <Text style={{ color: '#92400e', fontSize: 11, marginTop: 2 }}>
                     {pg.ventesImpliquees?.length || 0} crédit(s)
@@ -1477,11 +1472,11 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                           {v.numeroVente || `Crédit #${v.venteCreditId}`}
                         </Text>
                         <Text style={{ fontWeight: '700', fontSize: 14, color: '#1e293b', marginTop: 4 }}>
-                          {(v.montantApplique ?? 0).toLocaleString('fr-FR')} FCFA
+                          {(v.montantApplique ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                         </Text>
                         {v.resteARegler > 0 && (
                           <Text style={{ color: '#6b7280', fontSize: 11 }}>
-                            Reste : {v.resteARegler.toLocaleString('fr-FR')} FCFA
+                            Reste : {v.resteARegler.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                           </Text>
                         )}
                       </View>
@@ -1496,7 +1491,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, marginTop: 4, borderTopWidth: 1, borderTopColor: '#fde68a' }}>
                     <Text style={{ color: '#78350f', fontSize: 12 }}>Total apporté</Text>
                     <Text style={{ fontWeight: '800', color: '#b45309', fontSize: 14 }}>
-                      {(pg.montantTotalApporte ?? 0).toLocaleString('fr-FR')} FCFA
+                      {(pg.montantTotalApporte ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                     </Text>
                   </View>
                 </View>
@@ -1616,11 +1611,10 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
 
                   <Text style={s.sectionTitle}>Règlement</Text>
                   <Text style={s.fieldLabel}>{tr('montant_payer', lang)}</Text>
-                  <TextInput
+                  <MontantInput
                     style={s.fieldInput}
                     value={simpleMontant}
-                    onChangeText={setSimpleMontant}
-                    keyboardType="numeric"
+                    onChangeValue={setSimpleMontant}
                     placeholder={`Max : ${money(selectedCredit.montantRestant)}`}
                   />
                   <Text style={s.fieldLabel}>Mode de paiement</Text>
@@ -1676,7 +1670,7 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
                     ) : (
                       <MaterialCommunityIcons
                         name={selectedIds.has(c.venteId) ? 'checkbox-outline' : 'checkbox-blank-outline'}
-                        size={20} color={selectedIds.has(c.venteId) ? '#9c27b0' : '#bbb'}
+                        size={20} color={selectedIds.has(c.venteId) ? '#1a56db' : '#bbb'}
                       />
                     )}
                     <View style={{ flex: 1, marginLeft: 10 }}>
@@ -1700,8 +1694,8 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
               </View>
 
               <Text style={s.fieldLabel}>Montant total à régler</Text>
-              <TextInput style={s.fieldInput} value={groupeMontant} onChangeText={setGroupeMontant} keyboardType="numeric" />
-              {parseFloat(groupeMontant) < groupeTotal() && (
+              <MontantInput style={s.fieldInput} value={groupeMontant} onChangeValue={setGroupeMontant} />
+              {groupeMontant < groupeTotal() && (
                 <Text style={s.hint}>Montant partiel — distribué proportionnellement</Text>
               )}
               <Text style={s.fieldLabel}>Mode de paiement</Text>
@@ -1737,11 +1731,16 @@ td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
+// STYLE (2026-08-16) : accent violet (#9c27b0) remplacé par le bleu app
+// (#1a56db, même que Ionic credits.page.scss et le reste de Ges Boutique)
+// — l'écran Crédits était le seul à sortir de l'identité visuelle bleu/blanc
+// (voir skill design-premium), sur 32 usages (hero, onglets, avatars, badges,
+// boutons, icônes).
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
 
   // Hero
-  hero: { backgroundColor: '#9c27b0', flexDirection: 'row', padding: 14, alignItems: 'center' },
+  hero: { backgroundColor: '#1a56db', flexDirection: 'row', padding: 14, alignItems: 'center' },
   heroStat: { flex: 1, alignItems: 'center' },
   heroLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 10, marginBottom: 2 },
   heroVal: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
@@ -1750,9 +1749,9 @@ const s = StyleSheet.create({
   // Onglets statut
   statutTabs: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   stab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  stabActive: { borderBottomColor: '#9c27b0' },
+  stabActive: { borderBottomColor: '#1a56db' },
   stabText: { fontSize: 12, color: '#999', fontWeight: '600' },
-  stabTextActive: { color: '#9c27b0' },
+  stabTextActive: { color: '#1a56db' },
 
   // Filtres
   filters: { flexDirection: 'row', padding: 10, gap: 8, alignItems: 'center', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
@@ -1764,16 +1763,16 @@ const s = StyleSheet.create({
 
   // Filtre dates
   dateFilterRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 6 },
-  dateInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingHorizontal: 8, height: 36, borderWidth: 1, borderColor: '#e8d5f5' },
+  dateInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingHorizontal: 8, height: 36, borderWidth: 1, borderColor: '#bfdbfe' },
   dateInput: { flex: 1, marginLeft: 4, fontSize: 12, color: '#333' },
-  dateSep: { color: '#9c27b0', fontWeight: '700', fontSize: 14 },
+  dateSep: { color: '#1a56db', fontWeight: '700', fontSize: 14 },
   dateClearBtn: { padding: 4 },
 
   // Chips clients
   clientChipsWrap: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   clientChipsContent: { paddingHorizontal: 10, paddingVertical: 8, gap: 6 },
   clientChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
-  clientChipActive: { backgroundColor: '#9c27b0', borderColor: '#9c27b0' },
+  clientChipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
   clientChipText: { fontSize: 12, color: '#555', maxWidth: 100 },
   clientChipTextActive: { color: '#fff', fontWeight: '700' },
 
@@ -1783,16 +1782,18 @@ const s = StyleSheet.create({
 
   // Pagination
   paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 4, marginBottom: 8 },
-  pageBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#e0d0f0', backgroundColor: '#fff', gap: 2 },
+  pageBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#bfdbfe', backgroundColor: '#fff', gap: 2 },
   pageBtnDisabled: { borderColor: '#eee', backgroundColor: '#fafafa' },
-  pageBtnText: { fontSize: 13, color: '#9c27b0', fontWeight: '600' },
+  pageBtnText: { fontSize: 13, color: '#1a56db', fontWeight: '600' },
   pageInfo: { fontSize: 13, color: '#555', fontWeight: '600' },
 
   // Groupe client
-  groupCard: { backgroundColor: '#fff', borderRadius: 14, marginBottom: 12, overflow: 'hidden', elevation: 2 },
+  // (pas de shadowColor/Opacity ici : overflow:'hidden' + border radius suffit
+  // au clip du contenu, et masquerait de toute façon l'ombre iOS)
+  groupCard: { backgroundColor: '#fff', borderRadius: 18, marginBottom: 12, overflow: 'hidden', elevation: 3 },
   groupCardRetard: { borderLeftWidth: 3, borderLeftColor: '#f44336' },
   groupHeader: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#9c27b0', alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center' },
   avatarRetard: { backgroundColor: '#f44336' },
   avatarRegle: { backgroundColor: '#4caf50' },
   avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
@@ -1800,13 +1801,13 @@ const s = StyleSheet.create({
   clientPrenom: { fontWeight: '400', color: '#555' } as any,
   clientTel: { color: '#888', fontSize: 12, marginTop: 2 },
   badges: { flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' },
-  badge: { backgroundColor: '#f3e5f5', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  badge: { backgroundColor: '#eff6ff', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
   badgeRetard: { backgroundColor: '#f44336', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, flexDirection: 'row', alignItems: 'center' },
   badgeRegle: { backgroundColor: '#e8f5e9', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, flexDirection: 'row', alignItems: 'center' },
-  badgeText: { fontSize: 11, color: '#9c27b0' },
-  groupTotal: { fontWeight: 'bold', fontSize: 15, color: '#9c27b0' },
-  groupeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, backgroundColor: '#f3e5f5', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  groupeBtnText: { fontSize: 11, color: '#9c27b0', fontWeight: '600' },
+  badgeText: { fontSize: 11, color: '#1a56db' },
+  groupTotal: { fontWeight: 'bold', fontSize: 15, color: '#1a56db' },
+  groupeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, backgroundColor: '#eff6ff', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  groupeBtnText: { fontSize: 11, color: '#1a56db', fontWeight: '600' },
 
   // Crédit item
   creditItem: { borderTopWidth: 1, borderTopColor: '#f5f5f5', padding: 12 },
@@ -1814,7 +1815,7 @@ const s = StyleSheet.create({
   creditTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
   creditNum: { fontWeight: '600', color: '#333', fontSize: 13 },
   creditDate: { color: '#999', fontSize: 11, marginTop: 2 },
-  creditMontant: { fontWeight: 'bold', color: '#9c27b0', fontSize: 14 },
+  creditMontant: { fontWeight: 'bold', color: '#1a56db', fontSize: 14 },
   statusBadge: { backgroundColor: '#e3f2fd', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2, marginTop: 3 },
   statusBadgeRetard: { backgroundColor: '#ffebee' },
   statusBadgeRegle: { backgroundColor: '#e8f5e9' },
@@ -1825,17 +1826,17 @@ const s = StyleSheet.create({
   // Barre progression
   progressWrap: { marginTop: 6, marginBottom: 8 },
   progressBg: { height: 6, backgroundColor: '#f0f0f0', borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: 6, backgroundColor: '#9c27b0', borderRadius: 3 },
+  progressFill: { height: 6, backgroundColor: '#1a56db', borderRadius: 3 },
   progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 },
   progressText: { fontSize: 10, color: '#aaa' },
 
   // Boutons crédit
   creditBtns: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
-  detailBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#9c27b0', borderRadius: 8, paddingVertical: 7 },
-  detailBtnText: { color: '#9c27b0', fontSize: 13, fontWeight: '600' },
-  payBtn: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#9c27b0', borderRadius: 8, paddingVertical: 7 },
+  detailBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#1a56db', borderRadius: 10, paddingVertical: 7 },
+  detailBtnText: { color: '#1a56db', fontSize: 13, fontWeight: '600' },
+  payBtn: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#1a56db', borderRadius: 10, paddingVertical: 7 },
   payBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  recuBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#e8f5e9', borderRadius: 8, paddingVertical: 7, paddingHorizontal: 10 },
+  recuBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#e8f5e9', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
   recuBtnText: { color: '#2e7d32', fontSize: 12, fontWeight: '600' },
 
   // Statut badge modal
@@ -1852,7 +1853,7 @@ const s = StyleSheet.create({
 
   // Modal commun
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   modalTitle: { fontWeight: 'bold', fontSize: 16, color: '#1a1a1a', flex: 1, marginRight: 8 },
@@ -1860,17 +1861,17 @@ const s = StyleSheet.create({
   modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
 
   // Info card
-  infoCard: { backgroundColor: '#fafafa', borderRadius: 12, padding: 12, marginBottom: 14 },
+  infoCard: { backgroundColor: '#fafafa', borderRadius: 14, padding: 12, marginBottom: 14 },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
   infoLabel: { color: '#888', fontSize: 13 },
   infoVal: { color: '#333', fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },
 
   // Lignes produits
-  sectionTitle: { fontWeight: 'bold', color: '#9c27b0', marginBottom: 8, marginTop: 4, fontSize: 13 },
+  sectionTitle: { fontWeight: 'bold', color: '#1a56db', marginBottom: 8, marginTop: 4, fontSize: 13 },
   ligneRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
   ligneName: { flex: 1, color: '#333', fontSize: 13 },
   ligneQty: { color: '#888', fontSize: 12, marginHorizontal: 8 },
-  lignePrice: { color: '#9c27b0', fontWeight: '600', fontSize: 13 },
+  lignePrice: { color: '#1a56db', fontWeight: '600', fontSize: 13 },
 
   // Versements
   versRow: { paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
@@ -1909,24 +1910,24 @@ const s = StyleSheet.create({
 
   // Formulaire
   fieldLabel: { color: '#666', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
-  fieldInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa' },
+  fieldInput: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
-  chipActive: { backgroundColor: '#9c27b0', borderColor: '#9c27b0' },
+  chipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
   chipText: { fontSize: 13, color: '#555' },
   chipTextActive: { color: '#fff', fontWeight: '600' },
   hint: { color: '#999', fontSize: 12, fontStyle: 'italic', marginTop: 6 },
 
   // Groupé (modal règlement groupé)
   groupeItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, marginBottom: 6, backgroundColor: '#fafafa', borderWidth: 1, borderColor: '#eee' },
-  groupeItemSelected: { borderColor: '#9c27b0', backgroundColor: '#f3e5f5' },
+  groupeItemSelected: { borderColor: '#1a56db', backgroundColor: '#eff6ff' },
   groupeItemRegle: { opacity: 0.65, backgroundColor: '#f1f8e9', borderColor: '#c8e6c9' },
   groupeItemNum: { fontWeight: '600', color: '#333', fontSize: 13 },
   groupeItemDate: { color: '#999', fontSize: 11, marginTop: 2 },
-  groupeItemMontant: { fontWeight: 'bold', color: '#9c27b0', fontSize: 14 },
-  groupeTotal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f3e5f5', borderRadius: 10, padding: 12, marginVertical: 10 },
+  groupeItemMontant: { fontWeight: 'bold', color: '#1a56db', fontSize: 14 },
+  groupeTotal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#eff6ff', borderRadius: 10, padding: 12, marginVertical: 10 },
   groupeTotalLabel: { color: '#666', fontSize: 13 },
-  groupeTotalVal: { fontWeight: 'bold', color: '#9c27b0', fontSize: 16 },
+  groupeTotalVal: { fontWeight: 'bold', color: '#1a56db', fontSize: 16 },
 
   // Filtres onglet paiements groupés
   groupeFiltresBox: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a', elevation: 1 },
@@ -1940,11 +1941,14 @@ const s = StyleSheet.create({
   groupeClearBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#fca5a5', backgroundColor: '#fff5f5' },
 
   // Boutons footer modal
-  btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
   btnCancelText: { color: '#666', fontWeight: '600' },
-  btnConfirm: { flex: 2, backgroundColor: '#9c27b0', borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
+  btnConfirm: {
+    flex: 2, backgroundColor: '#1a56db', borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
+  },
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  btnPdf: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#0f766e', borderRadius: 10 },
+  btnPdf: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#0f766e', borderRadius: 12 },
   btnPdfText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
   offlineTxt: { color: '#92400e', fontSize: 12 },

@@ -1,26 +1,27 @@
-import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
+﻿import React, { useEffect, useState, useCallback, useLayoutEffect, useRef } from 'react';
 import {
   View, ScrollView, FlatList, StyleSheet, Alert, Modal,
   TouchableOpacity, KeyboardAvoidingView, Platform, RefreshControl, TextInput as RNTextInput,
 } from 'react-native';
-import { Text, ActivityIndicator, Card, Checkbox } from 'react-native-paper';
+import { Text, ActivityIndicator, Card } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import {
   getCreditsNonRegles, getCreditsRegles, getCreditsEnRetard,
   getCaisseEtat, ouvrirCaisse, fermerCaisse,
   getOperationsJour, getOperationsParPeriode, ajouterEntreeCaisse, ajouterSortieCaisse,
-  reglerCreditCaisse, getStatsCaisseJour, getHistoriqueReglementsCredit,
-  getComptes, transfererVersBanque,
+  getStatsCaisseJour, getStatsCaisseParPeriode, getHistoriqueReglementsCredit,
+  getComptes, transfererVersBanque, getReconciliationVendeurs,
 } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
+import { MontantInput } from '../components/MontantInput';
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
-const money = (v: number) => (v || 0).toLocaleString('fr-FR') + ' FCFA';
+const money = (v: number) => (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
 
 const toLocalDate = (d: Date) => {
   const y = d.getFullYear();
@@ -31,9 +32,11 @@ const toLocalDate = (d: Date) => {
 
 const dateStr = (d?: string) => (d ? new Date(d).toLocaleDateString('fr-FR') : '—');
 const dateHeure = (d?: string) => (d ? new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+const estAujourdhui = (d: Date) => toLocalDate(d) === toLocalDate(new Date());
+const dateLongue = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Onglet = 'etat' | 'credits' | 'operations' | 'stats';
+type Onglet = 'etat' | 'credits' | 'operations' | 'stats' | 'reconciliation';
 type FiltreCredit = 'EN_COURS' | 'REGLES' | 'EN_RETARD';
 type FiltrePeriode = 'AUJOURD_HUI' | 'SEMAINE' | 'MOIS' | 'ANNEE';
 type TypeOp = 'ENTREE' | 'SORTIE';
@@ -128,10 +131,17 @@ export default function CaisseScreen() {
 
   const [etatCaisse, setEtatCaisse] = useState<any>(null);
   const [statsJour, setStatsJour] = useState<any>(null);
+  // Bénéfice/perte du dernier mois clôturé — même endpoint et même calcul que
+  // la page Caisse Ionic (getStatistiquesParPeriode sur le mois précédent
+  // complet), pour afficher la même carte "Bénéfice net du mois" sur les 2
+  // plateformes plutôt qu'un simple Entrées/Sorties du jour redondant avec
+  // la carte "Caisse du jour" juste à côté.
+  const [statsMois, setStatsMois] = useState<any>(null);
+  const [moisAffiche, setMoisAffiche] = useState<Date>(new Date());
 
   // --- Nouvelle opération (inline, onglet État) ---
   const [opType, setOpType] = useState<TypeOp>('ENTREE');
-  const [opMontant, setOpMontant] = useState('');
+  const [opMontant, setOpMontant] = useState(0);
   const [opMotif, setOpMotif] = useState('');
   const [opMode, setOpMode] = useState<ModeOperation>('ESPECES');
   const [opRef, setOpRef] = useState('');
@@ -144,25 +154,17 @@ export default function CaisseScreen() {
   const [loadingCredits, setLoadingCredits] = useState(false);
   const [refreshingCredits, setRefreshingCredits] = useState(false);
 
-  // Règlement inline (onglet Crédits)
-  const [reglVenteCreditId, setReglVenteCreditId] = useState<number>(0);
-  const [reglMontant, setReglMontant] = useState('');
-  const [reglMode, setReglMode] = useState<ModeReglement>('ESPECES');
-  const [reglRef, setReglRef] = useState('');
-  const [savingRegl, setSavingRegl] = useState(false);
+  // Le règlement de crédit ne se fait plus depuis la Caisse (uniquement depuis la page
+  // dédiée "Crédits") : la Caisse affiche seulement la liste en lecture seule — groupée
+  // par client pour les crédits en cours — pour ne pas avoir deux endroits différents
+  // où encaisser un même crédit.
+  const [selectedClientNom, setSelectedClientNom] = useState<string | null>(null);
 
   // Modal détail crédit (historique versements)
   const [showDetailCredit, setShowDetailCredit] = useState(false);
   const [selectedCredit, setSelectedCredit] = useState<CreditInfo | null>(null);
   const [versements, setVersements] = useState<Operation[]>([]);
   const [loadingVersements, setLoadingVersements] = useState(false);
-
-  // Règlement par groupe
-  const [selectedGroup, setSelectedGroup] = useState<Set<number>>(new Set());
-  const [showGroupModal, setShowGroupModal] = useState(false);
-  const [groupMode, setGroupMode] = useState<ModeReglement>('ESPECES');
-  const [groupRef, setGroupRef] = useState('');
-  const [savingGroup, setSavingGroup] = useState(false);
 
   // --- Opérations ---
   const [operations, setOperations] = useState<Operation[]>([]);
@@ -179,10 +181,15 @@ export default function CaisseScreen() {
   const [showTransfert, setShowTransfert] = useState(false);
   const [comptes, setComptes] = useState<any[]>([]);
   const [transfertCompteId, setTransfertCompteId] = useState<number | null>(null);
-  const [transfertMontant, setTransfertMontant] = useState('');
+  const [transfertMontant, setTransfertMontant] = useState(0);
   const [transfertMotif, setTransfertMotif] = useState('');
   const [transfertRef, setTransfertRef] = useState('');
   const [savingTransfert, setSavingTransfert] = useState(false);
+
+  // --- Réconciliation caisse par vendeur (onglet dédié, lecture seule) ---
+  const [dateReconciliation, setDateReconciliation] = useState<Date>(new Date());
+  const [reconciliationVendeurs, setReconciliationVendeurs] = useState<any[]>([]);
+  const [loadingReconciliation, setLoadingReconciliation] = useState(false);
 
   // --- Picker générique ---
   const [picker, setPicker] = useState<PickerConfig>(EMPTY_PICKER);
@@ -204,34 +211,64 @@ export default function CaisseScreen() {
     });
   }, [navigation, etatCaisse]);
 
+  // ─── Refs toujours à jour ───────────────────────────────────────────────
+  // chargerTout/chargerOperations sont appelées depuis useFocusEffect (voir plus
+  // bas), qui — pour ne pas se redéclencher à chaque frappe dans un champ de
+  // recherche ou à chaque changement de filtre — garde un callback figé au
+  // montage. On lit donc l'état courant via ces refs plutôt que par fermeture
+  // directe sur filtreCredit/opSearch/opTypeFilter/filtrePeriode, pour éviter
+  // qu'un retour sur l'écran n'écrase la vue actuelle avec des données d'un
+  // autre filtre (ex: écraser "Réglés" avec les crédits "En cours").
+  const filtreCreditRef = useRef(filtreCredit);
+  useEffect(() => { filtreCreditRef.current = filtreCredit; }, [filtreCredit]);
+  const opSearchRef = useRef(opSearch);
+  useEffect(() => { opSearchRef.current = opSearch; }, [opSearch]);
+  const opTypeFilterRef = useRef(opTypeFilter);
+  useEffect(() => { opTypeFilterRef.current = opTypeFilter; }, [opTypeFilter]);
+  const filtrePeriodeRef = useRef(filtrePeriode);
+  useEffect(() => { filtrePeriodeRef.current = filtrePeriode; }, [filtrePeriode]);
+
   // ─── Chargement initial (comme load() d'Ionic : tout en une fois) ─────────
   const chargerTout = useCallback(async () => {
+    // Mois précédent COMPLET (mois clôturé), même calcul que loadStatsMois()
+    // d'Ionic — pas le mois en cours (encore partiel, non comparable).
+    const aujourdhui = new Date();
+    const finMoisPrecedent = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth(), 0);
+    const debutMoisPrecedent = new Date(finMoisPrecedent.getFullYear(), finMoisPrecedent.getMonth(), 1);
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
+
     try {
-      const [resEtat, resStats, resCredits, resRetard] = await Promise.all([
+      const [resEtat, resStats, resCredits, resRetard, resStatsMois] = await Promise.all([
         getCaisseEtat().catch(() => ({ data: null })),
         getStatsCaisseJour().catch(() => ({ data: null })),
         getCreditsNonRegles().catch(() => ({ data: [] })),
         getCreditsEnRetard().catch(() => ({ data: [] })),
+        getStatsCaisseParPeriode(fmt(debutMoisPrecedent), fmt(finMoisPrecedent)).catch(() => ({ data: null })),
       ]);
       const etat = resEtat.data?.caisse || resEtat.data?.data || resEtat.data;
       const stats = resStats.data?.statistiques || resStats.data?.data || resStats.data;
       const rawCredits = resCredits.data?.data || resCredits.data?.credits || resCredits.data || [];
       const rawRetard = resRetard.data?.data || resRetard.data?.creditsEnRetard || resRetard.data || [];
+      const statsMoisData = resStatsMois.data?.statistiques || resStatsMois.data?.data || resStatsMois.data;
       setEtatCaisse(etat);
       setStatsJour(stats);
-      if (filtreCredit === 'EN_COURS') {
+      setStatsMois(statsMoisData || null);
+      setMoisAffiche(finMoisPrecedent);
+      if (filtreCreditRef.current === 'EN_COURS') {
         setCredits(Array.isArray(rawCredits) ? rawCredits.filter((c: any) => !c.venteAnnulee) : []);
       }
       setCreditsEnRetard(Array.isArray(rawRetard) ? rawRetard.filter((c: any) => !c.venteAnnulee) : []);
       setFromCache(false);
-      sauvegarderCache('caisse_tout', { etat, stats, credits: rawCredits, retard: rawRetard }).catch(() => {});
+      sauvegarderCache('caisse_tout', { etat, stats, credits: rawCredits, retard: rawRetard, statsMois: statsMoisData }).catch(() => {});
     } catch {
       const cached = await lireCache<any>('caisse_tout');
       if (cached.length > 0) {
         const c = cached[0] as any;
         setEtatCaisse(c.etat || null);
         setStatsJour(c.stats || null);
-        if (filtreCredit === 'EN_COURS') setCredits(c.credits || []);
+        setStatsMois(c.statsMois || null);
+        setMoisAffiche(finMoisPrecedent);
+        if (filtreCreditRef.current === 'EN_COURS') setCredits(c.credits || []);
         setCreditsEnRetard(c.retard || []);
         setFromCache(true);
       } else {
@@ -240,11 +277,6 @@ export default function CaisseScreen() {
     }
     setLoadingInitial(false);
     setRefreshing(false);
-  }, [filtreCredit]);
-
-  useEffect(() => {
-    chargerTout();
-    chargerOperations('AUJOURD_HUI');
   }, []);
 
   // ─── Chargement crédits (changement de filtre) ────────────────────────────
@@ -293,11 +325,48 @@ export default function CaisseScreen() {
       const raw = res.data?.data || res.data?.operations || res.data || [];
       const liste = Array.isArray(raw) ? raw : [];
       setOperations(liste);
-      appliquerFiltresOp(liste, opSearch, opTypeFilter);
+      appliquerFiltresOp(liste, opSearchRef.current, opTypeFilterRef.current);
     } catch { }
     setLoadingOps(false);
     setRefreshingOps(false);
-  }, [opSearch, opTypeFilter]);
+  }, []);
+
+  // ─── Chargement réconciliation caisse par vendeur (onglet dédié, lecture
+  // seule) — un vendeur par carte : ventes espèces/crédit du jour + règlements
+  // crédit encaissés en espèces + total à remettre en caisse. ────────────────
+  const chargerReconciliation = useCallback(async (date: Date) => {
+    setLoadingReconciliation(true);
+    try {
+      const res = await getReconciliationVendeurs(toLocalDate(date));
+      const raw = res.data?.reconciliation || [];
+      setReconciliationVendeurs(Array.isArray(raw) ? raw : []);
+    } catch {
+      setReconciliationVendeurs([]);
+    }
+    setLoadingReconciliation(false);
+  }, []);
+
+  // BUG FIX (audit fournisseur/caisse/stock) : la Caisse est un écran d'onglet (Tab.Navigator),
+  // jamais démonté quand on navigue ailleurs (ex: annuler un achat/paiement fournisseur depuis
+  // Fournisseurs) — sans useFocusEffect, elle ne se rechargeait qu'au montage initial et
+  // affichait donc un solde/des crédits périmés jusqu'à un pull-to-refresh manuel. chargerTout/
+  // chargerOperations sont désormais des callbacks stables (lisent l'état courant via des refs,
+  // voir plus haut) : on peut les rappeler à chaque focus sans provoquer de rechargement
+  // parasite à chaque frappe dans un champ de recherche ou changement de filtre.
+  useFocusEffect(
+    useCallback(() => {
+      chargerTout();
+      chargerOperations(filtrePeriodeRef.current);
+    }, [chargerTout, chargerOperations])
+  );
+
+  // Onglet Réconciliation : chargement au montage de l'onglet et à chaque
+  // changement de date (pas besoin de refocus, l'utilisateur reste sur l'écran).
+  useEffect(() => {
+    if (onglet === 'reconciliation') {
+      chargerReconciliation(dateReconciliation);
+    }
+  }, [onglet, dateReconciliation, chargerReconciliation]);
 
   const appliquerFiltresOp = (liste: Operation[], search: string, typeFilter: string) => {
     const term = search.trim().toLowerCase();
@@ -321,6 +390,13 @@ export default function CaisseScreen() {
   const switchOnglet = (o: Onglet) => setOnglet(o);
   const changeFiltreCredit = (f: FiltreCredit) => { setFiltreCredit(f); chargerCredits(f); };
   const changeFiltrePeriode = (f: FiltrePeriode) => { setFiltrePeriode(f); chargerOperations(f); };
+  const changerJourReconciliation = (delta: number) => {
+    setDateReconciliation((prev) => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + delta);
+      return d;
+    });
+  };
 
   // ─── PDF crédits ─────────────────────────────────────────────────────────
   const genererPdfCredits = async () => {
@@ -388,114 +464,35 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       .finally(() => setLoadingVersements(false));
   };
 
-  // ─── Règlement inline (comme prepareReglement d'Ionic) ────────────────────
-  const prepareReglement = (credit: CreditInfo) => {
-    setReglVenteCreditId(credit.venteId);
-    setReglMontant(String(credit.montantRestant));
-    setReglMode('ESPECES');
-    setReglRef('');
-  };
+  // ─── Crédits en cours regroupés par client, lecture seule (même principe qu'Angular/Ionic) ──
+  const creditsGroupesParClient = credits.length
+    ? Array.from(
+        credits.reduce((map, c) => {
+          const nom = `${c.clientNom || 'Client'}${c.clientPrenom ? ' ' + c.clientPrenom : ''}`;
+          if (!map.has(nom)) map.set(nom, [] as CreditInfo[]);
+          map.get(nom)!.push(c);
+          return map;
+        }, new Map<string, CreditInfo[]>())
+      )
+        .map(([nom, liste]) => ({
+          nom,
+          count: liste.length,
+          totalTotal: liste.reduce((s, c) => s + (c.montantTotal || 0), 0),
+          totalVerse: liste.reduce((s, c) => s + (c.montantVerse || 0), 0),
+          totalRestant: liste.reduce((s, c) => s + (c.montantRestant || 0), 0),
+          enRetard: liste.some((c) => c.enRetard),
+          credits: liste,
+        }))
+        .sort((a, b) => b.totalRestant - a.totalRestant)
+    : [];
 
-  const creditSelectionne = credits.find((c) => c.venteId === reglVenteCreditId) || null;
-
-  const onCreditPicked = (venteId: number) => {
-    setReglVenteCreditId(venteId);
-    const c = credits.find((x) => x.venteId === venteId);
-    if (c) setReglMontant(String(c.montantRestant));
-  };
-
-  const saveReglement = async () => {
-    if (!reglVenteCreditId) { Alert.alert(tr('erreur', lang), 'Sélectionnez un crédit'); return; }
-    const montant = parseFloat(reglMontant);
-    if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
-    const credit = credits.find((c) => c.venteId === reglVenteCreditId);
-    if (credit && montant > credit.montantRestant) {
-      Alert.alert(tr('erreur', lang), `Montant max : ${money(credit.montantRestant)}`);
-      return;
-    }
-    setSavingRegl(true);
-    try {
-      const raw = await AsyncStorage.getItem('user');
-      const userId = raw ? JSON.parse(raw)?.id : undefined;
-      const payload = {
-        venteCreditId: reglVenteCreditId,
-        montantRegle: montant,
-        modePaiement: reglMode,
-        referencePaiement: reglRef.trim() || undefined,
-        utilisateurId: userId,
-      };
-      const res = await executerOuMettreEnFile('credit_reglement', payload, () => reglerCreditCaisse(payload));
-      setReglVenteCreditId(0);
-      setReglMontant('');
-      setReglRef('');
-      if (!res.offline) { chargerCredits(filtreCredit); chargerTout(); }
-      Alert.alert('OK', res.offline
-        ? 'Règlement sauvegardé — synchronisation au retour connexion'
-        : 'Règlement enregistré ✓'
-      );
-    } catch (e: any) {
-      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Règlement impossible');
-    }
-    setSavingRegl(false);
-  };
-
-  // ─── Règlement par groupe ──────────────────────────────────────────────────
-  const toggleCreditGroup = (venteId: number) => {
-    setSelectedGroup((prev) => {
-      const next = new Set(prev);
-      if (next.has(venteId)) next.delete(venteId); else next.add(venteId);
-      return next;
-    });
-  };
-  const selectAllCredits = () => setSelectedGroup(new Set(credits.map((c) => c.venteId)));
-  const clearSelection = () => setSelectedGroup(new Set());
-  const totalGroupSelected = credits
-    .filter((c) => selectedGroup.has(c.venteId))
-    .reduce((s, c) => s + (c.montantRestant || 0), 0);
-
-  const regleGroupeCredits = async () => {
-    if (selectedGroup.size === 0) { Alert.alert(tr('erreur', lang), 'Sélectionnez au moins un crédit'); return; }
-    setGroupMode('ESPECES');
-    setGroupRef('');
-    setShowGroupModal(true);
-  };
-
-  const confirmerGroupe = async () => {
-    setSavingGroup(true);
-    try {
-      const raw = await AsyncStorage.getItem('user');
-      const userId = raw ? JSON.parse(raw)?.id : undefined;
-      const venteIds = Array.from(selectedGroup);
-      let success = 0, errors = 0;
-      for (const venteId of venteIds) {
-        const credit = credits.find((c) => c.venteId === venteId);
-        if (!credit) { errors++; continue; }
-        try {
-          await reglerCreditCaisse({
-            venteCreditId: credit.venteId,
-            montantRegle: credit.montantRestant,
-            modePaiement: groupMode,
-            referencePaiement: groupRef.trim() || undefined,
-            utilisateurId: userId,
-          });
-          success++;
-        } catch { errors++; }
-      }
-      setSelectedGroup(new Set());
-      setShowGroupModal(false);
-      chargerCredits(filtreCredit);
-      chargerTout();
-      if (success > 0) Alert.alert('OK', `${success} crédit(s) réglé(s) ✓`);
-      if (errors > 0) Alert.alert(tr('erreur', lang), `${errors} erreur(s) — vérifiez les crédits`);
-    } catch {
-      Alert.alert(tr('erreur', lang), 'Règlement groupé impossible');
-    }
-    setSavingGroup(false);
-  };
+  const selectedClientCredits = selectedClientNom
+    ? credits.filter((c) => `${c.clientNom || 'Client'}${c.clientPrenom ? ' ' + c.clientPrenom : ''}` === selectedClientNom)
+    : [];
 
   // ─── Nouvelle opération (inline, onglet État) ─────────────────────────────
   const saveOperation = async () => {
-    const montant = parseFloat(opMontant);
+    const montant = opMontant;
     if (!montant || montant <= 0) { Alert.alert(tr('erreur', lang), 'Montant invalide'); return; }
     if (!opMotif.trim()) { Alert.alert(tr('erreur', lang), 'Motif requis'); return; }
     setSavingOp(true);
@@ -509,7 +506,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       const res = opType === 'ENTREE'
         ? await executerOuMettreEnFile('caisse_entree', data, () => ajouterEntreeCaisse(data))
         : await executerOuMettreEnFile('caisse_sortie', data, () => ajouterSortieCaisse(data));
-      setOpMontant('');
+      setOpMontant(0);
       setOpMotif('');
       setOpRef('');
       if (!res.offline) {
@@ -569,14 +566,14 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       setComptes([]);
     }
     setTransfertCompteId(null);
-    setTransfertMontant('');
+    setTransfertMontant(0);
     setTransfertMotif('');
     setTransfertRef('');
     setShowTransfert(true);
   };
 
   const validerTransfert = async () => {
-    const montant = parseFloat(transfertMontant);
+    const montant = transfertMontant;
     if (!transfertCompteId || !montant || !transfertMotif.trim()) {
       Alert.alert(tr('erreur', lang), 'Compte, montant et motif obligatoires');
       return;
@@ -619,12 +616,20 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
   const caisseOuverte = !!(etatCaisse?.estOuverte || etatCaisse?.ouverte);
   const soldeActuel = etatCaisse?.soldeActuel ?? etatCaisse?.solde ?? etatCaisse?.soldeCaisse ?? 0;
 
+  // ─── Cartes KPI (mêmes calculs que la page Caisse Ionic/Angular) ─────────
+  const profitNetMois = statsMois?.soldeNetPeriode ?? 0;
+  const isPerteMois = profitNetMois < 0;
+  const labelBilanceMois = isPerteMois ? 'Perte nette' : 'Bénéfice net';
+  const nomMoisCourant = moisAffiche.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const montantTotalCredits = credits.reduce((sum, c) => sum + (c.montantRestant || 0), 0);
+
   // ─── Barre d'onglets ─────────────────────────────────────────────────────
   const ONGLETS: { key: Onglet; label: string }[] = [
     { key: 'etat', label: tr('solde_actuel', lang) },
     { key: 'credits', label: tr('credits', lang) },
     { key: 'operations', label: 'Opérations' },
     { key: 'stats', label: 'Stats' },
+    { key: 'reconciliation', label: 'Réconciliation' },
   ];
 
   // ─── Render ──────────────────────────────────────────────────────────────
@@ -634,31 +639,34 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         <ActivityIndicator style={{ marginTop: 60 }} size="large" color="#1a56db" />
       ) : (
         <>
-          {/* Cartes couleur (toujours visibles, comme .color-cards Ionic) */}
+          {/* Cartes couleur — mêmes 4 chiffres et mêmes endpoints que la page
+              Caisse Ionic (Solde actuel / Caisse du jour / Bénéfice net du
+              mois clôturé / Crédits clients), au lieu d'Entrées/Sorties du
+              jour qui redoublonnaient avec "Caisse du jour". */}
           <View style={st.colorCards}>
             <View style={[st.colorCard, { backgroundColor: '#dbeafe' }]}>
               <MaterialCommunityIcons name="wallet-outline" size={18} color="#1d4ed8" />
-              <Text style={[st.ccLabel, { color: '#1d4ed8' }]}>Caisse Totale</Text>
+              <Text style={[st.ccLabel, { color: '#1d4ed8' }]}>Solde actuel</Text>
               <Text style={[st.ccValue, { color: '#1d4ed8' }]} numberOfLines={1}>{money(soldeActuel)}</Text>
               <Text style={[st.ccSub, { color: '#1d4ed8' }]}>{caisseOuverte ? 'Ouverte' : 'Fermée'}</Text>
             </View>
-            <View style={[st.colorCard, { backgroundColor: '#ede9fe' }]}>
-              <MaterialCommunityIcons name="trending-up" size={18} color="#6d28d9" />
-              <Text style={[st.ccLabel, { color: '#6d28d9' }]}>Bilan net</Text>
-              <Text style={[st.ccValue, { color: '#6d28d9' }]} numberOfLines={1}>{money(statsJour?.soldeNetPeriode || 0)}</Text>
-              <Text style={[st.ccSub, { color: '#6d28d9' }]}>Entrées - Sorties</Text>
-            </View>
             <View style={[st.colorCard, { backgroundColor: '#dcfce7' }]}>
-              <MaterialCommunityIcons name="arrow-up-circle-outline" size={18} color="#15803d" />
-              <Text style={[st.ccLabel, { color: '#15803d' }]}>Entrées</Text>
-              <Text style={[st.ccValue, { color: '#15803d' }]} numberOfLines={1}>{money(statsJour?.totalEntrees || 0)}</Text>
-              <Text style={[st.ccSub, { color: '#15803d' }]}>Aujourd'hui</Text>
+              <MaterialCommunityIcons name="calendar-outline" size={18} color="#15803d" />
+              <Text style={[st.ccLabel, { color: '#15803d' }]}>Caisse du jour</Text>
+              <Text style={[st.ccValue, { color: '#15803d' }]} numberOfLines={1}>{money(statsJour?.soldeNetPeriode || 0)}</Text>
+              <Text style={[st.ccSub, { color: '#15803d' }]}>↑ {money(statsJour?.totalEntrees || 0)} · ↓ {money(statsJour?.totalSorties || 0)}</Text>
             </View>
-            <View style={[st.colorCard, { backgroundColor: '#fee2e2' }]}>
-              <MaterialCommunityIcons name="arrow-down-circle-outline" size={18} color="#b91c1c" />
-              <Text style={[st.ccLabel, { color: '#b91c1c' }]}>Sorties</Text>
-              <Text style={[st.ccValue, { color: '#b91c1c' }]} numberOfLines={1}>{money(statsJour?.totalSorties || 0)}</Text>
-              <Text style={[st.ccSub, { color: '#b91c1c' }]}>Aujourd'hui</Text>
+            <View style={[st.colorCard, { backgroundColor: isPerteMois ? '#fee2e2' : '#ede9fe' }]}>
+              <MaterialCommunityIcons name={isPerteMois ? 'trending-down' : 'trending-up'} size={18} color={isPerteMois ? '#b91c1c' : '#6d28d9'} />
+              <Text style={[st.ccLabel, { color: isPerteMois ? '#b91c1c' : '#6d28d9' }]} numberOfLines={1}>{labelBilanceMois} · {nomMoisCourant}</Text>
+              <Text style={[st.ccValue, { color: isPerteMois ? '#b91c1c' : '#6d28d9' }]} numberOfLines={1}>{isPerteMois ? '-' : '+'}{money(Math.abs(profitNetMois))}</Text>
+              <Text style={[st.ccSub, { color: isPerteMois ? '#b91c1c' : '#6d28d9' }]}>Mois clôturé</Text>
+            </View>
+            <View style={[st.colorCard, { backgroundColor: '#ffedd5' }]}>
+              <MaterialCommunityIcons name="credit-card-outline" size={18} color="#c2410c" />
+              <Text style={[st.ccLabel, { color: '#c2410c' }]}>Crédits clients</Text>
+              <Text style={[st.ccValue, { color: '#c2410c' }]} numberOfLines={1}>{credits.length}</Text>
+              <Text style={[st.ccSub, { color: '#c2410c' }]} numberOfLines={1}>Reste à payer : {money(montantTotalCredits)}</Text>
             </View>
           </View>
 
@@ -675,13 +683,6 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             ))}
           </View>
 
-          {/* Bandeau offline */}
-          {fromCache && (
-            <View style={st.offlineBanner}>
-              <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-              <Text style={st.offlineTxt}>Mode hors ligne — caisse mise en cache — données non temps réel</Text>
-            </View>
-          )}
 
           {/* ════════════ ONGLET ÉTAT ════════════ */}
           {onglet === 'etat' && (
@@ -766,11 +767,10 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 </View>
 
                 <Text style={st.fieldLabel}>Montant</Text>
-                <RNTextInput
+                <MontantInput
                   style={st.fieldInput}
                   value={opMontant}
-                  onChangeText={setOpMontant}
-                  keyboardType="numeric"
+                  onChangeValue={setOpMontant}
                   placeholder="0"
                   placeholderTextColor="#bbb"
                 />
@@ -856,103 +856,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 </View>
               )}
 
-              {/* Règlement d'un crédit — formulaire intégré (comme Ionic) */}
-              {credits.length > 0 && filtreCredit === 'EN_COURS' && (
-                <View style={st.formPanel}>
-                  <View style={st.rowStart}>
-                    <MaterialCommunityIcons name="check-circle-outline" size={18} color="#0e9f6e" />
-                    <Text style={[st.cardTitleLg, { marginLeft: 6 }]}>Régler un crédit</Text>
-                  </View>
-
-                  <Text style={st.fieldLabel}>Sélectionner le crédit *</Text>
-                  <TouchableOpacity
-                    style={st.selectBox}
-                    onPress={() => openPicker(
-                      'Sélectionner un crédit',
-                      credits.map((c) => ({
-                        label: `${c.clientNom}${c.enRetard ? ' ⚠ En retard' : ''}`,
-                        sub: money(c.montantRestant),
-                        value: c.venteId,
-                      })),
-                      onCreditPicked
-                    )}
-                  >
-                    <Text style={creditSelectionne ? st.selectBoxText : st.selectBoxPlaceholder} numberOfLines={1}>
-                      {creditSelectionne ? `${creditSelectionne.clientNom} · ${money(creditSelectionne.montantRestant)}` : 'Choisir un crédit...'}
-                    </Text>
-                    <MaterialCommunityIcons name="chevron-down" size={18} color="#888" />
-                  </TouchableOpacity>
-
-                  {creditSelectionne && (
-                    <View style={st.infoCard}>
-                      <View style={st.infoRow}><Text style={st.infoLabel}>Client</Text><Text style={st.infoVal}>{creditSelectionne.clientNom}</Text></View>
-                      <View style={st.infoRow}><Text style={st.infoLabel}>Total vente</Text><Text style={st.infoVal}>{money(creditSelectionne.montantTotal)}</Text></View>
-                      <View style={st.infoRow}><Text style={st.infoLabel}>Déjà versé</Text><Text style={[st.infoVal, { color: '#16a34a' }]}>{money(creditSelectionne.montantVerse)}</Text></View>
-                      <View style={st.infoRow}><Text style={st.infoLabel}>Reste à payer</Text><Text style={[st.infoVal, { color: '#d97706', fontWeight: 'bold' }]}>{money(creditSelectionne.montantRestant)}</Text></View>
-                    </View>
-                  )}
-
-                  <Text style={st.fieldLabel}>Montant à régler *</Text>
-                  <RNTextInput
-                    style={st.fieldInput}
-                    value={reglMontant}
-                    onChangeText={setReglMontant}
-                    keyboardType="numeric"
-                    placeholder="Montant..."
-                    placeholderTextColor="#bbb"
-                  />
-
-                  <Text style={st.fieldLabel}>Mode de paiement *</Text>
-                  <ModeChips modes={MODES_REGLEMENT} current={reglMode} onSelect={setReglMode} />
-
-                  {reglMode !== 'ESPECES' && (
-                    <>
-                      <Text style={st.fieldLabel}>Référence</Text>
-                      <RNTextInput
-                        style={st.fieldInput}
-                        placeholder="Référence paiement..."
-                        value={reglRef}
-                        onChangeText={setReglRef}
-                        placeholderTextColor="#bbb"
-                      />
-                    </>
-                  )}
-
-                  <TouchableOpacity
-                    style={[st.bigBtn, { backgroundColor: '#16a34a', marginTop: 16 }, (!reglVenteCreditId || !reglMontant || savingRegl) && { opacity: 0.5 }]}
-                    onPress={saveReglement}
-                    disabled={!reglVenteCreditId || !reglMontant || savingRegl}
-                  >
-                    {savingRegl
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <><MaterialCommunityIcons name="check-circle-outline" size={18} color="#fff" /><Text style={st.bigBtnText}>Confirmer le règlement</Text></>
-                    }
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Barre d'actions groupées */}
-              {!loadingCredits && credits.length > 0 && filtreCredit === 'EN_COURS' && (
-                <View style={st.groupBar}>
-                  <View style={st.rowStart}>
-                    <TouchableOpacity style={st.groupBtnOutline} onPress={selectAllCredits}>
-                      <Text style={st.groupBtnOutlineText}>Tout sélectionner</Text>
-                    </TouchableOpacity>
-                    {selectedGroup.size > 0 && (
-                      <TouchableOpacity style={st.groupBtnClear} onPress={clearSelection}>
-                        <Text style={st.groupBtnClearText}>Désélectionner</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  {selectedGroup.size > 0 && (
-                    <TouchableOpacity style={st.groupBtnConfirm} onPress={regleGroupeCredits}>
-                      <MaterialCommunityIcons name="check-all" size={16} color="#fff" />
-                      <Text style={st.groupBtnConfirmText}>Régler ({selectedGroup.size}) · {money(totalGroupSelected)}</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-
+              {/* Lecture seule : le règlement se fait uniquement depuis la page "Crédits" dédiée. */}
               {loadingCredits ? (
                 <ActivityIndicator style={{ marginTop: 24 }} size="large" color="#1a56db" />
               ) : credits.length === 0 ? (
@@ -960,19 +864,41 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   <MaterialCommunityIcons name="credit-card-check-outline" size={64} color="#cbd5e1" />
                   <Text style={st.emptyText}>Aucun crédit dans cette catégorie</Text>
                 </View>
+              ) : filtreCredit === 'EN_COURS' ? (
+                creditsGroupesParClient.map((groupe) => (
+                  <Card key={groupe.nom} style={[st.creditCardPaper, groupe.enRetard && { borderLeftWidth: 3, borderLeftColor: '#dc2626' }]}>
+                    <TouchableOpacity onPress={() => setSelectedClientNom(groupe.nom)}>
+                      <Card.Content>
+                        <View style={st.cardRow}>
+                          <View style={[st.avatar, { backgroundColor: groupe.enRetard ? '#fee2e2' : '#dbeafe' }]}>
+                            <MaterialCommunityIcons name="account-clock" size={20} color={groupe.enRetard ? '#dc2626' : '#1a56db'} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={st.cardName}>{groupe.nom}</Text>
+                            <Text style={st.cardSub}>{groupe.count} crédit{groupe.count > 1 ? 's' : ''}</Text>
+                          </View>
+                          <MaterialCommunityIcons name="chevron-right" size={20} color="#94a3b8" />
+                        </View>
+                        <View style={st.rowBetween}>
+                          <Text style={st.muted}>Total: {money(groupe.totalTotal)}</Text>
+                          <Text style={[st.creditRestant, groupe.enRetard && { color: '#dc2626' }]}>Reste: {money(groupe.totalRestant)}</Text>
+                        </View>
+                        {groupe.enRetard && (
+                          <View style={[st.badge, { backgroundColor: '#fee2e2', alignSelf: 'flex-start', marginTop: 6 }]}>
+                            <Text style={[st.badgeText, { color: '#dc2626' }]}>En retard</Text>
+                          </View>
+                        )}
+                      </Card.Content>
+                    </TouchableOpacity>
+                  </Card>
+                ))
               ) : (
                 credits.map((c) => {
                   const pct = c.montantTotal > 0 ? Math.min(100, Math.round((c.montantVerse / c.montantTotal) * 100)) : 0;
                   return (
-                    <Card key={c.venteId} style={[st.creditCardPaper, c.enRetard && { borderLeftWidth: 3, borderLeftColor: '#dc2626' }, selectedGroup.has(c.venteId) && { borderWidth: 1, borderColor: '#1a56db' }]}>
+                    <Card key={c.venteId} style={[st.creditCardPaper, c.enRetard && { borderLeftWidth: 3, borderLeftColor: '#dc2626' }]}>
                       <Card.Content>
                         <View style={st.cardRow}>
-                          {filtreCredit === 'EN_COURS' && (
-                            <Checkbox
-                              status={selectedGroup.has(c.venteId) ? 'checked' : 'unchecked'}
-                              onPress={() => toggleCreditGroup(c.venteId)}
-                            />
-                          )}
                           <View style={[st.avatar, { backgroundColor: c.enRetard ? '#fee2e2' : '#dbeafe' }]}>
                             <MaterialCommunityIcons name="account-clock" size={20} color={c.enRetard ? '#dc2626' : '#1a56db'} />
                           </View>
@@ -986,11 +912,6 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                           <TouchableOpacity onPress={() => openDetailCredit(c)} style={{ padding: 4 }}>
                             <MaterialCommunityIcons name="eye-outline" size={18} color="#64748b" />
                           </TouchableOpacity>
-                          {!c.estReglee && filtreCredit === 'EN_COURS' && (
-                            <TouchableOpacity onPress={() => prepareReglement(c)} style={{ padding: 4 }}>
-                              <MaterialCommunityIcons name="cash" size={20} color="#1a56db" />
-                            </TouchableOpacity>
-                          )}
                         </View>
 
                         <View style={st.rowBetween}>
@@ -1179,6 +1100,81 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               )}
             </ScrollView>
           )}
+
+          {/* ════════════ ONGLET RÉCONCILIATION (par vendeur, lecture seule) ════════════ */}
+          {onglet === 'reconciliation' && (
+            <ScrollView
+              style={st.container}
+              contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+              refreshControl={<RefreshControl refreshing={loadingReconciliation} onRefresh={() => chargerReconciliation(dateReconciliation)} colors={['#1a56db']} />}
+            >
+              {/* Sélecteur de date */}
+              <View style={st.dateNavBar}>
+                <TouchableOpacity style={st.dateNavBtn} onPress={() => changerJourReconciliation(-1)}>
+                  <MaterialCommunityIcons name="chevron-left" size={22} color="#1a56db" />
+                </TouchableOpacity>
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Text style={st.dateNavLabel} numberOfLines={1}>{dateLongue(dateReconciliation)}</Text>
+                  {!estAujourdhui(dateReconciliation) && (
+                    <TouchableOpacity onPress={() => setDateReconciliation(new Date())}>
+                      <Text style={st.dateNavToday}>Revenir à aujourd'hui</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={[st.dateNavBtn, estAujourdhui(dateReconciliation) && { opacity: 0.3 }]}
+                  onPress={() => !estAujourdhui(dateReconciliation) && changerJourReconciliation(1)}
+                  disabled={estAujourdhui(dateReconciliation)}
+                >
+                  <MaterialCommunityIcons name="chevron-right" size={22} color="#1a56db" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Liste réconciliation par vendeur — lecture seule, aucune action */}
+              {loadingReconciliation ? (
+                <ActivityIndicator style={{ marginTop: 24 }} size="large" color="#1a56db" />
+              ) : reconciliationVendeurs.length === 0 ? (
+                <View style={st.emptyState}>
+                  <MaterialCommunityIcons name="account-cash-outline" size={64} color="#cbd5e1" />
+                  <Text style={st.emptyText}>Aucune activité vendeur ce jour</Text>
+                </View>
+              ) : (
+                reconciliationVendeurs.map((v) => (
+                  <Card key={v.vendeurId} style={st.creditCardPaper}>
+                    <Card.Content>
+                      <View style={st.cardRow}>
+                        <View style={[st.avatar, { backgroundColor: '#dbeafe' }]}>
+                          <MaterialCommunityIcons name="account-cash-outline" size={20} color="#1a56db" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={st.cardName}>{v.vendeurNom}</Text>
+                          <Text style={st.cardSub}>{v.nombreVentes} vente{v.nombreVentes > 1 ? 's' : ''}</Text>
+                        </View>
+                      </View>
+
+                      <View style={st.infoRow}>
+                        <Text style={st.infoLabel}>Ventes espèces</Text>
+                        <Text style={st.infoVal}>{money(v.totalVentesEspeces)}</Text>
+                      </View>
+                      <View style={st.infoRow}>
+                        <Text style={st.infoLabel}>Ventes crédit</Text>
+                        <Text style={st.infoVal}>{money(v.totalVentesCredit)}</Text>
+                      </View>
+                      <View style={[st.infoRow, { borderBottomWidth: 0 }]}>
+                        <Text style={st.infoLabel}>Règlements crédit encaissés</Text>
+                        <Text style={[st.infoVal, { color: '#16a34a' }]}>{money(v.totalReglementsCreditEspeces)}</Text>
+                      </View>
+
+                      <View style={st.reconciliationTotalBox}>
+                        <Text style={st.reconciliationTotalLabel}>Total à remettre</Text>
+                        <Text style={st.reconciliationTotalValue}>{money(v.totalAiRemettre)}</Text>
+                      </View>
+                    </Card.Content>
+                  </Card>
+                ))
+              )}
+            </ScrollView>
+          )}
         </>
       )}
 
@@ -1238,55 +1234,47 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               <TouchableOpacity style={st.btnCancel} onPress={() => setShowDetailCredit(false)}>
                 <Text style={st.btnCancelText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
-              {selectedCredit && !selectedCredit.estReglee && (
-                <TouchableOpacity
-                  style={st.btnConfirm}
-                  onPress={() => {
-                    setShowDetailCredit(false);
-                    if (selectedCredit) { setOnglet('credits'); setFiltreCredit('EN_COURS'); prepareReglement(selectedCredit); }
-                  }}
-                >
-                  <Text style={st.btnConfirmText}>{tr('payer_credit', lang)}</Text>
-                </TouchableOpacity>
-              )}
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* ══════ MODAL RÈGLEMENT PAR GROUPE ══════ */}
-      <Modal visible={showGroupModal} animationType="slide" transparent onRequestClose={() => setShowGroupModal(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <View style={st.overlay}>
-            <View style={st.sheet}>
-              <View style={st.handle} />
-              <View style={st.modalHead}>
-                <Text style={st.modalTitle}>Règlement par groupe</Text>
-                <TouchableOpacity onPress={() => setShowGroupModal(false)}>
-                  <Text style={{ fontSize: 22, color: '#666' }}>×</Text>
-                </TouchableOpacity>
-              </View>
-              <ScrollView style={st.modalBody}>
-                <View style={st.infoCard}>
-                  <View style={st.infoRow}><Text style={st.infoLabel}>Crédits sélectionnés</Text><Text style={st.infoVal}>{selectedGroup.size}</Text></View>
-                  <View style={st.infoRow}><Text style={st.infoLabel}>Total</Text><Text style={[st.infoVal, { fontWeight: 'bold', color: '#16a34a' }]}>{money(totalGroupSelected)}</Text></View>
-                </View>
-                <Text style={st.fieldLabel}>Mode de paiement</Text>
-                <ModeChips modes={MODES_REGLEMENT} current={groupMode} onSelect={setGroupMode} />
-                <Text style={st.fieldLabel}>Référence (optionnel)</Text>
-                <RNTextInput style={st.fieldInput} value={groupRef} onChangeText={setGroupRef} placeholder="Référence..." placeholderTextColor="#bbb" />
-              </ScrollView>
-              <View style={st.modalFoot}>
-                <TouchableOpacity style={st.btnCancel} onPress={() => setShowGroupModal(false)}>
-                  <Text style={st.btnCancelText}>{tr('annuler', lang)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[st.btnConfirm, savingGroup && { opacity: 0.6 }]} onPress={confirmerGroupe} disabled={savingGroup}>
-                  {savingGroup ? <ActivityIndicator size="small" color="#fff" /> : <Text style={st.btnConfirmText}>Confirmer le règlement</Text>}
-                </TouchableOpacity>
-              </View>
+      {/* ══════ MODAL : CRÉDITS D'UN CLIENT (lecture seule, onglet Crédits en cours) ══════ */}
+      <Modal visible={!!selectedClientNom} animationType="slide" transparent onRequestClose={() => setSelectedClientNom(null)}>
+        <View style={st.overlay}>
+          <View style={st.sheet}>
+            <View style={st.handle} />
+            <View style={st.modalHead}>
+              <Text style={st.modalTitle}>{selectedClientNom}</Text>
+              <TouchableOpacity onPress={() => setSelectedClientNom(null)}>
+                <Text style={{ fontSize: 22, color: '#666' }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={st.modalBody}>
+              {selectedClientCredits.map((c) => (
+                <Card key={c.venteId} style={[st.creditCardPaper, c.enRetard && { borderLeftWidth: 3, borderLeftColor: '#dc2626' }]}>
+                  <Card.Content>
+                    <View style={st.rowBetween}>
+                      <Text style={st.cardName}>{c.numeroVente}</Text>
+                      <View style={[st.badge, { backgroundColor: c.enRetard ? '#fee2e2' : '#fef3c7' }]}>
+                        <Text style={[st.badgeText, { color: c.enRetard ? '#dc2626' : '#d97706' }]}>{c.enRetard ? 'En retard' : 'En cours'}</Text>
+                      </View>
+                    </View>
+                    <View style={st.rowBetween}>
+                      <Text style={st.muted}>Versé: {money(c.montantVerse)}</Text>
+                      <Text style={[st.creditRestant, c.enRetard && { color: '#dc2626' }]}>Reste: {money(c.montantRestant)}</Text>
+                    </View>
+                  </Card.Content>
+                </Card>
+              ))}
+            </ScrollView>
+            <View style={st.modalFoot}>
+              <TouchableOpacity style={st.btnCancel} onPress={() => setSelectedClientNom(null)}>
+                <Text style={st.btnCancelText}>{tr('fermer', lang)}</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* ══════ MODAL DÉTAIL OPÉRATION ══════ */}
@@ -1381,7 +1369,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 </TouchableOpacity>
 
                 <Text style={st.fieldLabel}>Montant</Text>
-                <RNTextInput style={st.fieldInput} value={transfertMontant} onChangeText={setTransfertMontant} keyboardType="numeric" placeholder="0" placeholderTextColor="#bbb" />
+                <MontantInput style={st.fieldInput} value={transfertMontant} onChangeValue={setTransfertMontant} placeholder="0" placeholderTextColor="#bbb" />
 
                 <Text style={st.fieldLabel}>Motif</Text>
                 <RNTextInput style={st.fieldInput} value={transfertMotif} onChangeText={setTransfertMotif} placeholder="Motif du transfert..." placeholderTextColor="#bbb" />
@@ -1437,9 +1425,17 @@ const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#f0f4f8' },
 
   // Cartes couleur (haut de page, toujours visibles)
-  colorCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 12, backgroundColor: '#fff' },
-  colorCard: { flexBasis: '47%', flexGrow: 1, borderRadius: 12, padding: 12, alignItems: 'flex-start' },
-  colorCardFull: { borderRadius: 12, padding: 16, alignItems: 'flex-start' },
+  // STYLE (2026-08-16) : coins plus arrondis + ombre douce (au lieu de la
+  // simple élévation Android, invisible sur iOS) pour un rendu plus premium.
+  colorCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 12, backgroundColor: '#fff' },
+  colorCard: {
+    flexBasis: '47%', flexGrow: 1, borderRadius: 16, padding: 14, alignItems: 'flex-start',
+    elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+  },
+  colorCardFull: {
+    borderRadius: 16, padding: 16, alignItems: 'flex-start',
+    elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+  },
   ccLabel: { fontSize: 11, fontWeight: '600', marginTop: 6 },
   ccValue: { fontSize: 15, fontWeight: 'bold', marginTop: 2 },
   ccSub: { fontSize: 10, marginTop: 2, opacity: 0.8 },
@@ -1458,8 +1454,14 @@ const st = StyleSheet.create({
   container: { flex: 1 },
 
   // Carte mobile / form-panel (État)
-  mobileCard: { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, elevation: 1 },
-  formPanel: { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, elevation: 1 },
+  mobileCard: {
+    backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 16,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+  },
+  formPanel: {
+    backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 16,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+  },
   cardTitleLg: { fontWeight: 'bold', fontSize: 15, color: '#1e293b' },
   cardSubtitle: { color: '#64748b', fontSize: 12, marginTop: 2 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -1468,11 +1470,14 @@ const st = StyleSheet.create({
   badgeEtatText: { fontSize: 11, fontWeight: 'bold' },
 
   twoCols: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  statCard: { flex: 1, backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, alignItems: 'center' },
+  statCard: { flex: 1, backgroundColor: '#f8fafc', borderRadius: 12, padding: 10, alignItems: 'center' },
   statLabel: { fontSize: 11, color: '#64748b' },
   statValue: { fontSize: 14, fontWeight: 'bold', marginTop: 3 },
 
-  bigBtn: { flexDirection: 'row', gap: 8, borderRadius: 10, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', marginTop: 14 },
+  bigBtn: {
+    flexDirection: 'row', gap: 8, borderRadius: 12, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', marginTop: 14,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
+  },
   bigBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 
   sectionTitle: { fontWeight: 'bold', fontSize: 14, color: '#333', marginBottom: 8, marginTop: 8 },
@@ -1484,7 +1489,7 @@ const st = StyleSheet.create({
 
   // Formulaire
   fieldLabel: { color: '#666', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
-  fieldInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa' },
+  fieldInput: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
   chipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
@@ -1492,7 +1497,7 @@ const st = StyleSheet.create({
   chipTextActive: { color: '#fff', fontWeight: '600' },
 
   // Select box (remplace ion-select)
-  selectBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#fafafa' },
+  selectBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#fafafa' },
   selectBoxText: { fontSize: 14, color: '#333', flex: 1 },
   selectBoxPlaceholder: { fontSize: 14, color: '#999', flex: 1 },
   pickerOption: { paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -1523,8 +1528,8 @@ const st = StyleSheet.create({
   groupBtnConfirmText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 
   // Paper card rows
-  opCardPaper: { marginBottom: 8, borderRadius: 12, elevation: 1 },
-  creditCardPaper: { marginBottom: 10, borderRadius: 14, elevation: 2 },
+  opCardPaper: { marginBottom: 8, borderRadius: 14, elevation: 1 },
+  creditCardPaper: { marginBottom: 10, borderRadius: 16, elevation: 2 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
@@ -1561,9 +1566,28 @@ const st = StyleSheet.create({
 
   // Stats
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  statsCard: { width: '47%', borderRadius: 14, padding: 16, alignItems: 'flex-start', elevation: 2 },
+  statsCard: {
+    width: '47%', borderRadius: 18, padding: 16, alignItems: 'flex-start',
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+  },
   statsVal: { fontSize: 16, fontWeight: 'bold', marginTop: 6 },
   statsLabel: { fontSize: 11, color: '#666', marginTop: 2 },
+
+  // Réconciliation par vendeur (sélecteur de date + mise en avant du total à remettre)
+  dateNavBar: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,
+    paddingVertical: 8, paddingHorizontal: 4, marginBottom: 14,
+    elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+  },
+  dateNavBtn: { padding: 8 },
+  dateNavLabel: { fontSize: 13, fontWeight: '700', color: '#1e293b', textTransform: 'capitalize' },
+  dateNavToday: { fontSize: 11, color: '#1a56db', fontWeight: '600', marginTop: 2 },
+  reconciliationTotalBox: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: '#eff6ff', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10,
+  },
+  reconciliationTotalLabel: { fontSize: 13, fontWeight: '700', color: '#1d4ed8' },
+  reconciliationTotalValue: { fontSize: 18, fontWeight: '900', color: '#1d4ed8' },
 
   // Empty state
   emptyState: { alignItems: 'center', marginTop: 40, paddingHorizontal: 20 },
@@ -1571,19 +1595,19 @@ const st = StyleSheet.create({
 
   // Modal commun
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   modalTitle: { fontWeight: 'bold', fontSize: 16, color: '#1a1a1a', flex: 1, marginRight: 8 },
   modalBody: { padding: 16, maxHeight: 440 },
   modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
-  btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
   btnCancelText: { color: '#666', fontWeight: '600' },
-  btnConfirm: { flex: 2, backgroundColor: '#1a56db', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  btnConfirm: { flex: 2, backgroundColor: '#1a56db', borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 
   // Info card modal
-  infoCard: { backgroundColor: '#fafafa', borderRadius: 12, padding: 12, marginTop: 10, marginBottom: 10 },
+  infoCard: { backgroundColor: '#fafafa', borderRadius: 14, padding: 12, marginTop: 10, marginBottom: 10 },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
   infoLabel: { color: '#888', fontSize: 13 },
   infoVal: { color: '#333', fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },

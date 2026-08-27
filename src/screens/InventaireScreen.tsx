@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+﻿import { useEffect, useState, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert, ScrollView,
 } from 'react-native';
@@ -154,7 +155,11 @@ export default function InventaireScreen() {
     setFiltered(result);
   };
 
-  useEffect(() => { charger(); }, []);
+  // Recharge à chaque fois que l'écran redevient actif (ex: retour après une
+  // vente ou un achat fournisseur ailleurs dans l'app) — même pattern que
+  // SortiesScreen/CommandesScreen. Le filtre affiché (`filtered`) est de
+  // toute façon resynchronisé par l'effet ci-dessous dès que `produits` change.
+  useFocusEffect(useCallback(() => { charger(); }, []));
 
   useEffect(() => {
     appliquerFiltres(produits, filtre, search);
@@ -326,15 +331,8 @@ export default function InventaireScreen() {
         </View>
       </View>
 
-      {/* Bandeau offline */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
-      <Text style={[styles.valeur, { color: colors.primary }]}>{tr('valeur_stock', lang)} : {valeurTotale.toLocaleString('fr-FR')} FCFA</Text>
+      <Text style={[styles.valeur, { color: colors.primary }]}>{tr('valeur_stock', lang)} : {valeurTotale.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
 
       <View style={styles.filtreRow}>
         {(['tous', 'faible', 'rupture', 'niveaux', 'mouvements'] as const).map(f => (
@@ -695,7 +693,7 @@ export default function InventaireScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.cardName, { color: colors.text }]}>{item.nom}</Text>
                     <Text style={[styles.cardSub, { color: colors.textSecondary }]}>
-                      Achat : {item.prixAchat.toLocaleString('fr-FR')} FCFA | Valeur : {(item.prixAchat * item.quantite).toLocaleString('fr-FR')} FCFA
+                      Achat : {item.prixAchat.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA | Valeur : {(item.prixAchat * item.quantite).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                     </Text>
                   </View>
                   <View style={[styles.badge, { backgroundColor: couleurStock(item) }]}>

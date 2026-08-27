@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Linking, Alert, Image,
   TouchableOpacity, Modal, ScrollView, TextInput as RNTextInput, KeyboardAvoidingView, Platform,
@@ -10,8 +10,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useAuth } from '../hooks/useAuth';
+import { MontantInput } from '../components/MontantInput';
 
-const money = (v?: number) => `${(v || 0).toLocaleString('fr-FR')} FCFA`;
+const money = (v?: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 const fdate = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 
 const STATUTS = ['BROUILLON', 'VALIDE', 'PAYEE', 'ANNULEE'] as const;
@@ -19,7 +20,7 @@ type Statut = typeof STATUTS[number];
 const STATUT_LABEL: Record<Statut, string> = { BROUILLON: 'Brouillon', VALIDE: 'Validée', PAYEE: 'Payée', ANNULEE: 'Annulée' };
 const STATUT_COLOR: Record<Statut, string> = { BROUILLON: '#94a3b8', VALIDE: '#1a56db', PAYEE: '#16a34a', ANNULEE: '#dc2626' };
 
-interface LigneProforma { designation: string; quantite: string; prixUnitaire: string; }
+interface LigneProforma { designation: string; quantite: string; prixUnitaire: number; }
 
 export default function FacturesScreen() {
   const { lang } = useLang();
@@ -48,7 +49,7 @@ export default function FacturesScreen() {
   const [clientTelephone, setClientTelephone] = useState('');
   const [notes, setNotes] = useState('');
   const [lignes, setLignes] = useState<LigneProforma[]>([]);
-  const [newLigne, setNewLigne] = useState<LigneProforma>({ designation: '', quantite: '1', prixUnitaire: '' });
+  const [newLigne, setNewLigne] = useState<LigneProforma>({ designation: '', quantite: '1', prixUnitaire: 0 });
   const [produits, setProduits] = useState<any[]>([]);
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitSearch, setShowProduitSearch] = useState(false);
@@ -56,7 +57,13 @@ export default function FacturesScreen() {
   const charger = async () => {
     try {
       const res = await getFactures();
-      const liste = res.data?.data || res.data?.factures || res.data || [];
+      const brute = res.data?.data || res.data?.factures || res.data || [];
+      // BUG FIX (2026-08-14) : le backend renvoie chaque facture enveloppee
+      // { facture: {...}, boutique: {...} } (cf. wrapFactureWithBoutique cote
+      // Spring), pas les champs a plat -> item.numeroFacture/montantTotal/id
+      // etc. etaient tous undefined (0 FCFA, "Client divers", cle dupliquee
+      // "undefined" -> avertissement React + PDF/detail casses).
+      const liste = brute.map((w: any) => (w && w.facture) ? w.facture : w);
       setFactures(liste);
       setFromCache(false);
       AsyncStorage.setItem('cache_factures_pf', JSON.stringify(liste)).catch(() => {});
@@ -89,7 +96,7 @@ export default function FacturesScreen() {
   // ─── Création pro forma ───────────────────────────────────────────────────
   const ouvrirCreation = async () => {
     setClientNom(''); setClientTelephone(''); setNotes(''); setLignes([]);
-    setNewLigne({ designation: '', quantite: '1', prixUnitaire: '' });
+    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0 });
     setShowCreate(true);
     try {
       const res = await getProduits();
@@ -102,7 +109,7 @@ export default function FacturesScreen() {
     : [];
 
   const selectProduit = (p: any) => {
-    setNewLigne({ designation: p.nom, quantite: '1', prixUnitaire: String(p.prixVente || 0) });
+    setNewLigne({ designation: p.nom, quantite: '1', prixUnitaire: p.prixVente || 0 });
     setProduitSearch('');
     setShowProduitSearch(false);
   };
@@ -112,12 +119,12 @@ export default function FacturesScreen() {
       Alert.alert(tr('erreur', lang), 'Désignation, quantité et prix requis'); return;
     }
     setLignes(prev => [...prev, newLigne]);
-    setNewLigne({ designation: '', quantite: '1', prixUnitaire: '' });
+    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0 });
   };
 
   const removeLigne = (i: number) => setLignes(prev => prev.filter((_, idx) => idx !== i));
 
-  const proformaTotal = lignes.reduce((s, l) => s + (parseFloat(l.quantite) || 0) * (parseFloat(l.prixUnitaire) || 0), 0);
+  const proformaTotal = lignes.reduce((s, l) => s + (parseFloat(l.quantite) || 0) * (l.prixUnitaire || 0), 0);
 
   const submitProforma = async () => {
     if (!lignes.length) return;
@@ -133,7 +140,7 @@ export default function FacturesScreen() {
         lignes: lignes.map(l => ({
           designation: l.designation,
           quantite: parseInt(l.quantite, 10) || 1,
-          prixUnitaire: parseFloat(l.prixUnitaire) || 0,
+          prixUnitaire: l.prixUnitaire || 0,
         })),
       });
       setShowCreate(false);
@@ -189,12 +196,6 @@ export default function FacturesScreen() {
         </View>
       </View>
 
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* Filtres */}
       <View style={styles.filterZone}>
@@ -408,7 +409,7 @@ export default function FacturesScreen() {
                   </View>
                   <View style={{ flex: 2 }}>
                     <Text style={styles.pfLabel}>Prix unitaire (FCFA)</Text>
-                    <RNTextInput style={styles.pfInput} value={newLigne.prixUnitaire} onChangeText={t => setNewLigne(l => ({ ...l, prixUnitaire: t }))} keyboardType="numeric" />
+                    <MontantInput style={styles.pfInput} value={newLigne.prixUnitaire} onChangeValue={v => setNewLigne(l => ({ ...l, prixUnitaire: v }))} />
                   </View>
                   <TouchableOpacity style={styles.pfAddBtn} onPress={addLigne}>
                     <MaterialCommunityIcons name="plus" size={20} color="#fff" />
@@ -423,7 +424,7 @@ export default function FacturesScreen() {
                       <Text style={{ flex: 1, fontSize: 13 }} numberOfLines={1}>{l.designation}</Text>
                       <Text style={{ fontSize: 12, color: '#64748b' }}>×{l.quantite}</Text>
                       <Text style={{ fontWeight: '700', fontSize: 13, marginLeft: 8 }}>
-                        {money((parseFloat(l.quantite) || 0) * (parseFloat(l.prixUnitaire) || 0))}
+                        {money((parseFloat(l.quantite) || 0) * (l.prixUnitaire || 0))}
                       </Text>
                       <TouchableOpacity onPress={() => removeLigne(i)} style={{ marginLeft: 8 }}>
                         <MaterialCommunityIcons name="trash-can-outline" size={16} color="#dc2626" />
@@ -484,7 +485,7 @@ const styles = StyleSheet.create({
   btnCreer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#1a56db', marginHorizontal: 12, marginBottom: 8, borderRadius: 10, paddingVertical: 11 },
   btnCreerText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 8, elevation: 1 },
+  card: { backgroundColor: '#fff', borderRadius: 16, padding: 12, marginBottom: 8, elevation: 1 },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   factNum: { fontWeight: '700', fontSize: 13, color: '#1e293b' },
   factMontant: { fontWeight: '700', fontSize: 14, color: '#1a56db' },
@@ -502,7 +503,7 @@ const styles = StyleSheet.create({
 
   // Sheets
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '90%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '90%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   detailHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   detailNom: { fontWeight: 'bold', fontSize: 16, color: '#1e293b' },

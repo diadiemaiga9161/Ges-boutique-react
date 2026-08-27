@@ -19,7 +19,10 @@ export const deletePromotion = (id: number) => api.delete(`/promotions/${id}`);
 export function calculerPrixPromo(prixOriginal: number, promo: Promotion): number {
   if (!promo?.active) return prixOriginal;
   if (promo.typeReduction === 'POURCENTAGE') {
-    return prixOriginal * (1 - promo.valeurReduction / 100);
+    // BUG FIX (2026-08-16) : arrondi manquant — Ionic (promotion.service.ts
+    // calculerPrixPromo) arrondit, ici non, ce qui pouvait afficher des FCFA
+    // à virgule (ex: 897.5 FCFA) sur une devise sans décimales.
+    return Math.round(prixOriginal * (1 - promo.valeurReduction / 100));
   }
   return Math.max(0, prixOriginal - promo.valeurReduction);
 }
@@ -27,6 +30,8 @@ export function calculerPrixPromo(prixOriginal: number, promo: Promotion): numbe
 export async function getPromosPourProduit(produitId: number): Promise<Promotion[]> {
   try {
     const res = await api.get(`/promotions/produit/${produitId}`);
-    return res.data?.data || res.data || [];
+    // Le backend renvoie { success, promotions: [...] }, pas { data: [...] } —
+    // cf. correctif du meme bug dans PromotionsScreen.tsx.
+    return res.data?.promotions || res.data?.data || [];
   } catch { return []; }
 }

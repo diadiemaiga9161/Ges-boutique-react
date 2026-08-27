@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
 import {
   Modal, View, StyleSheet, TouchableOpacity, ScrollView, Alert,
 } from 'react-native';
@@ -43,7 +43,7 @@ type TypeFiltre = '' | 'VENTE' | 'VERSEMENT';
 const PAGE_SIZE = 20;
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
-function money(v?: number | null) { return (v ?? 0).toLocaleString('fr-FR') + ' FCFA'; }
+function money(v?: number | null) { return (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA'; }
 
 function toLocalDate(d: Date): string {
   const y = d.getFullYear();

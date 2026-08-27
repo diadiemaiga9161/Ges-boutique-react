@@ -14,7 +14,10 @@ export async function initDatabase(): Promise<void> {
       local_id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      synced INTEGER DEFAULT 0
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      error_code TEXT
     );
     CREATE TABLE IF NOT EXISTS produits_cache (
       id INTEGER PRIMARY KEY,
@@ -30,32 +33,47 @@ export async function initDatabase(): Promise<void> {
       local_id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      synced INTEGER DEFAULT 0
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      error_code TEXT
     );
     CREATE TABLE IF NOT EXISTS produits_updates_pending (
       local_id TEXT PRIMARY KEY,
       produit_id INTEGER NOT NULL,
       data TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      synced INTEGER DEFAULT 0
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      error_code TEXT
     );
     CREATE TABLE IF NOT EXISTS depenses_pending (
       local_id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      synced INTEGER DEFAULT 0
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      error_code TEXT
     );
     CREATE TABLE IF NOT EXISTS clients_pending (
       local_id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      synced INTEGER DEFAULT 0
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      error_code TEXT
     );
     CREATE TABLE IF NOT EXISTS commandes_pending (
       local_id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      synced INTEGER DEFAULT 0
+      synced INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      last_error TEXT,
+      error_code TEXT
     );
     CREATE TABLE IF NOT EXISTS operations_pending (
       id TEXT PRIMARY KEY,
@@ -65,7 +83,8 @@ export async function initDatabase(): Promise<void> {
       synced INTEGER DEFAULT 0,
       attempts INTEGER DEFAULT 0,
       last_error TEXT,
-      notified_failure INTEGER DEFAULT 0
+      notified_failure INTEGER DEFAULT 0,
+      error_code TEXT
     );
   `);
   // Migration douce pour les installations existantes créées avant l'ajout
@@ -74,6 +93,28 @@ export async function initDatabase(): Promise<void> {
   try {
     await db.execAsync('ALTER TABLE operations_pending ADD COLUMN notified_failure INTEGER DEFAULT 0;');
   } catch { /* colonne déjà existante : ignorer */ }
+
+  // Migration douce pour les installations existantes créées avant l'ajout
+  // du compteur de tentatives sur les tables dédiées (ventes/produits/
+  // dépenses/clients/commandes) — même principe que ci-dessus.
+  for (const table of ['ventes_pending', 'produits_pending', 'produits_updates_pending', 'depenses_pending', 'clients_pending', 'commandes_pending']) {
+    try {
+      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN attempts INTEGER DEFAULT 0;`);
+    } catch { /* colonne déjà existante : ignorer */ }
+    try {
+      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN last_error TEXT;`);
+    } catch { /* colonne déjà existante : ignorer */ }
+  }
+
+  // Migration douce pour les installations existantes créées avant l'ajout
+  // du code d'erreur structuré (ex: OPTIMISTIC_LOCK_CONFLICT, distinct de
+  // last_error qui reste un texte libre) — même principe que ci-dessus,
+  // sur les 6 tables dédiées + la file générique.
+  for (const table of ['ventes_pending', 'produits_pending', 'produits_updates_pending', 'depenses_pending', 'clients_pending', 'commandes_pending', 'operations_pending']) {
+    try {
+      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN error_code TEXT;`);
+    } catch { /* colonne déjà existante : ignorer */ }
+  }
 }
 
 export async function saveVentePending(localId: string, vente: any): Promise<void> {
@@ -86,15 +127,20 @@ export async function saveVentePending(localId: string, vente: any): Promise<voi
 
 export async function getVentesPending(): Promise<any[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ local_id: string; data: string }>(
+  const rows = await db.getAllAsync<{ local_id: string; data: string; attempts: number; last_error: string | null; error_code: string | null }>(
     'SELECT * FROM ventes_pending WHERE synced = 0 ORDER BY created_at ASC'
   );
-  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+  return rows.map(r => ({ localId: r.local_id, attempts: r.attempts, lastError: r.last_error, errorCode: r.error_code, ...JSON.parse(r.data) }));
 }
 
 export async function marquerVenteSynced(localId: string): Promise<void> {
   if (isWeb) return;
   await db.runAsync('UPDATE ventes_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function incrementVenteAttempts(localId: string, error: string, errorCode?: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE ventes_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
 }
 
 export async function cacheProduits(produits: any[]): Promise<void> {
@@ -149,15 +195,20 @@ export async function saveProduitPending(localId: string, data: any): Promise<vo
 
 export async function getProduitsPending(): Promise<any[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ local_id: string; data: string }>(
+  const rows = await db.getAllAsync<{ local_id: string; data: string; attempts: number; last_error: string | null; error_code: string | null }>(
     'SELECT * FROM produits_pending WHERE synced = 0 ORDER BY created_at ASC'
   );
-  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+  return rows.map(r => ({ localId: r.local_id, attempts: r.attempts, lastError: r.last_error, errorCode: r.error_code, ...JSON.parse(r.data) }));
 }
 
 export async function marquerProduitPendingSynced(localId: string): Promise<void> {
   if (isWeb) return;
   await db.runAsync('UPDATE produits_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function incrementProduitAttempts(localId: string, error: string, errorCode?: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE produits_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
 }
 
 export async function saveProduitUpdatePending(localId: string, produitId: number, data: any): Promise<void> {
@@ -170,15 +221,32 @@ export async function saveProduitUpdatePending(localId: string, produitId: numbe
 
 export async function getProduitsUpdatesPending(): Promise<any[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ local_id: string; produit_id: number; data: string }>(
+  const rows = await db.getAllAsync<{ local_id: string; produit_id: number; data: string; attempts: number; last_error: string | null; error_code: string | null }>(
     'SELECT * FROM produits_updates_pending WHERE synced = 0 ORDER BY created_at ASC'
   );
-  return rows.map(r => ({ localId: r.local_id, produitId: r.produit_id, ...JSON.parse(r.data) }));
+  return rows.map(r => ({ localId: r.local_id, produitId: r.produit_id, attempts: r.attempts, lastError: r.last_error, errorCode: r.error_code, ...JSON.parse(r.data) }));
 }
 
 export async function marquerProduitUpdateSynced(localId: string): Promise<void> {
   if (isWeb) return;
   await db.runAsync('UPDATE produits_updates_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+// bloquerImmediatement : utilisé uniquement pour un conflit de verrouillage
+// optimiste (OPTIMISTIC_LOCK_CONFLICT) sur une modification produit — rejouer
+// cette requête telle quelle écraserait un stock modifié entre-temps (la
+// requête contient une quantité absolue, pas un delta). On fait donc passer
+// attempts directement à 5 au lieu de l'incrémenter, pour arrêter tout rejeu
+// automatique dès la première détection, sans toucher au mécanisme de
+// plafond lui-même (l'opération reste en base, consultable via last_error/
+// error_code, exactement comme un abandon normal après 5 tentatives).
+export async function incrementProduitUpdateAttempts(localId: string, error: string, errorCode?: string, bloquerImmediatement = false): Promise<void> {
+  if (isWeb) return;
+  if (bloquerImmediatement) {
+    await db.runAsync('UPDATE produits_updates_pending SET attempts = 5, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
+  } else {
+    await db.runAsync('UPDATE produits_updates_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
+  }
 }
 
 export async function countProduitsPending(): Promise<number> {
@@ -197,13 +265,18 @@ export async function saveDepensePending(localId: string, data: any): Promise<vo
 
 export async function getDepensesPending(): Promise<any[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ local_id: string; data: string }>('SELECT * FROM depenses_pending WHERE synced = 0 ORDER BY created_at ASC');
-  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+  const rows = await db.getAllAsync<{ local_id: string; data: string; attempts: number; last_error: string | null; error_code: string | null }>('SELECT * FROM depenses_pending WHERE synced = 0 ORDER BY created_at ASC');
+  return rows.map(r => ({ localId: r.local_id, attempts: r.attempts, lastError: r.last_error, errorCode: r.error_code, ...JSON.parse(r.data) }));
 }
 
 export async function marquerDepenseSynced(localId: string): Promise<void> {
   if (isWeb) return;
   await db.runAsync('UPDATE depenses_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function incrementDepenseAttempts(localId: string, error: string, errorCode?: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE depenses_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
 }
 
 export async function countDepensesPending(): Promise<number> {
@@ -221,13 +294,18 @@ export async function saveClientPending(localId: string, data: any): Promise<voi
 
 export async function getClientsPending(): Promise<any[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ local_id: string; data: string }>('SELECT * FROM clients_pending WHERE synced = 0 ORDER BY created_at ASC');
-  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+  const rows = await db.getAllAsync<{ local_id: string; data: string; attempts: number; last_error: string | null; error_code: string | null }>('SELECT * FROM clients_pending WHERE synced = 0 ORDER BY created_at ASC');
+  return rows.map(r => ({ localId: r.local_id, attempts: r.attempts, lastError: r.last_error, errorCode: r.error_code, ...JSON.parse(r.data) }));
 }
 
 export async function marquerClientPendingSynced(localId: string): Promise<void> {
   if (isWeb) return;
   await db.runAsync('UPDATE clients_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function incrementClientAttempts(localId: string, error: string, errorCode?: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE clients_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
 }
 
 export async function countClientsPending(): Promise<number> {
@@ -245,13 +323,18 @@ export async function saveCommandePending(localId: string, data: any): Promise<v
 
 export async function getCommandesPending(): Promise<any[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ local_id: string; data: string }>('SELECT * FROM commandes_pending WHERE synced = 0 ORDER BY created_at ASC');
-  return rows.map(r => ({ localId: r.local_id, ...JSON.parse(r.data) }));
+  const rows = await db.getAllAsync<{ local_id: string; data: string; attempts: number; last_error: string | null; error_code: string | null }>('SELECT * FROM commandes_pending WHERE synced = 0 ORDER BY created_at ASC');
+  return rows.map(r => ({ localId: r.local_id, attempts: r.attempts, lastError: r.last_error, errorCode: r.error_code, ...JSON.parse(r.data) }));
 }
 
 export async function marquerCommandePendingSynced(localId: string): Promise<void> {
   if (isWeb) return;
   await db.runAsync('UPDATE commandes_pending SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function incrementCommandeAttempts(localId: string, error: string, errorCode?: string): Promise<void> {
+  if (isWeb) return;
+  await db.runAsync('UPDATE commandes_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE local_id = ?', [error, errorCode ?? null, localId]);
 }
 
 export async function countCommandesPending(): Promise<number> {
@@ -270,10 +353,10 @@ export async function saveOperation(id: string, type: string, payload: any): Pro
   );
 }
 
-export async function getOperationsPending(): Promise<{ id: string; type: string; payload: any; attempts: number; lastError?: string | null; notifiedFailure: boolean }[]> {
+export async function getOperationsPending(): Promise<{ id: string; type: string; payload: any; attempts: number; lastError?: string | null; errorCode?: string | null; notifiedFailure: boolean }[]> {
   if (isWeb) return [];
-  const rows = await db.getAllAsync<{ id: string; type: string; payload: string; attempts: number; last_error: string | null; notified_failure: number }>(
-    'SELECT id, type, payload, attempts, last_error, notified_failure FROM operations_pending WHERE synced = 0 ORDER BY created_at ASC'
+  const rows = await db.getAllAsync<{ id: string; type: string; payload: string; attempts: number; last_error: string | null; error_code: string | null; notified_failure: number }>(
+    'SELECT id, type, payload, attempts, last_error, error_code, notified_failure FROM operations_pending WHERE synced = 0 ORDER BY created_at ASC'
   );
   return rows.map(r => ({
     id: r.id,
@@ -281,6 +364,7 @@ export async function getOperationsPending(): Promise<{ id: string; type: string
     payload: JSON.parse(r.payload),
     attempts: r.attempts,
     lastError: r.last_error,
+    errorCode: r.error_code,
     notifiedFailure: r.notified_failure === 1,
   }));
 }
@@ -290,12 +374,26 @@ export async function markOperationSynced(id: string): Promise<void> {
   await db.runAsync('UPDATE operations_pending SET synced = 1 WHERE id = ?', [id]);
 }
 
-export async function incrementOperationAttempts(id: string, error: string): Promise<void> {
+// bloquerImmediatement : utilisé uniquement pour un conflit de verrouillage
+// optimiste (OPTIMISTIC_LOCK_CONFLICT) sur un ajustement de stock — rejouer
+// cette requête telle quelle écraserait un stock modifié entre-temps (la
+// requête contient une quantité absolue, pas un delta). On fait donc passer
+// attempts directement à 5 au lieu de l'incrémenter, pour arrêter tout rejeu
+// automatique dès la première détection, sans toucher au mécanisme de
+// plafond lui-même ni aux autres types d'opérations de cette même file.
+export async function incrementOperationAttempts(id: string, error: string, errorCode?: string, bloquerImmediatement = false): Promise<void> {
   if (isWeb) return;
-  await db.runAsync(
-    'UPDATE operations_pending SET attempts = attempts + 1, last_error = ? WHERE id = ?',
-    [error, id]
-  );
+  if (bloquerImmediatement) {
+    await db.runAsync(
+      'UPDATE operations_pending SET attempts = 5, last_error = ?, error_code = ? WHERE id = ?',
+      [error, errorCode ?? null, id]
+    );
+  } else {
+    await db.runAsync(
+      'UPDATE operations_pending SET attempts = attempts + 1, last_error = ?, error_code = ? WHERE id = ?',
+      [error, errorCode ?? null, id]
+    );
+  }
 }
 
 export async function marquerOperationEchecNotifie(id: string): Promise<void> {

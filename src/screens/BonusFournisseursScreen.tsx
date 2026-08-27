@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, Card, FAB, ActivityIndicator, Modal, Portal, TextInput, Button } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -6,6 +6,7 @@ import api, { getFournisseurs } from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useMontantInput } from '../components/MontantInput';
 
 type TypeBonus = 'RISTOURNE' | 'BONUS_VOLUME' | 'PRIME_OBJECTIF' | 'BONUS_ACHAT';
 const TYPES: { value: TypeBonus; label: string; color: string }[] = [
@@ -15,7 +16,7 @@ const TYPES: { value: TypeBonus; label: string; color: string }[] = [
   { value: 'BONUS_ACHAT', label: 'Bonus Achat', color: '#7c3aed' },
 ];
 const typeInfo = (t: string) => TYPES.find(x => x.value === t) || TYPES[0];
-const money = (v: number) => `${(v || 0).toLocaleString('fr-FR')} FCFA`;
+const money = (v: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function BonusFournisseursScreen() {
@@ -30,8 +31,9 @@ export default function BonusFournisseursScreen() {
   const [showFournisseurPicker, setShowFournisseurPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const emptyForm = { fournisseurId: 0, fournisseurNom: '', type: 'RISTOURNE' as TypeBonus, montant: '', date: todayStr(), description: '' };
+  const emptyForm = { fournisseurId: 0, fournisseurNom: '', type: 'RISTOURNE' as TypeBonus, montant: 0, date: todayStr(), description: '' };
   const [form, setForm] = useState(emptyForm);
+  const montantInput = useMontantInput(form.montant, v => setForm(f => ({ ...f, montant: v })));
 
   const charger = async () => {
     try {
@@ -72,7 +74,7 @@ export default function BonusFournisseursScreen() {
       fournisseurId: b.fournisseurId,
       fournisseurNom: b.fournisseurNom || '',
       type: b.type || 'RISTOURNE',
-      montant: String(b.montant || ''),
+      montant: b.montant || 0,
       date: b.date || todayStr(),
       description: b.description || '',
     });
@@ -83,14 +85,14 @@ export default function BonusFournisseursScreen() {
     if (!form.fournisseurId || !form.type || !form.date) {
       Alert.alert(tr('erreur', lang), 'Fournisseur, type et date sont obligatoires'); return;
     }
-    if (!form.montant || parseFloat(form.montant) <= 0) {
+    if (!form.montant || form.montant <= 0) {
       Alert.alert(tr('erreur', lang), 'Montant invalide'); return;
     }
     setSaving(true);
     const payload = {
       fournisseurId: form.fournisseurId,
       type: form.type,
-      montant: parseFloat(form.montant),
+      montant: form.montant,
       date: form.date,
       description: form.description || undefined,
     };
@@ -131,11 +133,6 @@ export default function BonusFournisseursScreen() {
 
   return (
     <View style={styles.container}>
-      {fromCache && (
-        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
-        </View>
-      )}
       <View style={styles.banner}>
         <Text style={styles.bannerLabel}>{tr('total', lang)} {tr('bonus_fournisseurs', lang)}</Text>
         <Text style={styles.bannerVal}>{money(total)}</Text>
@@ -210,7 +207,7 @@ export default function BonusFournisseursScreen() {
             ))}
           </View>
 
-          <TextInput label={tr('montant', lang) + ' *'} value={form.montant} onChangeText={t => setForm({ ...form, montant: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
+          <TextInput label={tr('montant', lang) + ' *'} value={montantInput.texte} onChangeText={montantInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
           <TextInput label="Date *" value={form.date} onChangeText={t => setForm({ ...form, date: t })} mode="outlined" placeholder="AAAA-MM-JJ" style={styles.input} />
           <TextInput label={tr('description', lang)} value={form.description} onChangeText={t => setForm({ ...form, description: t })} mode="outlined" style={styles.input} />
           <Button mode="contained" onPress={enregistrer} loading={saving} disabled={saving}>{tr('enregistrer', lang)}</Button>
@@ -220,14 +217,17 @@ export default function BonusFournisseursScreen() {
   );
 }
 
+// STYLE (2026-08-16) : accent violet (#7b1fa2) remplacé par le bleu app
+// (#1a56db) — comme CreditsScreen, cet écran sortait seul de l'identité
+// bleu/blanc du reste de Ges Boutique/Ionic.
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
-  banner: { backgroundColor: '#7b1fa2', padding: 16, alignItems: 'center' },
+  banner: { backgroundColor: '#1a56db', padding: 16, alignItems: 'center' },
   bannerLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   bannerVal: { color: '#fff', fontWeight: 'bold', fontSize: 22 },
-  card: { marginBottom: 10, borderRadius: 12 },
+  card: { marginBottom: 10, borderRadius: 16 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  montant: { fontWeight: 'bold', color: '#7b1fa2', fontSize: 16 },
+  montant: { fontWeight: 'bold', color: '#1a56db', fontSize: 16 },
   sub: { color: '#666', fontSize: 12, marginTop: 4 },
   date: { color: '#aaa', fontSize: 11 },
   typeBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
@@ -236,7 +236,7 @@ const styles = StyleSheet.create({
   btnDeleteText: { color: '#dc2626', fontSize: 11, fontWeight: '600' },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
   fab: { position: 'absolute', bottom: 20, right: 20 },
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },
+  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
   input: { marginBottom: 12 },
   fieldLabel: { fontSize: 12, fontWeight: '600', color: '#475569', marginBottom: 6 },
   picker: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#94a3b8', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 14, marginBottom: 12 },

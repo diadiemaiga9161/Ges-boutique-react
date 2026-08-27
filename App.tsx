@@ -12,6 +12,9 @@ import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { enableScreens } from 'react-native-screens';
 import SplashLoadingScreen from './src/screens/SplashLoadingScreen';
+import NetworkStatusDot from './src/components/NetworkStatusDot';
+import TutorielVendeurModal from './src/components/TutorielVendeurModal';
+import { aDejaVuTutorielVendeur } from './src/utils/tutorielVendeur';
 
 import LoginScreen from './src/screens/LoginScreen';
 import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
@@ -20,7 +23,7 @@ import BoutiqueSelectScreen from './src/screens/BoutiqueSelectScreen';
 import AppNavigation from './src/navigation';
 import { initDatabase } from './src/db/database';
 import { demarrerAutoSync } from './src/services/offline.service';
-import { setOnAuthError, initApiSession, removeStoredToken } from './src/services/api.service';
+import { setOnAuthError, initApiSession, removeStoredToken, clearAuthToken } from './src/services/api.service';
 import { setToastListener, ToastPayload } from './src/services/toast.service';
 
 // react-native-screens optimise le rendu natif (iOS/Android) en gérant les
@@ -68,6 +71,7 @@ const HEADER = {
   headerStyle: { backgroundColor: '#081648' },
   headerTintColor: '#fff' as const,
   headerTitleStyle: { fontWeight: 'bold' as const },
+  headerRight: () => <NetworkStatusDot />,
 };
 
 const AuthStack = createStackNavigator();
@@ -121,6 +125,21 @@ export default function App() {
   const [boutiqueChoisie, setBoutiqueChoisie] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
+  const [showTutorielVendeur, setShowTutorielVendeur] = useState(false);
+
+  // Tutoriel d'accueil : uniquement pour les VENDEUR (jamais ADMIN), et
+  // uniquement tant que la clé locale `tutoriel_vendeur_vu_{userId}` n'existe
+  // pas encore sur cet appareil — couvre à la fois une connexion fraîche et
+  // une session restaurée au démarrage (AsyncStorage 'user'), 100% local,
+  // aucun appel réseau.
+  useEffect(() => {
+    if (!user || user.role !== 'VENDEUR' || user.id == null) return;
+    let annule = false;
+    aDejaVuTutorielVendeur(user.id).then(dejaVu => {
+      if (!annule && !dejaVu) setShowTutorielVendeur(true);
+    });
+    return () => { annule = true; };
+  }, [user]);
 
   const handleLogout = useCallback(async () => {
     await AsyncStorage.removeItem('user');
@@ -138,6 +157,13 @@ export default function App() {
     await AsyncStorage.removeItem('boutique_nom');
     await AsyncStorage.removeItem('boutique_info');
     await removeStoredToken();
+    // BUG FIX : removeStoredToken() n'efface que le token persistant — le
+    // token gardé en mémoire (_token dans api.service.ts) restait attaché à
+    // toutes les requêtes suivantes, y compris /auth/login sur la nouvelle
+    // boutique. Un token signé par un autre serveur (secret JWT différent)
+    // fait planter JwtFilter côté backend (pas de try/catch autour du
+    // décodage) → 500 Internal Server Error au lieu d'un login normal.
+    clearAuthToken();
     setUser(null);
     setBoutiqueChoisie(false);
   }, []);
@@ -153,6 +179,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let stopSync: (() => void) | undefined;
+    let annule = false;
     const init = async () => {
       try { await initDatabase(); } catch (e) { console.warn('DB:', e); }
       await initApiSession();
@@ -163,10 +191,19 @@ export default function App() {
       const apiUrl = await AsyncStorage.getItem('api_url');
       if (apiUrl) setBoutiqueChoisie(true);
       setLoading(false);
+      // BUG FIX : demarrerAutoSync interroge la base SQLite (getAllAsync) dès le
+      // premier evenement NetInfo, qui arrive quasi immediatement apres l'abonnement
+      // -> demarre apres initDatabase() (pas avant/en parallele) pour eviter
+      // "Cannot read property 'getAllAsync' of undefined" au tout premier lancement.
+      if (!annule) {
+        stopSync = demarrerAutoSync((n) => console.log(`${n} vente(s) sync`));
+      }
     };
     init();
-    const stopSync = demarrerAutoSync((n) => console.log(`${n} vente(s) sync`));
-    return () => stopSync();
+    return () => {
+      annule = true;
+      stopSync?.();
+    };
   }, []);
 
   // Provider unique (thème + langue) englobant aussi le splash, pour que
@@ -195,6 +232,13 @@ export default function App() {
               <NavigationContainer>
                 <AuthNavigator onLogin={setUser} />
               </NavigationContainer>
+            )}
+            {user && user.role === 'VENDEUR' && (
+              <TutorielVendeurModal
+                visible={showTutorielVendeur}
+                onClose={() => setShowTutorielVendeur(false)}
+                userId={user.id}
+              />
             )}
             <GlobalToast />
           </Portal.Host>

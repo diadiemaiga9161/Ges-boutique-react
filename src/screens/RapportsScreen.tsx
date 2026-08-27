@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, Linking, RefreshControl, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
 import { Text, Card, Button, ActivityIndicator, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -216,7 +216,7 @@ export default function RapportsScreen() {
     setLoadingAnalytics(false);
   };
 
-  const money = (v: number) => `${(v || 0).toLocaleString('fr-FR')} ${boutique.devise || 'FCFA'}`;
+  const money = (v: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} ${boutique.devise || 'FCFA'}`;
 
   const envoyerWhatsApp = () => {
     const r = getActiveReport();
@@ -312,13 +312,6 @@ export default function RapportsScreen() {
         ))}
       </View>
 
-      {/* ── Bandeau offline ─────────────────────────────────────────────────── */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: 28 }}
@@ -632,7 +625,7 @@ const styles = StyleSheet.create({
   psBtnTextActive: { color: '#fff' },
 
   // Filtres date
-  filterCard: { marginBottom: 12, borderRadius: 12, elevation: 1 },
+  filterCard: { marginBottom: 12, borderRadius: 16, elevation: 1 },
   filterRow: { flexDirection: 'row', alignItems: 'flex-end' },
   filterLabel: { fontSize: 11, color: '#64748b', marginBottom: 4 },
   dateInput: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
@@ -643,7 +636,7 @@ const styles = StyleSheet.create({
   offlineTxt: { color: '#92400e', fontSize: 12 },
 
   // Cards
-  card: { marginBottom: 12, borderRadius: 12, elevation: 1 },
+  card: { marginBottom: 12, borderRadius: 16, elevation: 1 },
   summaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   cardTitle: { fontWeight: 'bold', color: '#1a56db', flex: 1 },
   exportBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: 1, borderColor: '#1a56db', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },

@@ -13,6 +13,7 @@ import {
 } from '../services/api.service';
 import { partagerFactureRN, DesignFacture } from '../services/invoice.service';
 import { sauvegarderCache, lireCache, creerCommandeOffline, executerOuMettreEnFile } from '../services/offline.service';
+import { MontantInput } from '../components/MontantInput';
 
 type StatutCommande = 'BROUILLON' | 'VALIDEE' | 'ANNULEE';
 
@@ -51,7 +52,7 @@ interface LigneForm {
   produitId: number;
   produitNom: string;
   prixOriginal: number;
-  prixUnitaire: string;
+  prixUnitaire: number;
   quantite: number;
   remise: string;
 }
@@ -120,7 +121,7 @@ export default function CommandesScreen() {
     modePaiement: 'ESPECES',
     referencePaiement: '',
     estCredit: false,
-    montantVerse: '',
+    montantVerse: 0,
     dateEcheance: '',
     notes: ''
   });
@@ -128,13 +129,13 @@ export default function CommandesScreen() {
   // Règlement individuel
   const [showReglModal, setShowReglModal] = useState(false);
   const [commandeRegl, setCommandeRegl] = useState<Commande | null>(null);
-  const [montantRegl, setMontantRegl] = useState('');
+  const [montantRegl, setMontantRegl] = useState(0);
 
   // Règlement groupé
   const [showReglGroupeModal, setShowReglGroupeModal] = useState(false);
   const [commandesCredit, setCommandesCredit] = useState<Commande[]>([]);
   const [idsSelectionnes, setIdsSelectionnes] = useState<number[]>([]);
-  const [montantReglGroupe, setMontantReglGroupe] = useState('');
+  const [montantReglGroupe, setMontantReglGroupe] = useState(0);
 
   useFocusEffect(useCallback(() => {
     charger();
@@ -190,9 +191,9 @@ export default function CommandesScreen() {
     return true;
   });
 
-  const prixLigne = (l: LigneForm) => Number(l.prixUnitaire || 0) * l.quantite * (1 - (Number(l.remise) || 0) / 100);
+  const prixLigne = (l: LigneForm) => (l.prixUnitaire || 0) * l.quantite * (1 - (Number(l.remise) || 0) / 100);
   const totalCommande = lignesForm.reduce((s, l) => s + prixLigne(l), 0);
-  const resteAPayer = Math.max(0, totalCommande - Number(form.montantVerse || 0));
+  const resteAPayer = Math.max(0, totalCommande - (form.montantVerse || 0));
 
   const nbEnAttente = commandes.filter(c => c.statut === 'BROUILLON').length;
   const nbValidees = commandes.filter(c => c.statut === 'VALIDEE').length;
@@ -209,7 +210,7 @@ export default function CommandesScreen() {
     setLignesForm(prev => {
       const ex = prev.find(l => l.produitId === p.id);
       if (ex) return prev.map(l => l.produitId === p.id ? { ...l, quantite: l.quantite + 1 } : l);
-      return [...prev, { produitId: p.id, produitNom: p.nom, prixOriginal: p.prixVente, prixUnitaire: String(p.prixVente), quantite: 1, remise: '0' }];
+      return [...prev, { produitId: p.id, produitNom: p.nom, prixOriginal: p.prixVente, prixUnitaire: p.prixVente || 0, quantite: 1, remise: '0' }];
     });
     setSearchProduit('');
     setShowProduitDrop(false);
@@ -235,7 +236,7 @@ export default function CommandesScreen() {
   const ouvrirCreer = () => {
     setEditingId(null);
     setLignesForm([]);
-    setForm({ clientId: null, clientNom: '', clientPrenom: '', clientTelephone: '', modePaiement: 'ESPECES', referencePaiement: '', estCredit: false, montantVerse: '', dateEcheance: '', notes: '' });
+    setForm({ clientId: null, clientNom: '', clientPrenom: '', clientTelephone: '', modePaiement: 'ESPECES', referencePaiement: '', estCredit: false, montantVerse: 0, dateEcheance: '', notes: '' });
     setSearchClient('');
     setSearchProduit('');
     setShowModal(true);
@@ -251,7 +252,7 @@ export default function CommandesScreen() {
       modePaiement: c.modePaiement || 'ESPECES',
       referencePaiement: '',
       estCredit: c.estCredit || false,
-      montantVerse: String(c.montantVerse || ''),
+      montantVerse: c.montantVerse || 0,
       dateEcheance: c.dateEcheance?.split('T')[0] || '',
       notes: c.notes || ''
     });
@@ -260,7 +261,7 @@ export default function CommandesScreen() {
       produitId: l.produit?.id || l.produitId || 0,
       produitNom: l.produit?.nom || l.produitNom || '',
       prixOriginal: l.produit?.prixVente || l.prixUnitaire,
-      prixUnitaire: String(l.prixUnitaire),
+      prixUnitaire: l.prixUnitaire || 0,
       quantite: l.quantite,
       remise: String((l as any).remise || 0)
     })));
@@ -284,13 +285,13 @@ export default function CommandesScreen() {
         produitId: l.produitId,
         quantite: l.quantite,
         prixUnitaire: Number(l.remise) > 0
-          ? Math.round(Number(l.prixUnitaire) * (1 - Number(l.remise) / 100))
-          : Number(l.prixUnitaire),
+          ? Math.round((l.prixUnitaire || 0) * (1 - Number(l.remise) / 100))
+          : (l.prixUnitaire || 0),
       })),
       modePaiement: form.modePaiement,
       referencePaiement: form.referencePaiement || undefined,
       estCredit: form.estCredit,
-      montantVerse: form.estCredit ? Number(form.montantVerse || 0) : undefined,
+      montantVerse: form.estCredit ? (form.montantVerse || 0) : undefined,
       dateEcheance: form.estCredit && form.dateEcheance ? form.dateEcheance : undefined,
       notes: form.notes || undefined
     };
@@ -401,14 +402,14 @@ export default function CommandesScreen() {
 
   const ouvrirReglementIndividuel = (c: Commande) => {
     setCommandeRegl(c);
-    setMontantRegl(String(c.montantRestant));
+    setMontantRegl(c.montantRestant);
     setShowReglModal(true);
   };
 
   const confirmerReglementIndividuel = async () => {
-    if (!commandeRegl || !montantRegl || Number(montantRegl) <= 0) return;
+    if (!commandeRegl || !montantRegl || montantRegl <= 0) return;
     try {
-      const montant = Number(montantRegl);
+      const montant = montantRegl;
       const res = await executerOuMettreEnFile(
         'credit_commande_payer',
         { id: commandeRegl.id, montant },
@@ -432,7 +433,7 @@ export default function CommandesScreen() {
     const credits = commandes.filter(c => c.estCredit && c.montantRestant > 0);
     setCommandesCredit(credits);
     setIdsSelectionnes(credits.map(c => c.id));
-    setMontantReglGroupe(String(totalCreditsRestants));
+    setMontantReglGroupe(totalCreditsRestants);
     setShowReglGroupeModal(true);
   };
 
@@ -443,9 +444,9 @@ export default function CommandesScreen() {
   };
 
   const confirmerReglementGroupe = async () => {
-    if (idsSelectionnes.length === 0 || !montantReglGroupe || Number(montantReglGroupe) <= 0) return;
+    if (idsSelectionnes.length === 0 || !montantReglGroupe || montantReglGroupe <= 0) return;
     try {
-      await payerCreditsGroupesCommandes(idsSelectionnes, Number(montantReglGroupe));
+      await payerCreditsGroupesCommandes(idsSelectionnes, montantReglGroupe);
       setShowReglGroupeModal(false);
       charger();
     } catch (e: any) {
@@ -495,13 +496,6 @@ export default function CommandesScreen() {
         </View>
       </View>
 
-      {/* ── Bandeau offline ── */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* ── Searchbar ── */}
       <Searchbar
@@ -717,11 +711,10 @@ export default function CommandesScreen() {
                   </View>
                   <View style={{ alignItems: 'center' }}>
                     <Text style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>Prix unit.</Text>
-                    <TextInput
+                    <MontantInput
                       style={styles.prixInput}
                       value={l.prixUnitaire}
-                      onChangeText={v => setLignesForm(prev => prev.map((x, idx) => idx === i ? { ...x, prixUnitaire: v } : x))}
-                      keyboardType="numeric"
+                      onChangeValue={v => setLignesForm(prev => prev.map((x, idx) => idx === i ? { ...x, prixUnitaire: v } : x))}
                     />
                   </View>
                   <View style={{ alignItems: 'center' }}>
@@ -782,7 +775,7 @@ export default function CommandesScreen() {
 
             {form.estCredit && (
               <>
-                <TextInput style={styles.input} value={form.montantVerse} onChangeText={v => setForm(f => ({ ...f, montantVerse: v }))} placeholder={tr('montant_verse', lang)} placeholderTextColor="#9ca3af" keyboardType="numeric" />
+                <MontantInput style={styles.input} value={form.montantVerse} onChangeValue={v => setForm(f => ({ ...f, montantVerse: v }))} placeholder={tr('montant_verse', lang)} placeholderTextColor="#9ca3af" />
                 {totalCommande > 0 && (
                   <Text style={styles.resteInfo}>{tr('reste_a_payer', lang)} : {formatMontant(resteAPayer)}</Text>
                 )}
@@ -816,19 +809,18 @@ export default function CommandesScreen() {
                   {tr('reste_du', lang)} : {formatMontant(commandeRegl.montantRestant)}
                 </Text>
               </View>
-              <TextInput
+              <MontantInput
                 style={styles.input}
                 value={montantRegl}
-                onChangeText={setMontantRegl}
-                keyboardType="numeric"
+                onChangeValue={setMontantRegl}
                 placeholder={tr('montant_payer', lang)}
                 placeholderTextColor="#9ca3af"
               />
               <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(String(commandeRegl.montantRestant / 2))}>
+                <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(commandeRegl.montantRestant / 2)}>
                   <Text style={styles.shortcutText}>{tr('moitie', lang)}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(String(commandeRegl.montantRestant))}>
+                <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(commandeRegl.montantRestant)}>
                   <Text style={styles.shortcutText}>{tr('tout_regler', lang)}</Text>
                 </TouchableOpacity>
               </View>
@@ -866,11 +858,10 @@ export default function CommandesScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
-          <TextInput
+          <MontantInput
             style={[styles.input, { marginTop: 12 }]}
             value={montantReglGroupe}
-            onChangeText={setMontantReglGroupe}
-            keyboardType="numeric"
+            onChangeValue={setMontantReglGroupe}
             placeholder={tr('montant_payer', lang)}
             placeholderTextColor="#9ca3af"
           />
@@ -881,7 +872,7 @@ export default function CommandesScreen() {
               onPress={confirmerReglementGroupe}
               style={{ flex: 1 }}
               buttonColor="#f59e0b"
-              disabled={idsSelectionnes.length === 0 || !montantReglGroupe || Number(montantReglGroupe) <= 0}>
+              disabled={idsSelectionnes.length === 0 || !montantReglGroupe || montantReglGroupe <= 0}>
               {tr('regler', lang)} {idsSelectionnes.length}
             </Button>
           </View>
@@ -913,7 +904,7 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, fontWeight: '500' },
 
   // Paper Card
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
@@ -946,7 +937,7 @@ const styles = StyleSheet.create({
   actionBtnText: { fontSize: 11, fontWeight: '600', color: '#374151' },
 
   // Modal
-  modal: { backgroundColor: '#fff', margin: 12, borderRadius: 16, padding: 16, maxHeight: '90%' },
+  modal: { backgroundColor: '#fff', margin: 12, borderRadius: 20, padding: 16, maxHeight: '90%' },
   modalTitle: { fontSize: 17, fontWeight: '700', color: '#1e3a8a', marginBottom: 14 },
   sectionTitle: { fontSize: 12, fontWeight: '700', color: '#1e3a8a', marginTop: 12, marginBottom: 6, textTransform: 'uppercase' },
   input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 10, fontSize: 13, color: '#1f2937', marginBottom: 8 },

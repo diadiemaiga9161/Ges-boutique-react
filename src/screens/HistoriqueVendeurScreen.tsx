@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -32,7 +32,7 @@ interface VendeurResume {
 }
 
 function formatPrice(n: number): string {
-  return (n || 0).toLocaleString('fr-FR') + ' F CFA';
+  return (n || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' F CFA';
 }
 
 function formatDate(iso: string): string {
@@ -142,12 +142,6 @@ export default function HistoriqueVendeurScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
-          <Text style={styles.offlineBannerText}>Hors ligne — dernières données connues</Text>
-        </View>
-      )}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow} contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}>
         {vendeurs.map(v => (
           <TouchableOpacity
@@ -215,25 +209,32 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
   chipTextActive: { color: '#fff' },
   summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  // STYLE (2026-08-16) : coins plus arrondis + ombre douce (avant : juste une
+  // bordure fine, look plat) pour un rendu plus premium.
   summaryCard: {
     flex: 1,
     backgroundColor: '#fff',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
-  summaryCardTotal: { backgroundColor: BLUE, borderColor: BLUE },
+  summaryCardTotal: {
+    backgroundColor: BLUE, borderColor: BLUE,
+    elevation: 3, shadowColor: BLUE, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+  },
   summaryLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase' },
   summaryValue: { fontSize: 20, fontWeight: '800', color: '#0f172a', marginTop: 2 },
   summarySub: { fontSize: 12, color: '#64748b', marginTop: 2 },
   jourCard: {
     backgroundColor: '#fff',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   jourHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   jourDate: { fontSize: 14, fontWeight: '700', color: '#0f172a' },

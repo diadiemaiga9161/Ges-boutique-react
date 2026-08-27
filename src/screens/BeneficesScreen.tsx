@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, Card, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,7 +16,7 @@ const MOIS = [
 ];
 const ANNEES = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
 
-const formatPrix = (v: number) => `${(v || 0).toLocaleString('fr-FR')} FCFA`;
+const formatPrix = (v: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 
 export default function BeneficesScreen() {
   const { lang } = useLang();
@@ -135,13 +135,13 @@ export default function BeneficesScreen() {
               {/* Hero */}
               <View style={styles.hero}>
                 <View style={styles.heroStat}>
-                  <Text style={styles.heroVal} numberOfLines={1} adjustsFontSizeToFit>{ca.toLocaleString('fr-FR')}</Text>
+                  <Text style={styles.heroVal} numberOfLines={1} adjustsFontSizeToFit>{ca.toLocaleString('de-DE', { maximumFractionDigits: 0 })}</Text>
                   <Text style={styles.heroLbl}>CA Total (FCFA)</Text>
                 </View>
                 <View style={styles.heroSep} />
                 <View style={styles.heroStat}>
                   <Text style={[styles.heroVal, { color: benefice >= 0 ? '#4ade80' : '#f87171' }]} numberOfLines={1} adjustsFontSizeToFit>
-                    {benefice.toLocaleString('fr-FR')}
+                    {benefice.toLocaleString('de-DE', { maximumFractionDigits: 0 })}
                   </Text>
                   <Text style={styles.heroLbl}>Bénéfice net (FCFA)</Text>
                 </View>
@@ -161,12 +161,6 @@ export default function BeneficesScreen() {
                 </View>
               </View>
 
-              {fromCache && (
-                <View style={styles.offlineBanner}>
-                  <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-                  <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-                </View>
-              )}
 
               {/* Export PDF */}
               <TouchableOpacity style={styles.exportBtn} onPress={exporterPdf} disabled={exporting}>
@@ -258,7 +252,10 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
   chipTextActive: { color: '#fff' },
 
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8, marginHorizontal: 12, borderRadius: 14 },
+  hero: {
+    backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8, marginHorizontal: 12, borderRadius: 18,
+    elevation: 3, shadowColor: '#081648', shadowOpacity: 0.25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+  },
   heroStat: { flex: 1, alignItems: 'center' },
   heroVal: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2, textAlign: 'center' },
@@ -270,7 +267,7 @@ const styles = StyleSheet.create({
   exportBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#1a56db', borderRadius: 10, paddingVertical: 8, marginHorizontal: 12, marginTop: 12 },
   exportBtnText: { color: '#1a56db', fontWeight: '700', fontSize: 12 },
 
-  card: { marginHorizontal: 12, marginBottom: 8, marginTop: 8, borderRadius: 12, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, marginTop: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },

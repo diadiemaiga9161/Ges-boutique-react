@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
+﻿import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert, Modal,
   ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity,
@@ -10,7 +10,7 @@ import {
 import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
   getProduits, deleteProduit, getCategories, createCategorie, updateCategorie, deleteCategorie,
   getStatistiquesStock, getFournisseurs,
@@ -25,6 +25,7 @@ import { StockBadge } from '../components/StockBadge';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
+import { useMontantInput } from '../components/MontantInput';
 
 type Segment = 'all' | 'low' | 'expired' | 'bio';
 const TYPES_VENTE = ['UNITE', 'KG', 'LITRE', 'COMPTANT_UNIQUEMENT'] as const;
@@ -34,8 +35,8 @@ const TYPE_VENTE_LABELS: Record<string, string> = {
 
 interface FormProduit {
   nom: string;
-  prixAchat: string;
-  prixVente: string;
+  prixAchat: number;
+  prixVente: number;
   quantite: string;
   seuilAlerte: string;
   categorieId: string;
@@ -48,7 +49,7 @@ interface FormProduit {
 }
 
 const emptyForm = (): FormProduit => ({
-  nom: '', prixAchat: '', prixVente: '', quantite: '0',
+  nom: '', prixAchat: 0, prixVente: 0, quantite: '0',
   seuilAlerte: '5', categorieId: '', fournisseurId: '', description: '', codeBarre: '',
   datePeremption: '', bio: false, typeVente: 'UNITE',
 });
@@ -71,6 +72,8 @@ export default function ProduitsScreen() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Produit | null>(null);
   const [form, setForm] = useState<FormProduit>(emptyForm());
+  const prixAchatInput = useMontantInput(form.prixAchat, v => setForm(f => ({ ...f, prixAchat: v })));
+  const prixVenteInput = useMontantInput(form.prixVente, v => setForm(f => ({ ...f, prixVente: v })));
   const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState<Categorie[]>([]);
   const [fournisseurs, setFournisseurs] = useState<any[]>([]);
@@ -134,9 +137,23 @@ export default function ProduitsScreen() {
   const [niveaux, setNiveaux] = useState<ProduitNiveau[]>([]);
   const [loadingNiveaux, setLoadingNiveaux] = useState(false);
   const [savingNiveau, setSavingNiveau] = useState(false);
-  const [formNiveau, setFormNiveau] = useState({ nom: '', parentId: '' as string, facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+  // Ni "parentId" (déduit automatiquement — racine si aucun niveau n'existe,
+  // sinon la feuille actuelle de la chaîne) ni "stock" (toujours envoyé à 0
+  // à la création, l'ajustement de stock se fait ailleurs).
+  const [formNiveau, setFormNiveau] = useState({ nom: '', facteur: '', prixAchat: 0, prixVente: 0 });
+  const prixAchatNiveauInput = useMontantInput(formNiveau.prixAchat, v => setFormNiveau(f => ({ ...f, prixAchat: v })));
+  const prixVenteNiveauInput = useMontantInput(formNiveau.prixVente, v => setFormNiveau(f => ({ ...f, prixVente: v })));
   const [editingNiveauId, setEditingNiveauId] = useState<number | null>(null);
-  const [formEditNiveau, setFormEditNiveau] = useState({ nom: '', parentId: '' as string, facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+  const [formEditNiveau, setFormEditNiveau] = useState({ nom: '', parentId: '' as string, facteur: '1', prixAchat: 0, prixVente: 0, stock: '0' });
+  const prixAchatEditNiveauInput = useMontantInput(formEditNiveau.prixAchat, v => setFormEditNiveau(f => ({ ...f, prixAchat: v })));
+  const prixVenteEditNiveauInput = useMontantInput(formEditNiveau.prixVente, v => setFormEditNiveau(f => ({ ...f, prixVente: v })));
+  // Flux guidé en langage courant (remplace le sélecteur technique de parent) —
+  // le niveau parent est toujours déduit automatiquement (racine ou feuille
+  // actuelle), jamais choisi manuellement par l'utilisateur.
+  const [niveauVeutGros, setNiveauVeutGros] = useState<boolean | null>(null); // Cas A : réponse à "vend-on aussi en gros ?"
+  const [afficherFormNiveau, setAfficherFormNiveau] = useState(true); // Cas B : formulaire du prochain sous-conditionnement visible ?
+  const [avanceAjoutOuvert, setAvanceAjoutOuvert] = useState(false); // section "Avancé" (prix d'achat) repliée par défaut — ajout
+  const [avanceEditOuvert, setAvanceEditOuvert] = useState(false); // idem en édition
 
   const charger = useCallback(async () => {
     // On tente toujours l'appel réel en premier — NetInfo.fetch() peut renvoyer
@@ -158,7 +175,10 @@ export default function ProduitsScreen() {
     setRefreshing(false);
   }, []);
 
-  useEffect(() => { charger(); }, [charger]);
+  // Recharge à chaque fois que l'écran redevient actif (ex: retour après une
+  // vente ou un achat fournisseur ailleurs dans l'app) — même pattern que
+  // SortiesScreen/CommandesScreen.
+  useFocusEffect(useCallback(() => { charger(); }, [charger]));
 
   // Filtre combiné : catégorie sélectionnée + segment (tous/faible/périmés/bio) + recherche
   // texte — comme applyFilter() d'Ionic.
@@ -197,8 +217,8 @@ export default function ProduitsScreen() {
     setEditing(p);
     setForm({
       nom: p.nom,
-      prixAchat: String(p.prixAchat),
-      prixVente: String(p.prixVente),
+      prixAchat: p.prixAchat || 0,
+      prixVente: p.prixVente || 0,
       quantite: String(p.quantite),
       seuilAlerte: String(p.seuilAlerte || 5),
       categorieId: p.categorie?.id ? String(p.categorie.id) : (p.categorieId ? String(p.categorieId) : ''),
@@ -216,7 +236,7 @@ export default function ProduitsScreen() {
 
   const sauvegarder = async () => {
     if (!form.nom.trim()) { Alert.alert('Erreur', 'Le nom est obligatoire'); return; }
-    if (!form.prixVente || Number(form.prixVente) <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
+    if (!form.prixVente || form.prixVente <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
     if (!form.categorieId) { Alert.alert('Erreur', 'La catégorie est obligatoire'); return; }
     setSaving(true);
     // Le backend attend "categorieId" (identifiant numérique d'une catégorie
@@ -224,8 +244,8 @@ export default function ProduitsScreen() {
     // dans le JSON fait rejeter toute la requête (parsing strict côté serveur).
     const data = {
       nom: form.nom.trim(),
-      prixAchat: Number(form.prixAchat) || 0,
-      prixVente: Number(form.prixVente),
+      prixAchat: form.prixAchat || 0,
+      prixVente: form.prixVente,
       quantite: Number(form.quantite) || 0,
       seuilAlerte: Number(form.seuilAlerte) || 5,
       categorieId: Number(form.categorieId),
@@ -306,12 +326,6 @@ export default function ProduitsScreen() {
     return liste.find(n => n.id === niveau.parentId)?.nom || '';
   };
 
-  const labelFacteur = (niveau: ProduitNiveau, liste: ProduitNiveau[]): string => {
-    const parent = nomParentNiveau(niveau, liste);
-    if (!parent) return 'Quantite par unite superieure';
-    return `Combien de ${niveau.nom || '...'} dans 1 ${parent} ?`;
-  };
-
   const rechargerNiveaux = async (produitId: number) => {
     const data = await getNiveaux(produitId);
     setNiveaux(data);
@@ -321,7 +335,11 @@ export default function ProduitsScreen() {
     setProduitCourant(p);
     setShowNiveauxModal(true);
     setEditingNiveauId(null);
-    setFormNiveau({ nom: '', parentId: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+    setNiveauVeutGros(null);
+    setAfficherFormNiveau(true);
+    setAvanceAjoutOuvert(false);
+    setAvanceEditOuvert(false);
+    setFormNiveau({ nom: '', facteur: '', prixAchat: 0, prixVente: 0 });
     setLoadingNiveaux(true);
     try {
       const data = await getNiveaux(p.id);
@@ -333,31 +351,50 @@ export default function ProduitsScreen() {
     }
   };
 
+  // Le parent est toujours déduit automatiquement (jamais choisi par
+  // l'utilisateur) : niveau racine (undefined) s'il n'existe encore aucun
+  // niveau, sinon la "feuille" actuelle de la chaîne (le dernier niveau créé).
   const ajouterNiveauFn = async () => {
-    if (!produitCourant || !formNiveau.nom.trim()) { Alert.alert('Erreur', 'Nom du niveau obligatoire'); return; }
+    if (!produitCourant || !formNiveau.nom.trim()) { Alert.alert('Erreur', 'Le nom du conditionnement est obligatoire'); return; }
     const facteurNum = parseFloat(formNiveau.facteur);
     if (isNaN(facteurNum) || facteurNum < 1) {
-      Alert.alert('Erreur', 'La quantité doit être >= 1');
+      Alert.alert('Erreur', "La quantité doit être un nombre entier d'au moins 1");
       return;
     }
-    if (Number(formNiveau.prixVente) <= 0) { Alert.alert('Erreur', 'Prix de vente obligatoire'); return; }
+    const prixVenteNum = formNiveau.prixVente;
+    if (isNaN(prixVenteNum) || prixVenteNum <= 0) { Alert.alert('Erreur', 'Le prix de vente est obligatoire'); return; }
     setSavingNiveau(true);
-    const parseNum = (val: string, fallback: number = 0) => {
-      const n = parseFloat(val);
-      return isNaN(n) ? fallback : n;
-    };
+    const chaine = buildNiveauxChaine(niveaux);
+    const feuilleActuelle = chaine.length > 0 ? chaine[chaine.length - 1] : null;
+    const nomCree = formNiveau.nom.trim();
     try {
       const payload = {
-        nom: formNiveau.nom.trim(),
-        parentId: formNiveau.parentId ? Number(formNiveau.parentId) : undefined,
-        facteur: Math.max(1, parseNum(formNiveau.facteur, 1)),
-        prixAchat: parseNum(formNiveau.prixAchat, 0),
-        prixVente: parseNum(formNiveau.prixVente, 0),
-        stock: parseNum(formNiveau.stock, 0),
+        nom: nomCree,
+        parentId: feuilleActuelle ? feuilleActuelle.id : undefined,
+        facteur: Math.round(facteurNum),
+        prixAchat: formNiveau.prixAchat || 0,
+        prixVente: prixVenteNum,
+        stock: 0,
       };
       await creerNiveau(produitCourant.id, payload);
       await rechargerNiveaux(produitCourant.id);
-      setFormNiveau({ nom: '', parentId: '', facteur: '1', prixAchat: '0', prixVente: '0', stock: '0' });
+      setFormNiveau({ nom: '', facteur: '', prixAchat: 0, prixVente: 0 });
+      setAvanceAjoutOuvert(false);
+      if (feuilleActuelle) {
+        // Cas B : on vient d'ajouter un sous-conditionnement — proposer d'enchaîner.
+        Alert.alert(
+          'Sous-conditionnement ajouté',
+          `Ajouter encore un sous-conditionnement sous "${nomCree}" ?`,
+          [
+            { text: 'Non', style: 'cancel', onPress: () => setAfficherFormNiveau(false) },
+            { text: 'Oui', onPress: () => setAfficherFormNiveau(true) },
+          ]
+        );
+      } else {
+        // Cas A : premier niveau créé — au prochain rendu, niveaux.length > 0
+        // fera basculer automatiquement l'écran en Cas B.
+        setNiveauVeutGros(null);
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || 'Erreur lors de la creation du niveau';
       Alert.alert('Erreur', msg);
@@ -368,30 +405,43 @@ export default function ProduitsScreen() {
 
   const ouvrirEditNiveau = (n: ProduitNiveau) => {
     setEditingNiveauId(n.id!);
+    setAvanceEditOuvert(false);
     setFormEditNiveau({
       nom: n.nom,
       parentId: n.parentId !== undefined && n.parentId !== null ? String(n.parentId) : '',
       facteur: String(n.facteur),
-      prixAchat: String(n.prixAchat),
-      prixVente: String(n.prixVente),
+      prixAchat: n.prixAchat || 0,
+      prixVente: n.prixVente || 0,
       stock: String(n.stock ?? 0),
     });
   };
 
   const sauvegarderEditNiveauFn = async () => {
     if (!editingNiveauId || !produitCourant) return;
+    if (!formEditNiveau.nom.trim()) { Alert.alert('Erreur', 'Le nom du conditionnement est obligatoire'); return; }
+    const facteurNum = parseFloat(formEditNiveau.facteur);
+    if (isNaN(facteurNum) || facteurNum < 1) {
+      Alert.alert('Erreur', "La quantité doit être un nombre entier d'au moins 1");
+      return;
+    }
+    const prixVenteNum = formEditNiveau.prixVente;
+    if (isNaN(prixVenteNum) || prixVenteNum <= 0) { Alert.alert('Erreur', 'Le prix de vente est obligatoire'); return; }
     setSavingNiveau(true);
     try {
+      // Le parent n'est pas modifiable dans ce dialogue simplifié — on garde
+      // celui déjà associé à ce niveau (formEditNiveau.parentId, pré-rempli
+      // par ouvrirEditNiveau et jamais changé depuis l'UI).
       const parentIdVal = formEditNiveau.parentId ? Number(formEditNiveau.parentId) : undefined;
       await modifierNiveau(editingNiveauId, {
         nom: formEditNiveau.nom.trim(),
         parentId: parentIdVal,
-        facteur: Number(formEditNiveau.facteur),
-        prixAchat: Number(formEditNiveau.prixAchat),
-        prixVente: Number(formEditNiveau.prixVente),
-        stock: Number(formEditNiveau.stock),
+        facteur: Math.round(facteurNum),
+        prixAchat: formEditNiveau.prixAchat || 0,
+        prixVente: prixVenteNum,
+        stock: parseFloat(formEditNiveau.stock) || 0,
       });
       setEditingNiveauId(null);
+      setAvanceEditOuvert(false);
       await rechargerNiveaux(produitCourant.id);
     } catch (e: any) {
       Alert.alert('Erreur', e.response?.data?.message || 'Modification impossible');
@@ -426,9 +476,9 @@ export default function ProduitsScreen() {
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;font-weight:600">${p.nom}</td>
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;color:#64748b">${p.categorie?.nom || '—'}</td>
         <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:center"><span style="background:${qColor}22;color:${qColor};border-radius:4px;padding:2px 8px;font-weight:700;font-size:11px">${p.quantite || 0} · ${qLabel}</span></td>
-        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right">${(p.prixAchat || 0).toLocaleString('fr-FR')} FCFA</td>
-        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${(p.prixVente || 0).toLocaleString('fr-FR')} FCFA</td>
-        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;color:#1d4ed8">${((p.quantite || 0) * (p.prixAchat || 0)).toLocaleString('fr-FR')} FCFA</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right">${(p.prixAchat || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${(p.prixVente || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
+        <td style="padding:7px 8px;border:1px solid #eee;font-size:12px;text-align:right;color:#1d4ed8">${((p.quantite || 0) * (p.prixAchat || 0)).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
       </tr>`;
     }).join('');
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Stock Produits</title>
@@ -452,7 +502,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 <div class="kpis">
 <div class="kpi kpi--b"><div class="kpi-val">${liste.length}</div><div class="kpi-lbl">Produits</div></div>
 <div class="kpi kpi--s"><div class="kpi-val">${totalArticles}</div><div class="kpi-lbl">Total articles</div></div>
-<div class="kpi kpi--g"><div class="kpi-val">${valeurTotale.toLocaleString('fr-FR')} FCFA</div><div class="kpi-lbl">Valeur stock</div></div>
+<div class="kpi kpi--g"><div class="kpi-val">${valeurTotale.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</div><div class="kpi-lbl">Valeur stock</div></div>
 </div>
 <div class="body">
 <table><thead><tr><th>Produit</th><th>Catégorie</th><th>Stock</th><th>P. Achat</th><th>P. Vente</th><th>Valeur</th></tr></thead>
@@ -530,6 +580,12 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
     return '';
   };
 
+  // Chaîne ordonnée et niveau "feuille" (le plus bas) du produit courant — sert
+  // au flux guidé (Cas B) pour savoir sous quel niveau proposer le prochain
+  // sous-conditionnement, sans jamais demander de choisir un parent.
+  const chaineNiveauxActuelle = buildNiveauxChaine(niveaux);
+  const niveauFeuilleActuel = chaineNiveauxActuelle.length > 0 ? chaineNiveauxActuelle[chaineNiveauxActuelle.length - 1] : null;
+
   if (loading) return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ padding: 12 }}>
       <SkeletonCard count={6} />
@@ -538,15 +594,6 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Bannière hors ligne */}
-      {offline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineText}>
-            {tr('hors_ligne', lang)} — données en cache
-            {pendingCount > 0 ? ` · ${pendingCount} ${tr('en_attente_sync', lang)}` : ''}
-          </Text>
-        </View>
-      )}
       {!offline && pendingCount > 0 && (
         <View style={styles.syncBanner}>
           <Text style={styles.syncText}>🔄 {pendingCount} produit(s) en cours de synchronisation</Text>
@@ -564,7 +611,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
           <View style={[styles.colorCard, { backgroundColor: '#dcfce7' }]}>
             <MaterialCommunityIcons name="trending-up" size={16} color="#15803d" />
             <Text style={[styles.ccLabel, { color: '#15803d' }]}>Valeur stock</Text>
-            <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('fr-FR')} F</Text>
+            <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
           </View>
           <View style={[styles.colorCard, { backgroundColor: '#fef3c7' }]}>
             <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#b45309" />
@@ -647,8 +694,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 </Text>
 
                 <View style={styles.row}>
-                  <Text style={styles.prix}>Vente : {item.prixVente} FCFA</Text>
-                  {isAdmin && <Text style={styles.prixAchat}>Achat : {item.prixAchat} FCFA</Text>}
+                  <Text style={styles.prix}>Vente : {(item.prixVente || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+                  {isAdmin && <Text style={styles.prixAchat}>Achat : {(item.prixAchat || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>}
                   <Text style={styles.prixAchat}>Seuil : {item.seuilAlerte || 5}</Text>
                 </View>
 
@@ -689,21 +736,16 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             </Text>
             <IconButton icon="close" onPress={fermerModal} />
           </View>
-          {offline && (
-            <View style={styles.offlineBanner}>
-              <Text style={styles.offlineText}>{tr('hors_ligne', lang)} — sera synchronisé au retour</Text>
-            </View>
-          )}
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
             <TextInput label={tr('nom_produit', lang)} value={form.nom}
               onChangeText={v => setForm(f => ({ ...f, nom: v }))}
               style={styles.input} mode="outlined" />
             <View style={styles.row2}>
-              <TextInput label={`${tr('prix_achat', lang)} (FCFA)`} value={form.prixAchat}
-                onChangeText={v => setForm(f => ({ ...f, prixAchat: v }))}
+              <TextInput label={`${tr('prix_achat', lang)} (FCFA)`} value={prixAchatInput.texte}
+                onChangeText={prixAchatInput.onChangeText}
                 keyboardType="numeric" style={[styles.input, { flex: 1, marginRight: 8 }]} mode="outlined" />
-              <TextInput label={`${tr('prix_vente', lang)} (FCFA) *`} value={form.prixVente}
-                onChangeText={v => setForm(f => ({ ...f, prixVente: v }))}
+              <TextInput label={`${tr('prix_vente', lang)} (FCFA) *`} value={prixVenteInput.texte}
+                onChangeText={prixVenteInput.onChangeText}
                 keyboardType="numeric" style={[styles.input, { flex: 1 }]} mode="outlined" />
             </View>
             <View style={styles.row2}>
@@ -877,7 +919,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               <View style={[styles.colorCard, { backgroundColor: '#dcfce7' }]}>
                 <MaterialCommunityIcons name="trending-up" size={16} color="#15803d" />
                 <Text style={[styles.ccLabel, { color: '#15803d' }]}>Valeur stock</Text>
-                <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('fr-FR')} F</Text>
+                <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
               </View>
               <View style={[styles.colorCard, { backgroundColor: '#fef3c7' }]}>
                 <MaterialCommunityIcons name="alert-outline" size={16} color="#b45309" />
@@ -950,64 +992,91 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 return (
                   <View key={n.id} style={nStyles.niveauCard}>
                     {editingNiveauId === n.id ? (
-                      /* Mode edition */
+                      /* Mode edition — dialogue convivial, sans sélecteur technique de parent
+                         (le parent reste celui déjà associé à ce niveau, non modifiable ici) */
                       <View>
                         <Text style={nStyles.niveauEditTitle}>Modifier {n.nom}</Text>
-                        <TextInput label="Nom de l'emballage (ex: Carton, Sachet, Piece)"
+                        <TextInput label="Comment s'appelle ce conditionnement ?"
+                          placeholder="Ex : Carton, Sachet, Bidon"
                           value={formEditNiveau.nom}
                           onChangeText={v => setFormEditNiveau(f => ({ ...f, nom: v }))}
                           style={nStyles.inp} mode="outlined" />
 
-                        {/* Selecteur parent */}
-                        <Text style={nStyles.selectLabel}>Il est contenu dans :</Text>
-                        <View style={nStyles.parentSelect}>
-                          <TouchableOpacity
-                            style={[nStyles.parentOption, !formEditNiveau.parentId && nStyles.parentOptionActive]}
-                            onPress={() => setFormEditNiveau(f => ({ ...f, parentId: '', facteur: '1' }))}
-                          >
-                            <Text style={[nStyles.parentOptionText, !formEditNiveau.parentId && nStyles.parentOptionTextActive]}>
-                              C'est le plus grand
-                            </Text>
-                          </TouchableOpacity>
-                          {niveaux.filter(pn => pn.id !== n.id).map(pn => (
-                            <TouchableOpacity
-                              key={pn.id}
-                              style={[nStyles.parentOption, formEditNiveau.parentId === String(pn.id) && nStyles.parentOptionActive]}
-                              onPress={() => setFormEditNiveau(f => ({ ...f, parentId: String(pn.id) }))}
-                            >
-                              <Text style={[nStyles.parentOptionText, formEditNiveau.parentId === String(pn.id) && nStyles.parentOptionTextActive]}>
-                                {pn.nom}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
+                        <TextInput
+                          label={
+                            parentNom
+                              ? `Combien de ${formEditNiveau.nom || n.nom} dans un(e) ${parentNom} ?`
+                              : `Combien de ${produitCourant?.nom || 'produit'} (vendu à l'unité) contient un(e) ${formEditNiveau.nom || n.nom} ?`
+                          }
+                          value={formEditNiveau.facteur}
+                          onChangeText={v => setFormEditNiveau(f => ({ ...f, facteur: v }))}
+                          keyboardType="numeric" style={nStyles.inp} mode="outlined" />
 
-                        {formEditNiveau.parentId !== '' && (
-                          <TextInput
-                            label={labelFacteur(
-                              { ...n, nom: formEditNiveau.nom || n.nom, parentId: Number(formEditNiveau.parentId) },
-                              niveaux
-                            )}
-                            value={formEditNiveau.facteur}
-                            onChangeText={v => setFormEditNiveau(f => ({ ...f, facteur: v }))}
+                        <TextInput label={`Prix de vente d'un(e) ${formEditNiveau.nom || n.nom} ?`}
+                          value={prixVenteEditNiveauInput.texte}
+                          onChangeText={prixVenteEditNiveauInput.onChangeText}
+                          keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                        <TouchableOpacity style={nStyles.avanceToggle} onPress={() => setAvanceEditOuvert(o => !o)}>
+                          <MaterialCommunityIcons name={avanceEditOuvert ? 'chevron-up' : 'chevron-down'} size={16} color="#7c3aed" />
+                          <Text style={nStyles.avanceToggleText}>Avancé (prix d'achat)</Text>
+                        </TouchableOpacity>
+                        {avanceEditOuvert && (
+                          <TextInput label={`Prix d'achat d'un(e) ${formEditNiveau.nom || n.nom} ?`}
+                            value={prixAchatEditNiveauInput.texte}
+                            onChangeText={prixAchatEditNiveauInput.onChangeText}
                             keyboardType="numeric" style={nStyles.inp} mode="outlined" />
                         )}
 
-                        <View style={nStyles.row2}>
-                          <TextInput label="Prix achat (FCFA)" value={formEditNiveau.prixAchat}
-                            onChangeText={v => setFormEditNiveau(f => ({ ...f, prixAchat: v }))}
-                            keyboardType="numeric" style={[nStyles.inp, { flex: 1, marginRight: 6 }]} mode="outlined" />
-                          <TextInput label="Prix vente (FCFA)" value={formEditNiveau.prixVente}
-                            onChangeText={v => setFormEditNiveau(f => ({ ...f, prixVente: v }))}
-                            keyboardType="numeric" style={[nStyles.inp, { flex: 1 }]} mode="outlined" />
-                        </View>
                         <TextInput label="Stock actuel" value={formEditNiveau.stock}
                           onChangeText={v => setFormEditNiveau(f => ({ ...f, stock: v }))}
                           keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                        {/* Encart de comparaison, recalculé en direct */}
+                        {(() => {
+                          const facteurN = parseFloat(formEditNiveau.facteur);
+                          const prixVenteN = formEditNiveau.prixVente;
+                          if (isNaN(facteurN) || facteurN < 1 || isNaN(prixVenteN) || prixVenteN <= 0) return null;
+                          const nomAffiche = formEditNiveau.nom || n.nom;
+                          if (parentNom) {
+                            const parentNiveau = niveaux.find(pn => pn.id === n.parentId);
+                            const prixParent = parentNiveau?.prixVente ?? 0;
+                            const valeurEquivalente = facteurN * prixVenteN;
+                            const ecart = valeurEquivalente - prixParent;
+                            return (
+                              <View style={nStyles.comparaisonBox}>
+                                <Text style={nStyles.comparaisonText}>
+                                  1 {parentNom} = {facteurN} {nomAffiche} à {prixVenteN.toLocaleString('de-DE')} F l'unité = {valeurEquivalente.toLocaleString('de-DE')} F si vendus séparément.
+                                </Text>
+                                <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? '#15803d' : '#b91c1c' }]}>
+                                  {ecart >= 0
+                                    ? `Le prix actuel d'1 ${parentNom} (${prixParent.toLocaleString('de-DE')} F) fait économiser ${ecart.toLocaleString('de-DE')} F au client qui achète en ${parentNom}.`
+                                    : `Le prix actuel d'1 ${parentNom} (${prixParent.toLocaleString('de-DE')} F) coûte ${Math.abs(ecart).toLocaleString('de-DE')} F de plus — vérifie le prix de ${parentNom} ou de ${nomAffiche}.`}
+                                </Text>
+                              </View>
+                            );
+                          }
+                          const prixUnite = produitCourant?.prixVente || 0;
+                          const valeurDetail = facteurN * prixUnite;
+                          const ecart = valeurDetail - prixVenteN;
+                          return (
+                            <View style={nStyles.comparaisonBox}>
+                              <Text style={nStyles.comparaisonText}>
+                                1 {nomAffiche} = {facteurN} {produitCourant?.nom} à {prixUnite.toLocaleString('de-DE')} F l'unité = {valeurDetail.toLocaleString('de-DE')} F si vendu(s) à l'unité.
+                              </Text>
+                              <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? '#15803d' : '#b91c1c' }]}>
+                                {ecart >= 0
+                                  ? `Ton prix ${nomAffiche} (${prixVenteN.toLocaleString('de-DE')} F) fait économiser ${ecart.toLocaleString('de-DE')} F au client qui achète en gros.`
+                                  : `Ton prix ${nomAffiche} (${prixVenteN.toLocaleString('de-DE')} F) coûte ${Math.abs(ecart).toLocaleString('de-DE')} F de plus que l'achat à l'unité — vérifie ce prix.`}
+                              </Text>
+                            </View>
+                          );
+                        })()}
+
                         <View style={nStyles.row2}>
                           <Button mode="contained" onPress={sauvegarderEditNiveauFn} loading={savingNiveau}
                             style={{ flex: 1, marginRight: 6 }} buttonColor="#7c3aed">{tr('enregistrer', lang)}</Button>
-                          <Button mode="outlined" onPress={() => setEditingNiveauId(null)}
+                          <Button mode="outlined" onPress={() => { setEditingNiveauId(null); setAvanceEditOuvert(false); }}
                             style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
                         </View>
                       </View>
@@ -1041,11 +1110,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                         <View style={nStyles.prixRow}>
                           <View style={nStyles.prixBox}>
                             <Text style={nStyles.prixLabel}>Achat</Text>
-                            <Text style={nStyles.prixAchatVal}>{n.prixAchat.toLocaleString('fr-FR')} F</Text>
+                            <Text style={nStyles.prixAchatVal}>{n.prixAchat.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
                           </View>
                           <View style={[nStyles.prixBox, { backgroundColor: '#f0fdf4' }]}>
                             <Text style={[nStyles.prixLabel, { color: '#15803d' }]}>Vente</Text>
-                            <Text style={nStyles.prixVenteVal}>{n.prixVente.toLocaleString('fr-FR')} F</Text>
+                            <Text style={nStyles.prixVenteVal}>{n.prixVente.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
                           </View>
                         </View>
 
@@ -1097,72 +1166,162 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
               <Divider style={{ marginVertical: 16 }} />
 
-              {/* Formulaire ajouter un niveau */}
-              <View style={nStyles.addSection}>
-                <Text style={nStyles.addTitle}>+ Ajouter un emballage</Text>
-                <Text style={nStyles.addHint}>
-                  Ex : Carton contient 20 Sachets → nom = "Sachet", contenu dans = "Carton"
-                </Text>
-
-                <TextInput label="Nom de l'emballage (ex: Carton, Sachet, Piece)"
-                  value={formNiveau.nom}
-                  onChangeText={v => setFormNiveau(f => ({ ...f, nom: v }))}
-                  style={nStyles.inp} mode="outlined" />
-
-                {/* Selecteur parent : "Il est contenu dans :" */}
-                <Text style={nStyles.selectLabel}>Il est contenu dans :</Text>
-                <View style={nStyles.parentSelect}>
-                  <TouchableOpacity
-                    style={[nStyles.parentOption, formNiveau.parentId === '' && nStyles.parentOptionActive]}
-                    onPress={() => setFormNiveau(f => ({ ...f, parentId: '', facteur: '1' }))}
-                  >
-                    <Text style={[nStyles.parentOptionText, formNiveau.parentId === '' && nStyles.parentOptionTextActive]}>
-                      {produitCourant?.nom} (produit principal)
-                    </Text>
-                  </TouchableOpacity>
-                  {niveaux.map(pn => (
-                    <TouchableOpacity
-                      key={pn.id}
-                      style={[nStyles.parentOption, formNiveau.parentId === String(pn.id) && nStyles.parentOptionActive]}
-                      onPress={() => setFormNiveau(f => ({ ...f, parentId: String(pn.id), facteur: '1' }))}
-                    >
-                      <Text style={[nStyles.parentOptionText, formNiveau.parentId === String(pn.id) && nStyles.parentOptionTextActive]}>
-                        {pn.nom}
+              {/* Flux guidé en langage courant — le parent (racine ou feuille
+                  actuelle) est toujours déduit automatiquement, jamais choisi
+                  manuellement. Cas A : aucun niveau n'existe encore.
+                  Cas B : au moins un niveau existe déjà. */}
+              {niveaux.length === 0 ? (
+                <View style={nStyles.addSection}>
+                  {niveauVeutGros === null ? (
+                    <View>
+                      <Text style={nStyles.addTitle}>Vente en gros</Text>
+                      <Text style={nStyles.addHint}>
+                        Ce produit se vend-il aussi en plus grand conditionnement (en gros) ?
                       </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                      <View style={nStyles.row2}>
+                        <Button mode="outlined" onPress={() => setShowNiveauxModal(false)} style={{ flex: 1, marginRight: 6 }}>
+                          Non
+                        </Button>
+                        <Button mode="contained" onPress={() => setNiveauVeutGros(true)} style={{ flex: 1 }} buttonColor="#16a34a">
+                          Oui
+                        </Button>
+                      </View>
+                    </View>
+                  ) : (
+                    <View>
+                      <Text style={nStyles.addTitle}>Nouveau conditionnement</Text>
+                      <Text style={nStyles.addHint}>
+                        Ex : ce produit se vend aussi par Carton, Sachet, Bidon...
+                      </Text>
 
-                {/* Facteur — toujours visible */}
-                <TextInput
-                  label={(() => {
-                    if (formNiveau.parentId) {
-                      const parent = niveaux.find(n => String(n.id) === formNiveau.parentId);
-                      return `Quantité dans 1 ${parent?.nom || 'unité parent'}`;
-                    }
-                    return `Quantité dans 1 ${produitCourant?.nom || 'produit'}`;
+                      <TextInput label="Comment s'appelle ce conditionnement ?"
+                        placeholder="Ex : Carton, Sachet, Bidon"
+                        value={formNiveau.nom}
+                        onChangeText={v => setFormNiveau(f => ({ ...f, nom: v }))}
+                        style={nStyles.inp} mode="outlined" />
+
+                      <TextInput
+                        label={`Combien de ${produitCourant?.nom || 'produit'} (vendu à l'unité) contient un(e) ${formNiveau.nom || '...'} ?`}
+                        value={formNiveau.facteur}
+                        onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
+                        keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                      <TextInput label={`Prix de vente d'un(e) ${formNiveau.nom || '...'} ?`}
+                        value={prixVenteNiveauInput.texte}
+                        onChangeText={prixVenteNiveauInput.onChangeText}
+                        keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                      <TouchableOpacity style={nStyles.avanceToggle} onPress={() => setAvanceAjoutOuvert(o => !o)}>
+                        <MaterialCommunityIcons name={avanceAjoutOuvert ? 'chevron-up' : 'chevron-down'} size={16} color="#15803d" />
+                        <Text style={[nStyles.avanceToggleText, { color: '#15803d' }]}>Avancé (prix d'achat)</Text>
+                      </TouchableOpacity>
+                      {avanceAjoutOuvert && (
+                        <TextInput label={`Prix d'achat d'un(e) ${formNiveau.nom || '...'} ?`}
+                          value={prixAchatNiveauInput.texte}
+                          onChangeText={prixAchatNiveauInput.onChangeText}
+                          keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+                      )}
+
+                      {/* Encart de comparaison, recalculé en direct */}
+                      {(() => {
+                        const facteurN = parseFloat(formNiveau.facteur);
+                        const prixVenteN = formNiveau.prixVente;
+                        if (isNaN(facteurN) || facteurN < 1 || isNaN(prixVenteN) || prixVenteN <= 0) return null;
+                        const nomAffiche = formNiveau.nom || '...';
+                        const prixUnite = produitCourant?.prixVente || 0;
+                        const valeurDetail = facteurN * prixUnite;
+                        const ecart = valeurDetail - prixVenteN;
+                        return (
+                          <View style={nStyles.comparaisonBox}>
+                            <Text style={nStyles.comparaisonText}>
+                              1 {nomAffiche} = {facteurN} {produitCourant?.nom} à {prixUnite.toLocaleString('de-DE')} F l'unité = {valeurDetail.toLocaleString('de-DE')} F si vendu(s) à l'unité.
+                            </Text>
+                            <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? '#15803d' : '#b91c1c' }]}>
+                              {ecart >= 0
+                                ? `Ton prix ${nomAffiche} (${prixVenteN.toLocaleString('de-DE')} F) fait économiser ${ecart.toLocaleString('de-DE')} F au client qui achète en gros.`
+                                : `Ton prix ${nomAffiche} (${prixVenteN.toLocaleString('de-DE')} F) coûte ${Math.abs(ecart).toLocaleString('de-DE')} F de plus que l'achat à l'unité — vérifie ce prix.`}
+                            </Text>
+                          </View>
+                        );
+                      })()}
+
+                      <Button mode="contained" onPress={ajouterNiveauFn} loading={savingNiveau}
+                        style={{ marginTop: 8, borderRadius: 10 }} contentStyle={{ height: 48 }}
+                        buttonColor="#16a34a" icon="check">
+                        Enregistrer ce conditionnement
+                      </Button>
+                    </View>
+                  )}
+                </View>
+              ) : afficherFormNiveau ? (
+                <View style={nStyles.addSection}>
+                  <Text style={nStyles.addTitle}>Ajouter un sous-conditionnement sous {niveauFeuilleActuel?.nom}</Text>
+                  <Text style={nStyles.addHint}>
+                    Ex : {niveauFeuilleActuel?.nom} contient plusieurs plus petits emballages
+                  </Text>
+
+                  <TextInput label="Comment s'appelle ce sous-conditionnement ?"
+                    placeholder="Ex : Paquet, Piece"
+                    value={formNiveau.nom}
+                    onChangeText={v => setFormNiveau(f => ({ ...f, nom: v }))}
+                    style={nStyles.inp} mode="outlined" />
+
+                  <TextInput
+                    label={`Combien de ${formNiveau.nom || '...'} dans un(e) ${niveauFeuilleActuel?.nom} ?`}
+                    value={formNiveau.facteur}
+                    onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
+                    keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                  <TextInput label={`Prix de vente d'un(e) ${formNiveau.nom || '...'} ?`}
+                    value={prixVenteNiveauInput.texte}
+                    onChangeText={prixVenteNiveauInput.onChangeText}
+                    keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+
+                  <TouchableOpacity style={nStyles.avanceToggle} onPress={() => setAvanceAjoutOuvert(o => !o)}>
+                    <MaterialCommunityIcons name={avanceAjoutOuvert ? 'chevron-up' : 'chevron-down'} size={16} color="#15803d" />
+                    <Text style={[nStyles.avanceToggleText, { color: '#15803d' }]}>Avancé (prix d'achat)</Text>
+                  </TouchableOpacity>
+                  {avanceAjoutOuvert && (
+                    <TextInput label={`Prix d'achat d'un(e) ${formNiveau.nom || '...'} ?`}
+                      value={prixAchatNiveauInput.texte}
+                      onChangeText={prixAchatNiveauInput.onChangeText}
+                      keyboardType="numeric" style={nStyles.inp} mode="outlined" />
+                  )}
+
+                  {/* Encart de comparaison, recalculé en direct */}
+                  {(() => {
+                    const facteurN = parseFloat(formNiveau.facteur);
+                    const prixVenteN = formNiveau.prixVente;
+                    if (isNaN(facteurN) || facteurN < 1 || isNaN(prixVenteN) || prixVenteN <= 0 || !niveauFeuilleActuel) return null;
+                    const nomAffiche = formNiveau.nom || '...';
+                    const valeurEquivalente = facteurN * prixVenteN;
+                    const ecart = valeurEquivalente - niveauFeuilleActuel.prixVente;
+                    return (
+                      <View style={nStyles.comparaisonBox}>
+                        <Text style={nStyles.comparaisonText}>
+                          1 {niveauFeuilleActuel.nom} = {facteurN} {nomAffiche} à {prixVenteN.toLocaleString('de-DE')} F l'unité = {valeurEquivalente.toLocaleString('de-DE')} F si vendus séparément.
+                        </Text>
+                        <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? '#15803d' : '#b91c1c' }]}>
+                          {ecart >= 0
+                            ? `Le prix actuel d'1 ${niveauFeuilleActuel.nom} (${niveauFeuilleActuel.prixVente.toLocaleString('de-DE')} F) fait économiser ${ecart.toLocaleString('de-DE')} F au client qui achète en ${niveauFeuilleActuel.nom}.`
+                            : `Le prix actuel d'1 ${niveauFeuilleActuel.nom} (${niveauFeuilleActuel.prixVente.toLocaleString('de-DE')} F) coûte ${Math.abs(ecart).toLocaleString('de-DE')} F de plus — vérifie le prix de ${niveauFeuilleActuel.nom} ou de ${nomAffiche}.`}
+                        </Text>
+                      </View>
+                    );
                   })()}
-                  value={formNiveau.facteur}
-                  onChangeText={v => setFormNiveau(f => ({ ...f, facteur: v }))}
-                  keyboardType="numeric" style={nStyles.inp} mode="outlined" />
 
-                <View style={nStyles.row2}>
-                  <TextInput label="Prix achat (FCFA)" value={formNiveau.prixAchat}
-                    onChangeText={v => setFormNiveau(f => ({ ...f, prixAchat: v }))}
-                    keyboardType="numeric" style={[nStyles.inp, { flex: 1, marginRight: 6 }]} mode="outlined" />
-                  <TextInput label="Prix vente (FCFA) *" value={formNiveau.prixVente}
-                    onChangeText={v => setFormNiveau(f => ({ ...f, prixVente: v }))}
-                    keyboardType="numeric" style={[nStyles.inp, { flex: 1 }]} mode="outlined" />
+                  <Button mode="contained" onPress={ajouterNiveauFn} loading={savingNiveau}
+                    style={{ marginTop: 8, borderRadius: 10 }} contentStyle={{ height: 48 }}
+                    buttonColor="#16a34a" icon="check">
+                    Enregistrer ce sous-conditionnement
+                  </Button>
                 </View>
-                <TextInput label="Stock actuel" value={formNiveau.stock}
-                  onChangeText={v => setFormNiveau(f => ({ ...f, stock: v }))}
-                  keyboardType="numeric" style={nStyles.inp} mode="outlined" />
-                <Button mode="contained" onPress={ajouterNiveauFn} loading={savingNiveau}
-                  style={{ marginTop: 8, borderRadius: 10 }} contentStyle={{ height: 48 }}
-                  buttonColor="#16a34a" icon="plus">
-                  Ajouter cet emballage
-                </Button>
-              </View>
+              ) : (
+                <TouchableOpacity style={nStyles.reouvrirBtn} onPress={() => setAfficherFormNiveau(true)}>
+                  <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#16a34a" />
+                  <Text style={nStyles.reouvrirText}>Ajouter un sous-conditionnement</Text>
+                </TouchableOpacity>
+              )}
 
             </ScrollView>
           )}
@@ -1202,19 +1361,22 @@ const nStyles = StyleSheet.create({
   decomposerText: { color: '#c2410c', fontWeight: '600', fontSize: 13 },
   // Formulaire edition
   niveauEditTitle: { fontWeight: '700', color: '#7c3aed', marginBottom: 10 },
-  // Selecteur parent
-  selectLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6, marginTop: 4 },
-  parentSelect: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  parentOption: { borderRadius: 20, borderWidth: 1.5, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#f8fafc' },
-  parentOptionActive: { borderColor: '#7c3aed', backgroundColor: '#faf5ff' },
-  parentOptionText: { fontSize: 13, color: '#64748b', fontWeight: '500' },
-  parentOptionTextActive: { color: '#7c3aed', fontWeight: '700' },
   // Formulaire ajout
   addSection: { backgroundColor: '#f0fdf4', borderRadius: 12, padding: 14 },
   addTitle: { fontSize: 15, fontWeight: '700', color: '#15803d', marginBottom: 4 },
   addHint: { color: '#64748b', fontSize: 12, marginBottom: 12 },
   inp: { marginBottom: 10, backgroundColor: '#fff' },
   row2: { flexDirection: 'row', marginBottom: 0 },
+  // Section repliable "Avancé" (prix d'achat) — masquée par défaut pour ne
+  // pas surcharger un utilisateur non technique.
+  avanceToggle: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10, marginTop: -2 },
+  avanceToggleText: { fontSize: 12, fontWeight: '700', color: '#7c3aed' },
+  // Encart de comparaison gros/détail, recalculé en direct
+  comparaisonBox: { backgroundColor: '#eff6ff', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#bfdbfe' },
+  comparaisonText: { fontSize: 12.5, color: '#1e3a8a', lineHeight: 18 },
+  // Bouton pour rouvrir le formulaire d'ajout après avoir répondu "Non"
+  reouvrirBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#f0fdf4', borderRadius: 10, borderWidth: 1, borderColor: '#86efac', paddingVertical: 12 },
+  reouvrirText: { color: '#15803d', fontWeight: '700', fontSize: 13 },
 });
 
 const styles = StyleSheet.create({

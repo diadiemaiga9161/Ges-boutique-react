@@ -9,6 +9,7 @@ import api, { createDepot, effectuerRetraitDepot, cloturerDepot, getGroupesClien
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
+import { MontantInput } from '../components/MontantInput';
 
 interface DepotClient {
   id: number;
@@ -82,13 +83,13 @@ export default function DepotsScreen() {
   const [clientSearch, setClientSearch] = useState('');
   const [clientSuggestions, setClientSuggestions] = useState<DepotClient[]>([]);
   const [selectedClient, setSelectedClient] = useState<DepotClient | null>(null);
-  const [form, setForm] = useState({ nom: '', prenom: '', numero: '', montant: '', observation: '' });
+  const [form, setForm] = useState({ nom: '', prenom: '', numero: '', montant: 0, observation: '' });
 
   // Modal détail + retrait
   const [selected, setSelected] = useState<DepotGarde | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [showRetrait, setShowRetrait] = useState(false);
-  const [retraitMontant, setRetraitMontant] = useState('');
+  const [retraitMontant, setRetraitMontant] = useState(0);
   const [retraitObs, setRetraitObs] = useState('');
   const [cloturing, setCloturing] = useState(false);
 
@@ -98,7 +99,7 @@ export default function DepotsScreen() {
   const [loadingGroupes, setLoadingGroupes] = useState(false);
   const [showRetraitGlobal, setShowRetraitGlobal] = useState(false);
   const [clientRetraitGlobal, setClientRetraitGlobal] = useState<ClientDepotGroupe | null>(null);
-  const [retraitGlobalMontant, setRetraitGlobalMontant] = useState('');
+  const [retraitGlobalMontant, setRetraitGlobalMontant] = useState(0);
   const [retraitGlobalObs, setRetraitGlobalObs] = useState('');
   const [savingRetraitGlobal, setSavingRetraitGlobal] = useState(false);
 
@@ -164,7 +165,7 @@ export default function DepotsScreen() {
   };
 
   const openCreate = () => {
-    setForm({ nom: '', prenom: '', numero: '', montant: '', observation: '' });
+    setForm({ nom: '', prenom: '', numero: '', montant: 0, observation: '' });
     setSelectedClient(null);
     setClientSearch('');
     setClientSuggestions([]);
@@ -174,7 +175,7 @@ export default function DepotsScreen() {
   const sauvegarder = async () => {
     if (!form.nom.trim()) { Alert.alert(tr('erreur', lang), tr('nom', lang) + ' ' + tr('remplir_champs', lang).toLowerCase()); return; }
     if (!form.numero.trim()) { Alert.alert(tr('erreur', lang), tr('telephone', lang) + ' ' + tr('remplir_champs', lang).toLowerCase()); return; }
-    const mt = parseFloat(form.montant);
+    const mt = form.montant;
     if (!mt || mt <= 0) { Alert.alert(tr('erreur', lang), tr('montant_depot', lang)); return; }
     setSaving(true);
     try {
@@ -206,7 +207,7 @@ export default function DepotsScreen() {
 
   const effectuerRetrait = async () => {
     if (!selected) return;
-    const mt = parseFloat(retraitMontant);
+    const mt = retraitMontant;
     if (!mt || mt <= 0) { Alert.alert(tr('erreur', lang), tr('montant_retrait', lang)); return; }
     if (mt > selected.montantRestant) { Alert.alert(tr('erreur', lang), `Max : ${money(selected.montantRestant)}`); return; }
     try {
@@ -272,7 +273,7 @@ export default function DepotsScreen() {
 
   const ouvrirRetraitGlobal = (client: ClientDepotGroupe) => {
     setClientRetraitGlobal(client);
-    setRetraitGlobalMontant('');
+    setRetraitGlobalMontant(0);
     setRetraitGlobalObs('');
     setShowRetraitGlobal(true);
   };
@@ -280,7 +281,7 @@ export default function DepotsScreen() {
   const saveRetraitGlobal = () => {
     if (!clientRetraitGlobal) return;
     const total = clientRetraitGlobal.totalMontantRestant;
-    const montant = parseFloat(retraitGlobalMontant) || 0;
+    const montant = retraitGlobalMontant || 0;
     if (montant > 0 && montant > total) {
       Alert.alert(tr('erreur', lang), `Montant max : ${money(total)}`); return;
     }
@@ -343,13 +344,6 @@ export default function DepotsScreen() {
         </View>
       </View>
 
-      {/* ── Bandeau offline ── */}
-      {fromCache && (
-        <View style={s.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={s.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* ── Bascule vue liste / groupée par client ── */}
       <View style={s.vueRow}>
@@ -523,7 +517,7 @@ export default function DepotsScreen() {
           <Text style={s.fieldLabel}>{tr('telephone', lang)} *</Text>
           <TextInput style={s.input} value={form.numero} onChangeText={v => setForm(f => ({ ...f, numero: v }))} placeholder="Ex: 77 000 00 00" keyboardType="phone-pad" />
           <Text style={s.fieldLabel}>{tr('montant_depot', lang)} *</Text>
-          <TextInput style={s.input} value={form.montant} onChangeText={v => setForm(f => ({ ...f, montant: v }))} placeholder="0" keyboardType="numeric" />
+          <MontantInput style={s.input} value={form.montant} onChangeValue={v => setForm(f => ({ ...f, montant: v }))} placeholder="0" />
           <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
           <TextInput style={[s.input, { height: 70 }]} value={form.observation} onChangeText={v => setForm(f => ({ ...f, observation: v }))} placeholder={tr('description', lang)} multiline />
 
@@ -567,7 +561,7 @@ export default function DepotsScreen() {
               {selected.statut === 'ACTIF' && (
                 <>
                   <TouchableOpacity style={[s.saveBtn, { backgroundColor: '#dc2626', marginTop: 24 }]} onPress={() => {
-                    setRetraitMontant('');
+                    setRetraitMontant(0);
                     setRetraitObs('');
                     setShowRetrait(true);
                   }}>
@@ -594,7 +588,7 @@ export default function DepotsScreen() {
             <Text style={s.retraitTitle}>{tr('retrait', lang)}</Text>
             <Text style={s.retraitInfo}>{tr('disponible', lang)} : {selected ? money(selected.montantRestant) : ''}</Text>
             <Text style={s.fieldLabel}>{tr('montant_retrait', lang)} *</Text>
-            <TextInput style={s.input} value={retraitMontant} onChangeText={setRetraitMontant} keyboardType="numeric" placeholder="0" />
+            <MontantInput style={s.input} value={retraitMontant} onChangeValue={setRetraitMontant} placeholder="0" />
             <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
             <TextInput style={s.input} value={retraitObs} onChangeText={setRetraitObs} placeholder={tr('description', lang)} />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
@@ -618,7 +612,7 @@ export default function DepotsScreen() {
               {tr('disponible', lang)} : {clientRetraitGlobal ? money(clientRetraitGlobal.totalMontantRestant) : ''} · {clientRetraitGlobal?.nombreDepotsActifs} dépôt(s)
             </Text>
             <Text style={s.fieldLabel}>Montant (laisser vide pour tout retirer)</Text>
-            <TextInput style={s.input} value={retraitGlobalMontant} onChangeText={setRetraitGlobalMontant} keyboardType="numeric" placeholder="Total si vide" />
+            <MontantInput style={s.input} value={retraitGlobalMontant} onChangeValue={setRetraitGlobalMontant} placeholder="Total si vide" />
             <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
             <TextInput style={s.input} value={retraitGlobalObs} onChangeText={setRetraitGlobalObs} placeholder={tr('description', lang)} />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
@@ -669,7 +663,7 @@ const s = StyleSheet.create({
   searchBar: { marginHorizontal: 12, marginBottom: 4, borderRadius: 10, backgroundColor: '#fff', elevation: 1 },
 
   // Paper Card
-  card: { marginBottom: 10, borderRadius: 14, elevation: 2 },
+  card: { marginBottom: 10, borderRadius: 16, elevation: 2 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
@@ -731,7 +725,7 @@ const s = StyleSheet.create({
 
   // Retrait overlay
   retraitOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,.5)', justifyContent: 'flex-end' },
-  retraitCard: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 },
+  retraitCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
   retraitTitle: { color: '#0f172a', fontSize: 17, fontWeight: '700', marginBottom: 4 },
   retraitInfo: { fontSize: 13, color: '#64748b', marginBottom: 12 },
 });

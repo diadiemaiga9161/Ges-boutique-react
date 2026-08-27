@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
   Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl,
@@ -8,11 +8,12 @@ import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { MontantInput } from '../components/MontantInput';
 
 const STATUTS = ['ACTIF', 'INACTIF'];
 const AVATAR_COLORS = ['#1e88e5', '#43a047', '#e53935', '#8e24aa', '#fb8c00', '#00acc1', '#d81b60'];
 
-function money(v: number) { return (v || 0).toLocaleString('fr-FR') + ' FCFA'; }
+function money(v: number) { return (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA'; }
 
 function avatarColor(name: string) {
   const code = (name || 'X').charCodeAt(0);
@@ -21,7 +22,7 @@ function avatarColor(name: string) {
 
 const FORM_INITIAL = {
   nom: '', prenom: '', poste: '', telephone: '',
-  salaireMensuel: '', statut: 'ACTIF',
+  salaireMensuel: 0, statut: 'ACTIF',
 };
 
 export default function EmployesScreen({ navigation }: any) {
@@ -81,7 +82,7 @@ export default function EmployesScreen({ navigation }: any) {
       prenom: emp.prenom || '',
       poste: emp.poste || '',
       telephone: emp.telephone || '',
-      salaireMensuel: emp.salaireMensuel != null ? String(emp.salaireMensuel) : '',
+      salaireMensuel: emp.salaireMensuel != null ? emp.salaireMensuel : 0,
       statut: emp.statut || 'ACTIF',
     });
     setShowModal(true);
@@ -97,7 +98,7 @@ export default function EmployesScreen({ navigation }: any) {
       prenom: form.prenom.trim(),
       poste: form.poste.trim(),
       telephone: form.telephone.trim(),
-      salaireMensuel: form.salaireMensuel ? parseFloat(form.salaireMensuel) : 0,
+      salaireMensuel: form.salaireMensuel || 0,
       statut: form.statut,
     };
     try {
@@ -152,12 +153,6 @@ export default function EmployesScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
-      {fromCache && (
-        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
       {/* ── Header ── */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
@@ -343,13 +338,12 @@ export default function EmployesScreen({ navigation }: any) {
               />
 
               <Text style={styles.fieldLabel}>Salaire mensuel (FCFA)</Text>
-              <TextInput
+              <MontantInput
                 style={styles.input}
                 value={form.salaireMensuel}
-                onChangeText={t => setForm({ ...form, salaireMensuel: t })}
+                onChangeValue={v => setForm({ ...form, salaireMensuel: v })}
                 placeholder="0"
                 placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
               />
 
               <Text style={styles.fieldLabel}>Statut</Text>
@@ -419,7 +413,7 @@ const styles = StyleSheet.create({
   // Card
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 10,
     padding: 14,
     elevation: 2,
@@ -467,8 +461,8 @@ const styles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     maxHeight: '90%' as any,
     padding: 20,
   },

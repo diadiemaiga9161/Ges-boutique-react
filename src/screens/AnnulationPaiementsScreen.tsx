@@ -217,15 +217,6 @@ export default function AnnulationPaiementsScreen() {
         </View>
       </View>
 
-      {/* Banner hors ligne */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>
-            Mode hors ligne — donnees en cache
-          </Text>
-        </View>
-      )}
 
       <View style={styles.body}>
         {/* Onglets type */}
@@ -473,7 +464,7 @@ const styles = StyleSheet.create({
   chipTxt: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   chipTxtSm: { fontSize: 11 },
   chipTxtActive: { color: '#fff' },
-  card: { borderRadius: 12, marginBottom: 8, backgroundColor: '#fff' },
+  card: { borderRadius: 16, marginBottom: 8, backgroundColor: '#fff' },
   cardRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -510,7 +501,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 10,
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#fecaca',
     backgroundColor: '#fef2f2',

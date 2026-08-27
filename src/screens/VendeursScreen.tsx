@@ -199,11 +199,6 @@ export default function VendeursScreen() {
 
   return (
     <View style={styles.container}>
-      {fromCache && (
-        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
-        </View>
-      )}
       {/* Bannière stats */}
       <View style={styles.banner}>
         <View style={styles.bannerItem}>
@@ -371,7 +366,7 @@ const styles = StyleSheet.create({
   bannerSep: { width: 1, height: 36, backgroundColor: 'rgba(255,255,255,0.3)' },
 
   // Card
-  card: { marginBottom: 10, borderRadius: 12 },
+  card: { marginBottom: 10, borderRadius: 16 },
   row: { flexDirection: 'row', alignItems: 'center' },
 
   // Avatar
@@ -410,7 +405,7 @@ const styles = StyleSheet.create({
   modal: {
     backgroundColor: '#fff',
     margin: 20,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     maxHeight: '92%',
   },

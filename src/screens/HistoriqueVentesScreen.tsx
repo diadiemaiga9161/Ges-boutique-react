@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
+﻿import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert,
   Modal, ScrollView, TouchableOpacity, TextInput as RNTextInput,
@@ -19,9 +19,10 @@ import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services
 import { imprimerFactureRN } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { MontantInput } from '../components/MontantInput';
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
-const money = (v: number) => (v || 0).toLocaleString('fr-FR') + ' FCFA';
+const money = (v: number) => (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
 
 const toLocalDate = (d: Date): string => {
   const y = d.getFullYear();
@@ -38,7 +39,8 @@ const formatDate = (iso: string) =>
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type TypeFilter = '' | 'COMPTANT' | 'CREDIT' | 'EN_RETARD';
-type ActivePeriod = 'today' | 'week' | 'month' | 'all';
+type ActivePeriod = 'today' | 'week' | 'month' | 'all' | 'custom';
+type ModePaiementFilter = '' | 'ESPECES' | 'ORANGE_MONEY' | 'MOOV_MONEY' | 'CARTE_BANCAIRE' | 'VIREMENT';
 type ActiveTab = 'ventes' | 'annulees';
 
 interface VenteAnnulee {
@@ -69,6 +71,7 @@ export default function HistoriqueVentesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('');
+  const [modePaiementFilter, setModePaiementFilter] = useState<ModePaiementFilter>('');
   const [activePeriod, setActivePeriod] = useState<ActivePeriod>('today');
   const [dateDebut, setDateDebut] = useState('');
   const [dateFin, setDateFin] = useState('');
@@ -86,6 +89,13 @@ export default function HistoriqueVentesScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [annulationEnCours, setAnnulationEnCours] = useState(false);
   const [userId, setUserId] = useState<number>(0);
+
+  // Modale de confirmation d'annulation avec motif (Alert.alert ne permet pas
+  // de champ de saisie sur Android — réplique le comportement Ionic : motif
+  // optionnel + avertissement "action irréversible, stock remis à jour").
+  const [showAnnulerModal, setShowAnnulerModal] = useState(false);
+  const [venteAAnnuler, setVenteAAnnuler] = useState<any | null>(null);
+  const [motifAnnulation, setMotifAnnulation] = useState('');
 
   // ─── Statistiques ──────────────────────────────────────────────────────────
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -173,11 +183,20 @@ export default function HistoriqueVentesScreen() {
         setDateDebut(dd);
         setDateFin(df);
         res = await getVentesParPeriode(dd, df);
+      } else if (period === 'custom') {
+        // dateDebut/dateFin déjà saisis par l'utilisateur — ne pas les recalculer.
+        res = await getVentesParPeriode(dateDebut, dateFin);
       } else {
         res = await getVentes();
       }
 
-      const data: any[] = res.data?.data || res.data || [];
+      // /ventes/aujourdhui renvoie {ventes:[...], nombreVentes, montantTotal}
+      // (VenteController.java:206-217) — contrairement à /ventes, /ventes/periode
+      // qui renvoient un tableau nu. Sans ce cas particulier, `ventes` recevait
+      // l'objet entier au lieu du tableau et .filter()/.reduce() plantaient au
+      // rendu ("undefined is not a function").
+      const raw = (period === 'today' ? res.data?.ventes : null) || res.data?.data || res.data || [];
+      const data: any[] = Array.isArray(raw) ? raw : [];
       setVentes(data);
       applyFilter(data, search, typeFilter);
       setFromCache(false);
@@ -194,7 +213,7 @@ export default function HistoriqueVentesScreen() {
     }
     setLoading(false);
     setRefreshing(false);
-  }, [activePeriod, search, typeFilter]);
+  }, [activePeriod, search, typeFilter, dateDebut, dateFin]);
 
   // ─── Chargement ventes annulées ────────────────────────────────────────────
   const chargerAnnulees = useCallback(async () => {
@@ -219,7 +238,7 @@ export default function HistoriqueVentesScreen() {
   }, []);
 
   // ─── Filtre ────────────────────────────────────────────────────────────────
-  const applyFilter = (data: any[], term: string, type: TypeFilter) => {
+  const applyFilter = (data: any[], term: string, type: TypeFilter, modePaiement: ModePaiementFilter = modePaiementFilter) => {
     const now = new Date();
     let result = [...data];
 
@@ -234,6 +253,10 @@ export default function HistoriqueVentesScreen() {
         if (!v.dateEcheance) return false;
         return new Date(v.dateEcheance) < now;
       });
+    }
+
+    if (modePaiement) {
+      result = result.filter((v: any) => v.modePaiement === modePaiement);
     }
 
     if (term.trim()) {
@@ -257,10 +280,24 @@ export default function HistoriqueVentesScreen() {
     applyFilter(ventes, search, t);
   };
 
+  const onModePaiementFilter = (m: ModePaiementFilter) => {
+    setModePaiementFilter(m);
+    applyFilter(ventes, search, typeFilter, m);
+  };
+
   const onPeriod = (p: ActivePeriod) => {
     setActivePeriod(p);
     setLoading(true);
     charger(p);
+  };
+
+  // Plage de dates libre (Du/Au), comme sales.page.ts:249-253 sur Ionic —
+  // indépendante des chips de période rapide, applicable à tout moment.
+  const appliquerPeriodePersonnalisee = () => {
+    if (!dateDebut || !dateFin) return;
+    setActivePeriod('custom');
+    setLoading(true);
+    charger('custom');
   };
 
   // ─── Stats (mêmes calculs que sales.page.ts : caTotal/totalCredit sur la
@@ -304,35 +341,34 @@ export default function HistoriqueVentesScreen() {
   };
 
   const handleAnnuler = (vente: any) => {
-    Alert.alert(
-      tr('annuler_vente', lang),
-      `${vente.numeroVente || '#' + vente.id} ?`,
-      [
-        { text: tr('annuler', lang), style: 'cancel' },
-        {
-          text: tr('oui', lang) + ', ' + tr('annuler', lang).toLowerCase(), style: 'destructive',
-          onPress: async () => {
-            setAnnulationEnCours(true);
-            try {
-              const { offline } = await executerOuMettreEnFile(
-                'vente_annuler', { venteId: vente.id }, () => annulerVente(vente.id)
-              );
-              setShowModal(false);
-              if (offline) {
-                Alert.alert(tr('hors_ligne', lang), 'Annulation enregistrée localement — sera synchronisée au retour du réseau.');
-              } else {
-                setLoading(true);
-                charger(activePeriod);
-                chargerAnnulees();
-              }
-            } catch (e: any) {
-              Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
-            }
-            setAnnulationEnCours(false);
-          },
-        },
-      ]
-    );
+    setVenteAAnnuler(vente);
+    setMotifAnnulation('');
+    setShowAnnulerModal(true);
+  };
+
+  const confirmerAnnulation = async () => {
+    const vente = venteAAnnuler;
+    if (!vente) return;
+    setShowAnnulerModal(false);
+    setAnnulationEnCours(true);
+    try {
+      const payload = { venteId: vente.id, motif: motifAnnulation || undefined, estCredit: !!vente.estCredit, utilisateurId: userId };
+      const { offline } = await executerOuMettreEnFile(
+        'vente_annuler', payload,
+        () => annulerVente(vente.id, motifAnnulation || undefined, vente.estCredit, userId)
+      );
+      setShowModal(false);
+      if (offline) {
+        Alert.alert(tr('hors_ligne', lang), 'Annulation enregistrée localement — sera synchronisée au retour du réseau.');
+      } else {
+        setLoading(true);
+        charger(activePeriod);
+        chargerAnnulees();
+      }
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
+    }
+    setAnnulationEnCours(false);
   };
 
   // Construit l'InvoiceData attendue par invoice.service.ts à partir d'une vente +
@@ -625,13 +661,6 @@ export default function HistoriqueVentesScreen() {
             </View>
           </View>
 
-          {/* ── Bandeau offline ── */}
-          {fromCache && (
-            <View style={styles.offlineBanner}>
-              <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-              <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-            </View>
-          )}
 
           {/* ── Filtres période ── */}
           <View style={styles.periodRow}>
@@ -661,6 +690,45 @@ export default function HistoriqueVentesScreen() {
                 {label}
               </Chip>
             ))}
+          </View>
+
+          {/* ── Chips mode de paiement (comme Ionic sales.page.html:191-206) ── */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+            <View style={styles.chipRow}>
+              {([
+                ['', 'Tous modes'], ['ESPECES', 'Espèces'], ['ORANGE_MONEY', 'Orange Money'],
+                ['MOOV_MONEY', 'Moov Money'], ['CARTE_BANCAIRE', 'Carte bancaire'], ['VIREMENT', 'Virement'],
+              ] as [ModePaiementFilter, string][]).map(([m, label]) => (
+                <Chip
+                  key={m}
+                  compact
+                  onPress={() => onModePaiementFilter(m)}
+                  style={[styles.filterChip, modePaiementFilter === m && styles.filterChipActive]}
+                  textStyle={[styles.filterChipText, modePaiementFilter === m && styles.filterChipTextActive]}
+                >
+                  {label}
+                </Chip>
+              ))}
+            </View>
+          </ScrollView>
+
+          {/* ── Plage de dates libre Du/Au (comme Ionic sales.page.html:209-219) ── */}
+          <View style={styles.dateRangeRow}>
+            <RNTextInput
+              style={styles.dateRangeInput}
+              placeholder="Du (AAAA-MM-JJ)"
+              value={dateDebut}
+              onChangeText={setDateDebut}
+            />
+            <RNTextInput
+              style={styles.dateRangeInput}
+              placeholder="Au (AAAA-MM-JJ)"
+              value={dateFin}
+              onChangeText={setDateFin}
+            />
+            <TouchableOpacity style={styles.dateRangeBtn} onPress={appliquerPeriodePersonnalisee}>
+              <MaterialCommunityIcons name="magnify" size={18} color="#fff" />
+            </TouchableOpacity>
           </View>
 
           {/* ── Barre de recherche ── */}
@@ -701,12 +769,19 @@ export default function HistoriqueVentesScreen() {
               const iconColor = isAnnulee ? '#dc2626' : '#16a34a';
               const avatarBg  = isAnnulee ? '#dc262222' : '#16a34a22';
 
-              // Badge statut
+              // Badge statut — BUG FIX : le backend ne renvoie jamais item.statut
+              // (VenteMapper ne mappe pas ce champ), donc la branche 'COMPLETEE'
+              // était du code mort. Le signal réel d'un crédit soldé est
+              // item.creditRegle (comme Ionic sales.page.ts:270-284), et le
+              // retard se déduit de dateEcheance dépassée.
+              const isEnRetard = isCredit && !item.creditRegle && !!item.dateEcheance && new Date(item.dateEcheance) < new Date();
               let badgeBg: string, badgeColor: string, statusLabel: string;
               if (isAnnulee) {
                 badgeBg = '#fee2e2'; badgeColor = '#dc2626'; statusLabel = 'ANNULEE';
-              } else if (item.statut === 'COMPLETEE') {
-                badgeBg = '#dcfce7'; badgeColor = '#16a34a'; statusLabel = 'PAYEE';
+              } else if (isCredit && item.creditRegle) {
+                badgeBg = '#dcfce7'; badgeColor = '#16a34a'; statusLabel = 'REGLE';
+              } else if (isEnRetard) {
+                badgeBg = '#fee2e2'; badgeColor = '#dc2626'; statusLabel = 'EN RETARD';
               } else if (isCredit) {
                 badgeBg = '#fef3c7'; badgeColor = '#d97706'; statusLabel = 'CREDIT';
               } else {
@@ -745,8 +820,10 @@ export default function HistoriqueVentesScreen() {
                     </View>
                   </Card.Content>
 
-                  {/* Section crédit (barre de progression) */}
-                  {isCredit && !isAnnulee && (
+                  {/* Section crédit (barre de progression) — masquée dès que le
+                      crédit est réglé, comme Ionic (*ngIf="estCredit && !creditRegle"),
+                      rouge en cas de retard (accent-red/progress-late côté Ionic). */}
+                  {isCredit && !isAnnulee && !item.creditRegle && (
                     <Card.Content style={{ paddingTop: 0, paddingBottom: 8 }}>
                       <View style={styles.creditSection}>
                         <Text style={styles.creditInfo}>
@@ -754,7 +831,7 @@ export default function HistoriqueVentesScreen() {
                         </Text>
                         <ProgressBar
                           progress={progression}
-                          color="#1a56db"
+                          color={isEnRetard ? '#dc2626' : '#1a56db'}
                           style={styles.progressBar}
                         />
                       </View>
@@ -769,19 +846,18 @@ export default function HistoriqueVentesScreen() {
                         <Text style={styles.cardActionTxt}>{tr('detail_vente', lang) || 'Détails'}</Text>
                       </TouchableOpacity>
 
-                      {isAdmin && (
-                        <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionWarn]} onPress={() => openModifyDepuisCarte(item)}>
-                          <MaterialCommunityIcons name="pencil-outline" size={15} color="#d97706" />
-                          <Text style={[styles.cardActionTxt, styles.cardActionTxtWarn]}>{tr('modifier', lang)}</Text>
-                        </TouchableOpacity>
-                      )}
+                      {/* Modifier/Annuler ouverts à tous les rôles, comme sur Ionic
+                          (sales.page.html ne restreint que sur !sale.annulee, jamais
+                          sur le rôle) — pas de gate isAdmin ici. */}
+                      <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionWarn]} onPress={() => openModifyDepuisCarte(item)}>
+                        <MaterialCommunityIcons name="pencil-outline" size={15} color="#d97706" />
+                        <Text style={[styles.cardActionTxt, styles.cardActionTxtWarn]}>{tr('modifier', lang)}</Text>
+                      </TouchableOpacity>
 
-                      {isAdmin && (
-                        <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionDanger]} onPress={() => handleAnnuler(item)}>
-                          <MaterialCommunityIcons name="cancel" size={15} color="#dc2626" />
-                          <Text style={[styles.cardActionTxt, styles.cardActionTxtDanger]}>{tr('annuler', lang)}</Text>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionDanger]} onPress={() => handleAnnuler(item)}>
+                        <MaterialCommunityIcons name="cancel" size={15} color="#dc2626" />
+                        <Text style={[styles.cardActionTxt, styles.cardActionTxtDanger]}>{tr('annuler', lang)}</Text>
+                      </TouchableOpacity>
 
                       <TouchableOpacity style={[styles.cardActionBtn, styles.cardActionRetour]} onPress={() => openRetourDepuisCarte(item)}>
                         <MaterialCommunityIcons name="keyboard-return" size={15} color="#7c3aed" />
@@ -1019,7 +1095,7 @@ export default function HistoriqueVentesScreen() {
                 </TouchableOpacity>
               )}
 
-              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && isAdmin && (
+              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
                 <TouchableOpacity
                   style={styles.btnModify}
                   onPress={() => openModify(selectedVente, venteDetail)}
@@ -1039,7 +1115,7 @@ export default function HistoriqueVentesScreen() {
                 </TouchableOpacity>
               )}
 
-              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && isAdmin && (
+              {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
                 <TouchableOpacity
                   style={[styles.btnCancel, annulationEnCours && { opacity: 0.5 }]}
                   onPress={() => handleAnnuler(selectedVente)}
@@ -1141,11 +1217,10 @@ export default function HistoriqueVentesScreen() {
                     value={String(l.quantite)}
                     onChangeText={(v) => updateModifyLine(i, { quantite: Number(v) || 0 })}
                   />
-                  <RNTextInput
+                  <MontantInput
                     style={styles.modifyPrixInput}
-                    keyboardType="numeric"
-                    value={String(l.prixUnitaire)}
-                    onChangeText={(v) => updateModifyLine(i, { prixUnitaire: Number(v) || 0 })}
+                    value={l.prixUnitaire || 0}
+                    onChangeValue={(v) => updateModifyLine(i, { prixUnitaire: v })}
                   />
                   <TouchableOpacity style={styles.modifyRemoveBtn} onPress={() => removeModifyLine(i)}>
                     <MaterialCommunityIcons name="close" size={16} color="#dc2626" />
@@ -1301,6 +1376,48 @@ export default function HistoriqueVentesScreen() {
         </View>
       </Modal>
 
+      {/* ─── Modale confirmation annulation (avec motif, comme Ionic) ─────── */}
+      <Modal visible={showAnnulerModal} animationType="slide" transparent onRequestClose={() => setShowAnnulerModal(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.modalHead}>
+              <View>
+                <Text style={styles.modalTitle}>{tr('annuler_vente', lang)}</Text>
+                {venteAAnnuler && (
+                  <Text style={styles.modalSub}>{venteAAnnuler.numeroVente || `#${venteAAnnuler.id}`}</Text>
+                )}
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setShowAnnulerModal(false)}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ paddingHorizontal: 16 }}>
+              <Text style={{ color: '#dc2626', fontSize: 12.5, marginBottom: 10 }}>
+                ⚠ Action irréversible — le stock sera remis à jour.
+              </Text>
+              <RNTextInput
+                style={styles.modifyMotifInput}
+                placeholder="Motif (facultatif)"
+                value={motifAnnulation}
+                onChangeText={setMotifAnnulation}
+                multiline
+              />
+            </View>
+
+            <View style={styles.modalFoot}>
+              <TouchableOpacity style={styles.btnClose} onPress={() => setShowAnnulerModal(false)}>
+                <Text style={styles.btnCloseText}>{tr('annuler', lang)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnCancel} onPress={confirmerAnnulation}>
+                <Text style={styles.btnCancelText}>{tr('oui', lang) + ', ' + tr('annuler', lang).toLowerCase()}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ─── FAB Nouvelle vente (comme Ionic sales page) ─── */}
       <FAB
         icon="cart-plus"
@@ -1364,7 +1481,7 @@ const styles = StyleSheet.create({
   search: { marginHorizontal: 12, marginTop: 6, marginBottom: 4, borderRadius: 12, elevation: 0, backgroundColor: '#fff' },
 
   // Card design system (onglet Ventes)
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardAnnulee: { opacity: 0.6, borderLeftWidth: 3, borderLeftColor: '#dc2626' },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
@@ -1401,7 +1518,7 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', color: '#aaa', fontSize: 13, padding: 12 },
 
   // Card annulée (onglet Annulées)
-  cardAnnuleeItem: { backgroundColor: '#fff', borderRadius: 12, marginBottom: 12, elevation: 2, borderLeftWidth: 4, borderLeftColor: '#dc2626' },
+  cardAnnuleeItem: { backgroundColor: '#fff', borderRadius: 16, marginBottom: 12, elevation: 2, borderLeftWidth: 4, borderLeftColor: '#dc2626' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   badgeAnnuleeGrand: { backgroundColor: '#dc2626', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, alignSelf: 'flex-start' },
   badgeAnnuleeGrandText: { color: '#fff', fontSize: 11, fontWeight: 'bold', letterSpacing: 0.5 },
@@ -1419,7 +1536,7 @@ const styles = StyleSheet.create({
 
   // Modal
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   modalTitle: { fontWeight: 'bold', fontSize: 17, color: '#1a1a1a' },
@@ -1477,6 +1594,9 @@ const styles = StyleSheet.create({
   modifyAddBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#1a56db', borderStyle: 'dashed', borderRadius: 10, paddingVertical: 10, marginTop: 8 },
   modifyAddBtnText: { color: '#1a56db', fontWeight: '600', fontSize: 13 },
   modifyMotifInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, marginTop: 10 },
+  dateRangeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, marginBottom: 8, alignItems: 'center' },
+  dateRangeInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontSize: 12.5, backgroundColor: '#fff' },
+  dateRangeBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center' },
   modifyTotalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, marginTop: 4 },
   modifyTotalLabel: { fontWeight: 'bold', fontSize: 14, color: '#333' },
   modifyTotalVal: { fontWeight: 'bold', fontSize: 16, color: '#1a56db' },

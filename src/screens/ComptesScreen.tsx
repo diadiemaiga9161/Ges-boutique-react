@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
   TextInput, Alert, ScrollView, Modal,
@@ -10,6 +10,7 @@ import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { MontantInput } from '../components/MontantInput';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Compte {
@@ -42,7 +43,7 @@ interface OperationCompte {
 const TYPES_CREDIT: TypeOperationCompte[] = ['VERSEMENT'];
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
-const money = (v: number) => (v ?? 0).toLocaleString('fr-FR') + ' FCFA';
+const money = (v: number) => (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 const masquerNumero = (num?: string) => {
   if (!num) return '—';
@@ -70,7 +71,7 @@ export default function ComptesScreen() {
   const [isEditing, setIsEditing] = useState(false);
 
   // Formulaire opération
-  const [opMontant, setOpMontant] = useState('');
+  const [opMontant, setOpMontant] = useState(0);
   const [opDescription, setOpDescription] = useState('');
   const [savingOp, setSavingOp] = useState(false);
   const [userId, setUserId] = useState<number>(0);
@@ -80,7 +81,7 @@ export default function ComptesScreen() {
   const [formNumeroCompte, setFormNumeroCompte] = useState('');
   const [formAgence, setFormAgence] = useState('');
   const [formTitulaire, setFormTitulaire] = useState('');
-  const [formSoldeInitial, setFormSoldeInitial] = useState('');
+  const [formSoldeInitial, setFormSoldeInitial] = useState(0);
   const [formDescription, setFormDescription] = useState('');
   const [savingForm, setSavingForm] = useState(false);
 
@@ -120,7 +121,7 @@ export default function ComptesScreen() {
   const openOperation = (compte: Compte, type: 'depot' | 'retrait') => {
     setSelectedCompte(compte);
     setOperationType(type);
-    setOpMontant('');
+    setOpMontant(0);
     setOpDescription('');
     setShowOperation(true);
   };
@@ -143,7 +144,7 @@ export default function ComptesScreen() {
     setFormNumeroCompte('');
     setFormAgence('');
     setFormTitulaire('');
-    setFormSoldeInitial('');
+    setFormSoldeInitial(0);
     setFormDescription('');
     setShowForm(true);
   };
@@ -155,14 +156,14 @@ export default function ComptesScreen() {
     setFormNumeroCompte(compte.numeroCompte || '');
     setFormAgence(compte.agence || '');
     setFormTitulaire(compte.titulaire || '');
-    setFormSoldeInitial(String(compte.soldeInitial));
+    setFormSoldeInitial(compte.soldeInitial);
     setFormDescription(compte.description || '');
     setShowForm(true);
   };
 
   const effectuerOperation = async () => {
     if (!selectedCompte) return;
-    const montant = parseFloat(opMontant);
+    const montant = opMontant;
     if (!montant || montant <= 0) {
       Alert.alert(tr('erreur', lang), 'Montant invalide');
       return;
@@ -207,7 +208,7 @@ export default function ComptesScreen() {
       description: formDescription.trim() || undefined,
     };
     if (!isEditing) {
-      data.soldeInitial = parseFloat(formSoldeInitial) || 0;
+      data.soldeInitial = formSoldeInitial || 0;
     }
     try {
       if (isEditing && selectedCompte) {
@@ -228,12 +229,6 @@ export default function ComptesScreen() {
 
   return (
     <View style={s.container}>
-      {fromCache && (
-        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* ── Hero stats ─────────────────────────────────────────────────────── */}
       <View style={s.hero}>
@@ -387,11 +382,10 @@ export default function ComptesScreen() {
                 </View>
               )}
               <Text style={s.fieldLabel}>{tr('montant', lang)} *</Text>
-              <TextInput
+              <MontantInput
                 style={s.fieldInput}
                 value={opMontant}
-                onChangeText={setOpMontant}
-                keyboardType="numeric"
+                onChangeValue={setOpMontant}
                 placeholder="0"
                 placeholderTextColor="#bbb"
               />
@@ -555,11 +549,10 @@ export default function ComptesScreen() {
               {!isEditing && (
                 <>
                   <Text style={s.fieldLabel}>{tr('solde_initial', lang)}</Text>
-                  <TextInput
+                  <MontantInput
                     style={s.fieldInput}
                     value={formSoldeInitial}
-                    onChangeText={setFormSoldeInitial}
-                    keyboardType="numeric"
+                    onChangeValue={setFormSoldeInitial}
                     placeholder="0"
                     placeholderTextColor="#bbb"
                   />
@@ -624,15 +617,17 @@ const s = StyleSheet.create({
   toolbarTitle: { fontSize: 14, color: '#555', fontWeight: '600' },
   addBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#1d4ed8', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: '#1d4ed8', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
   },
   addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
   // Carte compte
+  // STYLE (2026-08-16) : coins plus arrondis + ombre plus douce/plus large.
   card: {
-    backgroundColor: '#fff', borderRadius: 14, marginBottom: 12, padding: 14,
-    elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#fff', borderRadius: 18, marginBottom: 12, padding: 14,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
   cardTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 12 },
   typeIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
@@ -663,7 +658,7 @@ const s = StyleSheet.create({
 
   // Modal commun
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -674,7 +669,7 @@ const s = StyleSheet.create({
   modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
 
   // Info card (modal)
-  infoCard: { backgroundColor: '#fafafa', borderRadius: 12, padding: 12, marginBottom: 14 },
+  infoCard: { backgroundColor: '#fafafa', borderRadius: 14, padding: 12, marginBottom: 14 },
   infoCardTitle: { fontWeight: 'bold', color: '#1d4ed8', fontSize: 15, marginBottom: 8 },
   infoRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -696,7 +691,7 @@ const s = StyleSheet.create({
   // Formulaire
   fieldLabel: { color: '#666', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
   fieldInput: {
-    borderWidth: 1, borderColor: '#ddd', borderRadius: 10,
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa',
   },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -709,14 +704,15 @@ const s = StyleSheet.create({
 
   // Boutons footer
   btnCancel: {
-    flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10,
+    flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 12,
     alignItems: 'center', justifyContent: 'center', paddingVertical: 12,
   },
   btnCancelText: { color: '#666', fontWeight: '600' },
   btnConfirm: {
-    flex: 2, backgroundColor: '#1d4ed8', borderRadius: 10,
+    flex: 2, backgroundColor: '#1d4ed8', borderRadius: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 6, paddingVertical: 12,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
   },
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 });

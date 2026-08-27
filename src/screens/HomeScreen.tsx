@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   ScrollView,
@@ -148,7 +148,7 @@ export default function HomeScreen() {
   }, []);
 
   const money = (v?: number) =>
-    `${((v) || 0).toLocaleString('fr-FR')} ${boutique.devise || 'FCFA'}`;
+    `${((v) || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} ${boutique.devise || 'FCFA'}`;
 
   const dateAujourdhui = new Date().toLocaleDateString('fr-FR', {
     weekday: 'long',
@@ -214,11 +214,6 @@ export default function HomeScreen() {
             {blockedCount} opération{blockedCount > 1 ? 's' : ''} bloquée{blockedCount > 1 ? 's' : ''} — jamais synchronisée{blockedCount > 1 ? 's' : ''}, touchez pour voir
           </Text>
         </TouchableOpacity>
-      )}
-      {fromCache && (
-        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <Text style={{ color: '#92400e', fontSize: 12 }}>⚠ Mode hors ligne — données locales</Text>
-        </View>
       )}
 
       {loading ? (

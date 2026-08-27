@@ -104,12 +104,6 @@ export default function ConfigTransfertsScreen() {
 
   return (
     <View style={styles.container}>
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
-          <Text style={styles.offlineBannerText}>Hors ligne — dernières données connues</Text>
-        </View>
-      )}
       <FlatList
         data={partenaires}
         keyExtractor={(c, i) => String(c.id ?? i)}
@@ -166,14 +160,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6 },
   offlineBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-  card: { marginBottom: 10, borderRadius: 12 },
+  card: { marginBottom: 10, borderRadius: 16 },
   row: { flexDirection: 'row', alignItems: 'center' },
   sub: { color: '#666', marginTop: 4 },
   badge: { alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, marginTop: 6 },
   badgeText: { fontSize: 11, fontWeight: 'bold' },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
   fab: { position: 'absolute', bottom: 20, right: 20 },
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20 },
+  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20 },
   input: { marginBottom: 12 },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
 });

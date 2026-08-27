@@ -46,9 +46,12 @@ export default function ForgotPasswordScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#1a56db', justifyContent: 'center', padding: 20 },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 24 },
+  card: {
+    backgroundColor: '#fff', borderRadius: 20, padding: 24,
+    elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+  },
   title: { fontWeight: 'bold', color: '#1a56db', textAlign: 'center', marginBottom: 8 },
   sub: { color: '#666', textAlign: 'center', marginBottom: 20 },
   input: { marginBottom: 12 },
-  btn: { borderRadius: 8 },
+  btn: { borderRadius: 12 },
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+﻿import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
   ScrollView, TouchableOpacity, Pressable,
@@ -18,6 +18,7 @@ import {
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { sauvegarderCache, lireCache, creerDepenseOffline } from '../services/offline.service';
+import { useMontantInput } from '../components/MontantInput';
 
 interface TypeDepense { id: number; nom: string; }
 
@@ -52,15 +53,15 @@ function buildDepensesPdfHtml(
     <td>${d.nom}${d.sourceExterne ? ' <span style="font-size:10px;background:#f59e0b;color:#fff;padding:1px 5px;border-radius:3px">Salaire</span>' : ''}</td>
     <td>${d.typeDepense || '—'}</td>
     <td>${d.motif || '—'}${d.periodeDebut ? ` (${d.periodeDebut}${d.periodeFin ? '→' + d.periodeFin : ''})` : ''}</td>
-    <td style="text-align:right;font-weight:700;color:#dc2626">${(d.montant || 0).toLocaleString('fr-FR')} FCFA</td>
+    <td style="text-align:right;font-weight:700;color:#dc2626">${(d.montant || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
   </tr>`).join('');
 
   const typesHtml = totauxParType.map(t => `<tr>
     <td>${t.type}</td>
-    <td style="text-align:right;font-weight:700">${t.total.toLocaleString('fr-FR')} FCFA</td>
+    <td style="text-align:right;font-weight:700">${t.total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
   </tr>`).join('');
 
-  const qrData = encodeURIComponent(`DEPENSES ${filtreTitre}\nTotal: ${total.toLocaleString('fr-FR')} FCFA\nNombre: ${depenses.length}\nDate: ${new Date().toLocaleDateString('fr-FR')}`);
+  const qrData = encodeURIComponent(`DEPENSES ${filtreTitre}\nTotal: ${total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA\nNombre: ${depenses.length}\nDate: ${new Date().toLocaleDateString('fr-FR')}`);
 
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
 <title>Dépenses — ${filtreTitre}</title>
@@ -89,7 +90,7 @@ td{padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:11px}
   </div>
   <div class="total-box">
     <div class="total-lbl">TOTAL DÉPENSES</div>
-    <div class="total-val">${total.toLocaleString('fr-FR')} FCFA</div>
+    <div class="total-val">${total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</div>
     <div style="font-size:11px;color:#94a3b8;margin-top:4px">${depenses.length} dépense(s)</div>
   </div>
   ${totauxParType.length > 0 ? `
@@ -122,11 +123,12 @@ export default function DepensesScreen() {
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState({
     nom: '',
-    montant: '',
+    montant: 0,
     motif: '',
     typeDepense: '',
     date: new Date().toISOString().split('T')[0],
   });
+  const montantInput = useMontantInput(form.montant, v => setForm(f => ({ ...f, montant: v })));
   const [totauxParType, setTotauxParType] = useState<{ type: string; total: number }[]>([]);
 
   // ── Types dépenses dynamiques ──
@@ -255,7 +257,7 @@ export default function DepensesScreen() {
     setEditing(null);
     setForm({
       nom: '',
-      montant: '',
+      montant: 0,
       motif: '',
       typeDepense: '',
       date: new Date().toISOString().split('T')[0],
@@ -267,7 +269,7 @@ export default function DepensesScreen() {
     setEditing(d);
     setForm({
       nom: d.nom || '',
-      montant: String(d.montant || ''),
+      montant: d.montant || 0,
       motif: d.motif || '',
       typeDepense: d.typeDepense || '',
       date: d.date || new Date().toISOString().split('T')[0],
@@ -280,7 +282,7 @@ export default function DepensesScreen() {
     try {
       const payload = {
         nom: form.nom,
-        montant: parseFloat(form.montant),
+        montant: form.montant,
         motif: form.motif,
         typeDepense: form.typeDepense,
         date: form.date,
@@ -301,7 +303,7 @@ export default function DepensesScreen() {
   const supprimer = (d: any) => {
     Alert.alert(
       tr('supprimer', lang) + ' ?',
-      `${d.nom} — ${d.montant?.toLocaleString('fr-FR')} FCFA`,
+      `${d.nom} — ${d.montant?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`,
       [
         { text: tr('annuler', lang), style: 'cancel' },
         {
@@ -390,8 +392,8 @@ export default function DepensesScreen() {
 
   const genererRecuSalaire = async (dep: any) => {
     const qrData = encodeURIComponent(`SALAIRE\nEmployé: ${dep.nom || dep.employeNomComplet || ''}\nPoste: ${dep.employePoste || ''}\nMontant: ${dep.montant} FCFA\nDate: ${dep.date || dep.datePaiement || ''}`);
-    const montantFmt = (dep.montant || 0).toLocaleString('fr-FR');
-    const salaireFmt = (dep.salaireMensuel || 0).toLocaleString('fr-FR');
+    const montantFmt = (dep.montant || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 });
+    const salaireFmt = (dep.salaireMensuel || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 });
     const nom = dep.nom || dep.employeNomComplet || '—';
     const poste = dep.employePoste || dep.motif || '—';
     const nbMois = dep.nombreMois || 1;
@@ -453,7 +455,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
         <Text style={styles.totalLabel}>
           {filtreActif ? `${tr('depenses', lang)} — ${filtreTitre}` : `Total ${tr('depenses', lang).toLowerCase()}`}
         </Text>
-        <Text style={styles.totalVal}>{totalFiltre.toLocaleString('fr-FR')} FCFA</Text>
+        <Text style={styles.totalVal}>{totalFiltre.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
         {filtreActif && (
           <Text style={styles.totalSub}>{depensesFiltrees.length} sur {toutesDepenses.length} dépenses</Text>
         )}
@@ -546,7 +548,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                       <Ionicons name={getIconeType(t.type) as any} size={14} color="#475569" style={{ marginRight: 6 }} />
                       <Text style={styles.typeLabel}>{t.type}</Text>
                     </View>
-                    <Text style={styles.typeTotal}>{t.total.toLocaleString('fr-FR')} FCFA</Text>
+                    <Text style={styles.typeTotal}>{t.total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
                   </View>
                 ))}
               </View>
@@ -558,7 +560,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
             <Card.Content>
               <View style={styles.row}>
                 <Text variant="titleMedium" style={{ flex: 1 }}>{d.nom}</Text>
-                <Text style={styles.montant}>{d.montant?.toLocaleString('fr-FR')} FCFA</Text>
+                <Text style={styles.montant}>{d.montant?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
               </View>
               <View style={styles.badgeWrap}>
                 {d.typeDepense ? (
@@ -770,8 +772,8 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
 
             <TextInput
               label="Montant *"
-              value={form.montant}
-              onChangeText={t => setForm({ ...form, montant: t })}
+              value={montantInput.texte}
+              onChangeText={montantInput.onChangeText}
               mode="outlined"
               keyboardType="numeric"
               style={styles.input}
@@ -809,7 +811,7 @@ const styles = StyleSheet.create({
   totalLabel: { color: '#fff', fontSize: 12 },
   totalVal: { color: '#fff', fontWeight: 'bold', fontSize: 22 },
   totalSub: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 2 },
-  card: { marginBottom: 10, borderRadius: 12 },
+  card: { marginBottom: 10, borderRadius: 16 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   montant: { fontWeight: 'bold', color: '#f44336' },
   badgeWrap: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
@@ -831,10 +833,10 @@ const styles = StyleSheet.create({
   date: { color: '#aaa', fontSize: 11, marginTop: 2 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
   fab: { position: 'absolute', bottom: 20, right: 20 },
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },
+  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
   input: { marginBottom: 12 },
   // Filtres
-  filtresSection: { backgroundColor: '#fff', marginBottom: 12, borderRadius: 12, padding: 14, elevation: 2 },
+  filtresSection: { backgroundColor: '#fff', marginBottom: 12, borderRadius: 16, padding: 14, elevation: 2 },
   filtresHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   filtresTitle: { fontWeight: 'bold', fontSize: 13, color: '#1e293b' },
   resetFiltres: { color: '#f44336', fontSize: 12, fontWeight: '600' },
@@ -880,7 +882,7 @@ const styles = StyleSheet.create({
   },
   typePickerValue: { color: '#1e293b', fontSize: 14 },
   typePickerPlaceholder: { color: '#94a3b8', fontSize: 14 },
-  typeSummary: { backgroundColor: '#fff', marginBottom: 12, borderRadius: 12, padding: 14, elevation: 2 },
+  typeSummary: { backgroundColor: '#fff', marginBottom: 12, borderRadius: 16, padding: 14, elevation: 2 },
   typeSummaryTitle: { fontWeight: 'bold', fontSize: 14, marginBottom: 8, color: '#1e293b' },
   typeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   typeLabel: { color: '#475569', fontSize: 13 },
@@ -900,7 +902,7 @@ const styles = StyleSheet.create({
   paginationInfo: { fontSize: 13, color: '#555', fontWeight: '600' },
   // Modal types dépenses
   typesModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  typesModalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%' as any, padding: 20 },
+  typesModalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%' as any, padding: 20 },
   typesModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   typesModalTitle: { fontSize: 18, fontWeight: '700' },
   typesError: { color: 'red', fontSize: 13, marginBottom: 8 },

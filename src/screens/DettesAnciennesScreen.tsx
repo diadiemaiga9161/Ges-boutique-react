@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
   TextInput, Alert, ScrollView, Modal,
@@ -8,8 +8,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api, { getClients } from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
+import { imprimerDocumentPdfRN, DesignFacture } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { MontantInput } from '../components/MontantInput';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 // Modèle réel backend (DetteAncienneController/Dto) : une "dette ancienne" est
@@ -57,7 +59,7 @@ const MODE_LABELS: Record<ModePaiement, string> = {
 };
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
-const money = (v: number) => (v ?? 0).toLocaleString('fr-FR') + ' FCFA';
+const money = (v: number) => (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 const nomClient = (d: DetteAncienne) => `${d.clientPrenom || ''} ${d.clientNom || ''}`.trim() || `Client #${d.clientId}`;
 
@@ -79,6 +81,10 @@ export default function DettesAnciennesScreen() {
   const [fromCache, setFromCache] = useState(false);
   const [search, setSearch] = useState('');
   const [userId, setUserId] = useState<number>(0);
+  const [filtreActif, setFiltreActif] = useState<'nonReglees' | 'reglees' | 'toutes'>('nonReglees');
+  const [dateDebut, setDateDebut] = useState('');
+  const [dateFin, setDateFin] = useState('');
+  const [showFiltres, setShowFiltres] = useState(false);
 
   // Modals
   const [showNouvelle, setShowNouvelle] = useState(false);
@@ -94,12 +100,12 @@ export default function DettesAnciennesScreen() {
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<ClientLite | null>(null);
   const [formDescription, setFormDescription] = useState('');
-  const [formMontant, setFormMontant] = useState('');
+  const [formMontant, setFormMontant] = useState(0);
   const [formDateCredit, setFormDateCredit] = useState(new Date().toISOString().split('T')[0]);
   const [saving, setSaving] = useState(false);
 
   // Formulaire règlement
-  const [reglMontant, setReglMontant] = useState('');
+  const [reglMontant, setReglMontant] = useState(0);
   const [reglMode, setReglMode] = useState<ModePaiement>('ESPECES');
   const [reglRef, setReglRef] = useState('');
   const [savingRegl, setSavingRegl] = useState(false);
@@ -109,15 +115,22 @@ export default function DettesAnciennesScreen() {
   const totalRegle = useMemo(() => dettes.reduce((s, d) => s + (d.montantPaye || 0), 0), [dettes]);
   const totalRestant = useMemo(() => dettes.reduce((s, d) => s + (d.montantRestant || 0), 0), [dettes]);
 
-  // ─── Filtre recherche ─────────────────────────────────────────────────────
+  // ─── Filtre recherche + statut + période ──────────────────────────────────
   const filtered = useMemo(() => {
+    let resultats = dettes;
     const t = search.trim().toLowerCase();
-    if (!t) return dettes;
-    return dettes.filter(d =>
-      nomClient(d).toLowerCase().includes(t) ||
-      (d.description || '').toLowerCase().includes(t)
-    );
-  }, [dettes, search]);
+    if (t) {
+      resultats = resultats.filter(d =>
+        nomClient(d).toLowerCase().includes(t) ||
+        (d.description || '').toLowerCase().includes(t)
+      );
+    }
+    if (filtreActif === 'nonReglees') resultats = resultats.filter(d => !d.estReglee);
+    else if (filtreActif === 'reglees') resultats = resultats.filter(d => d.estReglee);
+    if (dateDebut) resultats = resultats.filter(d => d.dateCredit && d.dateCredit >= dateDebut);
+    if (dateFin) resultats = resultats.filter(d => d.dateCredit && d.dateCredit <= dateFin);
+    return resultats;
+  }, [dettes, search, filtreActif, dateDebut, dateFin]);
 
   const clientsFiltres = useMemo(() => {
     const t = clientSearch.trim().toLowerCase();
@@ -169,7 +182,7 @@ export default function DettesAnciennesScreen() {
 
   const openReglement = (dette: DetteAncienne) => {
     setSelectedDette(dette);
-    setReglMontant(String(dette.montantRestant));
+    setReglMontant(dette.montantRestant);
     setReglMode('ESPECES');
     setReglRef('');
     setShowReglement(true);
@@ -192,11 +205,52 @@ export default function DettesAnciennesScreen() {
     ]);
   };
 
+  const imprimerListe = async () => {
+    if (!filtered.length) {
+      Alert.alert('Aucune dette', 'Aucune dette à imprimer avec ce filtre.');
+      return;
+    }
+    const filtreLabels: Record<typeof filtreActif, string> = {
+      nonReglees: 'Non réglées', reglees: 'Réglées', toutes: 'Toutes',
+    };
+    const periodeLabel = (dateDebut || dateFin)
+      ? `Du ${dateDebut ? dateStr(dateDebut) : '…'} au ${dateFin ? dateStr(dateFin) : '…'}`
+      : 'Toute la période';
+    const totalInitial = filtered.reduce((s, d) => s + (d.montantInitial || 0), 0);
+    const totalRestantFiltre = filtered.reduce((s, d) => s + (d.montantRestant || 0), 0);
+
+    try {
+      const tpl = await AsyncStorage.getItem('facture_template');
+      const design: DesignFacture = tpl === 'moderne' ? 2 : tpl === 'minimaliste' ? 3 : 1;
+      await imprimerDocumentPdfRN({
+        titre: 'Dettes anciennes',
+        sousTitre: `${filtreLabels[filtreActif]} — ${periodeLabel} — ${filtered.length} dette(s)`,
+        colonnes: ['Client', 'Date', 'Montant initial', 'Reste dû', 'Statut', 'Description'],
+        lignes: filtered.map(d => [
+          nomClient(d),
+          dateStr(d.dateCredit),
+          money(d.montantInitial),
+          money(d.montantRestant),
+          d.estReglee ? 'Réglée' : 'Non réglée',
+          d.description || '—',
+        ]),
+        totaux: [
+          `Total initial : ${money(totalInitial)}`,
+          `Total restant : ${money(totalRestantFiltre)}`,
+        ],
+        pied: `${filtreLabels[filtreActif]} — ${periodeLabel}`,
+        paysage: true,
+      }, design);
+    } catch {
+      Alert.alert(tr('erreur', lang), 'Impression impossible');
+    }
+  };
+
   const resetForm = () => {
     setSelectedClient(null);
     setClientSearch('');
     setFormDescription('');
-    setFormMontant('');
+    setFormMontant(0);
     setFormDateCredit(new Date().toISOString().split('T')[0]);
   };
 
@@ -205,7 +259,7 @@ export default function DettesAnciennesScreen() {
       Alert.alert(tr('erreur', lang), 'Sélectionnez un client');
       return;
     }
-    const montant = parseFloat(formMontant);
+    const montant = formMontant;
     if (!montant || montant <= 0) {
       Alert.alert(tr('erreur', lang), 'Montant invalide');
       return;
@@ -231,7 +285,7 @@ export default function DettesAnciennesScreen() {
 
   const sauvegarderReglement = async () => {
     if (!selectedDette) return;
-    const montant = parseFloat(reglMontant);
+    const montant = reglMontant;
     if (!montant || montant <= 0) {
       Alert.alert(tr('erreur', lang), 'Montant invalide');
       return;
@@ -293,12 +347,6 @@ export default function DettesAnciennesScreen() {
 
   return (
     <View style={s.container}>
-      {fromCache && (
-        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* ── Hero stats ─────────────────────────────────────────────────────── */}
       <View style={s.hero}>
@@ -335,10 +383,67 @@ export default function DettesAnciennesScreen() {
             </TouchableOpacity>
           )}
         </View>
+        <TouchableOpacity
+          style={[s.iconBtn, showFiltres && s.iconBtnActive]}
+          onPress={() => setShowFiltres(v => !v)}
+        >
+          <MaterialCommunityIcons name="filter-variant" size={20} color={showFiltres ? '#fff' : '#081648'} />
+        </TouchableOpacity>
+        <TouchableOpacity style={s.iconBtn} onPress={imprimerListe}>
+          <MaterialCommunityIcons name="printer-outline" size={20} color="#081648" />
+        </TouchableOpacity>
         <TouchableOpacity style={s.addBtn} onPress={() => { resetForm(); setShowNouvelle(true); }}>
           <MaterialCommunityIcons name="plus" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      {/* ── Panneau filtres (statut + période) ─────────────────────────────── */}
+      {showFiltres && (
+        <View style={s.filtresPanel}>
+          <View style={s.chips}>
+            <TouchableOpacity
+              style={[s.chip, filtreActif === 'nonReglees' && s.chipActive]}
+              onPress={() => setFiltreActif('nonReglees')}
+            >
+              <Text style={[s.chipText, filtreActif === 'nonReglees' && s.chipTextActive]}>Non réglées</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.chip, filtreActif === 'reglees' && s.chipActive]}
+              onPress={() => setFiltreActif('reglees')}
+            >
+              <Text style={[s.chipText, filtreActif === 'reglees' && s.chipTextActive]}>Réglées</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.chip, filtreActif === 'toutes' && s.chipActive]}
+              onPress={() => setFiltreActif('toutes')}
+            >
+              <Text style={[s.chipText, filtreActif === 'toutes' && s.chipTextActive]}>Toutes</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={s.periodeRow}>
+            <TextInput
+              style={[s.fieldInput, s.periodeInput]}
+              value={dateDebut}
+              onChangeText={setDateDebut}
+              placeholder="Début AAAA-MM-JJ"
+              placeholderTextColor="#bbb"
+            />
+            <Text style={{ color: '#999' }}>→</Text>
+            <TextInput
+              style={[s.fieldInput, s.periodeInput]}
+              value={dateFin}
+              onChangeText={setDateFin}
+              placeholder="Fin AAAA-MM-JJ"
+              placeholderTextColor="#bbb"
+            />
+            {(dateDebut || dateFin) && (
+              <TouchableOpacity onPress={() => { setDateDebut(''); setDateFin(''); }}>
+                <MaterialCommunityIcons name="close-circle" size={18} color="#bbb" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
 
       {/* ── Liste des dettes ───────────────────────────────────────────────── */}
       <FlatList
@@ -471,11 +576,10 @@ export default function DettesAnciennesScreen() {
                 </>
               )}
               <Text style={s.fieldLabel}>Montant *</Text>
-              <TextInput
+              <MontantInput
                 style={s.fieldInput}
                 value={formMontant}
-                onChangeText={setFormMontant}
-                keyboardType="numeric"
+                onChangeValue={setFormMontant}
                 placeholder="0"
                 placeholderTextColor="#bbb"
               />
@@ -550,11 +654,10 @@ export default function DettesAnciennesScreen() {
                 </View>
               )}
               <Text style={s.fieldLabel}>Montant versé *</Text>
-              <TextInput
+              <MontantInput
                 style={s.fieldInput}
                 value={reglMontant}
-                onChangeText={setReglMontant}
-                keyboardType="numeric"
+                onChangeValue={setReglMontant}
                 placeholder="0"
                 placeholderTextColor="#bbb"
               />
@@ -718,12 +821,25 @@ const s = StyleSheet.create({
     backgroundColor: '#081648', borderRadius: 12, width: 40, height: 40,
     alignItems: 'center', justifyContent: 'center',
   },
+  iconBtn: {
+    width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0',
+    alignItems: 'center', justifyContent: 'center', backgroundColor: '#fafafa',
+  },
+  iconBtnActive: { backgroundColor: '#081648', borderColor: '#081648' },
+
+  // Panneau filtres
+  filtresPanel: {
+    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 10,
+  },
+  periodeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  periodeInput: { flex: 1, paddingVertical: 8 },
 
   // Carte dette
   card: {
-    backgroundColor: '#fff', borderRadius: 14, marginBottom: 12, padding: 14,
-    elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#fff', borderRadius: 18, marginBottom: 12, padding: 14,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
   cardTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 10 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
@@ -765,7 +881,7 @@ const s = StyleSheet.create({
 
   // Modal commun
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -776,7 +892,7 @@ const s = StyleSheet.create({
   modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
 
   // Info card (modal détails)
-  infoCard: { backgroundColor: '#fafafa', borderRadius: 12, padding: 12, marginBottom: 14 },
+  infoCard: { backgroundColor: '#fafafa', borderRadius: 14, padding: 12, marginBottom: 14 },
   infoCardTitle: { fontWeight: 'bold', color: '#081648', fontSize: 15, marginBottom: 8 },
   infoRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',

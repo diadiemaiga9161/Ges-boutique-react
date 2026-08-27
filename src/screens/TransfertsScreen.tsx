@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert,
   Modal, ScrollView, TextInput, TouchableOpacity,
@@ -9,6 +9,7 @@ import api, { getBoutiques, getProduits, createTransfert, getTransfertsEnvoyes, 
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { MontantInput } from '../components/MontantInput';
 
 const TYPES_PAIEMENT = [
   { value: 'SANS_PAIEMENT', label: 'Sans paiement' },
@@ -69,7 +70,7 @@ export default function TransfertsScreen() {
   const [paiements, setPaiements] = useState<any[]>([]);
   const [loadingPaiements, setLoadingPaiements] = useState(false);
   const [showPaiementForm, setShowPaiementForm] = useState(false);
-  const [montantPaiement, setMontantPaiement] = useState('');
+  const [montantPaiement, setMontantPaiement] = useState(0);
   const [modePaiement, setModePaiement] = useState('ESPECES');
   const [notesPaiement, setNotesPaiement] = useState('');
 
@@ -288,7 +289,7 @@ export default function TransfertsScreen() {
     setDetailTransfert(t);
     setPaiements([]);
     setShowPaiementForm(false);
-    setMontantPaiement('');
+    setMontantPaiement(0);
     setNotesPaiement('');
     setModePaiement('ESPECES');
     setLoadingPaiements(true);
@@ -303,11 +304,11 @@ export default function TransfertsScreen() {
     if (!detailTransfert || !montantPaiement) return;
     try {
       await api.post(`/transferts/${detailTransfert.id}/paiements`, {
-        montant: parseFloat(montantPaiement),
+        montant: montantPaiement,
         modePaiement,
         notes: notesPaiement.trim() || undefined,
       });
-      setMontantPaiement('');
+      setMontantPaiement(0);
       setNotesPaiement('');
       setShowPaiementForm(false);
       const res = await api.get(`/transferts/${detailTransfert.id}/paiements`);
@@ -318,7 +319,14 @@ export default function TransfertsScreen() {
     }
   };
 
-  const montantTotal = transferts.reduce((sum, t) => sum + (t.montant || t.montantTotal || 0), 0);
+  // BUG FIX (2026-08-16) : le backend (TransfertStock.java) ne renvoie ni
+  // `montant` ni `montantTotal` au niveau du transfert (seul PaiementTransfert
+  // a un champ montant, sans rapport) — la somme précédente était donc
+  // toujours 0 F. Le vrai montant se calcule ligne par ligne
+  // (quantite × prixUnitaire), comme fait déjà ailleurs dans l'app.
+  const montantTransfert = (t: any) =>
+    (t.lignes || []).reduce((s: number, l: any) => s + (l.quantite || 0) * (l.prixUnitaire || 0), 0);
+  const montantTotal = transferts.reduce((sum, t) => sum + montantTransfert(t), 0);
 
   const filtered = transferts.filter(t =>
     !search ||
@@ -341,18 +349,11 @@ export default function TransfertsScreen() {
           <Text style={styles.heroLbl}>Transferts</Text>
         </View>
         <View style={styles.heroStat}>
-          <Text style={styles.heroVal}>{montantTotal.toLocaleString('fr-FR')} F</Text>
+          <Text style={styles.heroVal}>{montantTotal.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
           <Text style={styles.heroLbl}>Montant total</Text>
         </View>
       </View>
 
-      {/* Bandeau offline */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       <Searchbar
         placeholder={tr('rechercher', lang)}
@@ -520,12 +521,11 @@ export default function TransfertsScreen() {
 
                   {showPaiementForm && (
                     <View style={{ backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, marginBottom: 8 }}>
-                      <TextInput
+                      <MontantInput
                         style={styles.input}
                         value={montantPaiement}
-                        onChangeText={setMontantPaiement}
+                        onChangeValue={setMontantPaiement}
                         placeholder="Montant"
-                        keyboardType="numeric"
                         placeholderTextColor="#94a3b8"
                       />
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
@@ -561,7 +561,7 @@ export default function TransfertsScreen() {
                           <Text style={{ fontSize: 13, fontWeight: '600', color: '#0f172a' }}>{p.modePaiement?.replace(/_/g, ' ')}</Text>
                           <Text style={{ fontSize: 11, color: '#64748b' }}>{p.notes || ''} {p.enregistrePar || ''}</Text>
                         </View>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#16a34a' }}>{(p.montant || 0).toLocaleString('fr-FR')} F</Text>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#16a34a' }}>{(p.montant || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
                       </View>
                     ))
                   ) : (
@@ -914,7 +914,7 @@ const styles = StyleSheet.create({
 
   searchbar: { marginHorizontal: 12, marginVertical: 8, borderRadius: 10, elevation: 1 },
 
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
@@ -959,7 +959,7 @@ const styles = StyleSheet.create({
   // Récap
   recapRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#f0fdf4', borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#bbf7d0' },
   recapTxt: { fontSize: 13, color: '#065f46' },
-  recapCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  recapCard: { backgroundColor: '#fff', borderRadius: 16, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
   recapLine: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   recapLabel: { fontSize: 13, color: '#64748b' },
   recapVal: { fontSize: 13, fontWeight: '600', color: '#0f172a', flex: 1, textAlign: 'right' },

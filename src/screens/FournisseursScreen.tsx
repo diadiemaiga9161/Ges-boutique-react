@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+﻿import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
   ScrollView, TouchableOpacity,
@@ -21,13 +21,14 @@ import {
 import { buildRecuPaiementFournisseurHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useMontantInput } from '../components/MontantInput';
 
 const MODES_PAIEMENT = ['ESPECES', 'BANQUE'];
 const STATUT_COLOR: Record<string, string> = {
   PAYE: '#16a34a', EN_COURS: '#d97706', IMPAYE: '#dc2626', ANNULE: '#6b7280',
 };
 
-function money(v: number) { return (v || 0).toLocaleString('fr-FR') + ' FCFA'; }
+function money(v: number) { return (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA'; }
 function fdate(d?: string) { if (!d) return '—'; return new Date(d).toLocaleDateString('fr-FR'); }
 
 // Ligne d'achat envoyée au backend — nouveauPrixAchat est optionnel : il n'est
@@ -99,8 +100,8 @@ function buildFicheFournisseurHtml(fournisseur: any, achats: any[], paiements: a
     return `<tr>
       <td>${a.dateAchat ? new Date(a.dateAchat).toLocaleDateString('fr-FR') : '—'}</td>
       <td style="font-size:11px;color:#475569">${lignesStr || '—'}</td>
-      <td style="text-align:right">${(a.montantTotal || 0).toLocaleString('fr-FR')} FCFA</td>
-      <td style="text-align:right;color:#16a34a">${(a.montantPaye || 0).toLocaleString('fr-FR')} FCFA</td>
+      <td style="text-align:right">${(a.montantTotal || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
+      <td style="text-align:right;color:#16a34a">${(a.montantPaye || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
       <td><span style="background:${statColor}22;color:${statColor};padding:2px 8px;border-radius:10px;font-size:10px">${a.statut}</span></td>
     </tr>`;
   }).join('');
@@ -108,7 +109,7 @@ function buildFicheFournisseurHtml(fournisseur: any, achats: any[], paiements: a
   const paiementsHtml = paiements.map(p => `<tr>
     <td>${p.datePaiement ? new Date(p.datePaiement).toLocaleDateString('fr-FR') : '—'}</td>
     <td>${p.modePaiement || '—'}</td>
-    <td style="text-align:right;font-weight:700;color:#16a34a">${(p.montant || 0).toLocaleString('fr-FR')} FCFA</td>
+    <td style="text-align:right;font-weight:700;color:#16a34a">${(p.montant || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</td>
     <td>${p.reference || '—'}</td>
   </tr>`).join('');
 
@@ -148,9 +149,9 @@ tr:nth-child(even){background:#fafafa}
     </div>
   </div>
   <div class="kpis">
-    <div class="kpi"><div class="kpi-val">${totalAchats.toLocaleString('fr-FR')} FCFA</div><div class="kpi-lbl">Total achats</div></div>
-    <div class="kpi"><div class="kpi-val" style="color:#16a34a">${totalPaye.toLocaleString('fr-FR')} FCFA</div><div class="kpi-lbl">Total payé</div></div>
-    <div class="kpi"><div class="kpi-val" style="color:#dc2626">${solde.toLocaleString('fr-FR')} FCFA</div><div class="kpi-lbl">Solde dû</div></div>
+    <div class="kpi"><div class="kpi-val">${totalAchats.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</div><div class="kpi-lbl">Total achats</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#16a34a">${totalPaye.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</div><div class="kpi-lbl">Total payé</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#dc2626">${solde.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</div><div class="kpi-lbl">Solde dû</div></div>
   </div>
   <div class="section">
     <div class="section-title">Historique des achats</div>
@@ -195,7 +196,8 @@ export default function FournisseursScreen() {
   const [avances, setAvances] = useState<any[]>([]);
   const [soldeAvance, setSoldeAvance] = useState(0);
   const [showAvanceModal, setShowAvanceModal] = useState(false);
-  const [avanceForm, setAvanceForm] = useState({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined as number | undefined });
+  const [avanceForm, setAvanceForm] = useState({ montant: 0, motif: '', sourceFinancement: 'CAISSE', compteId: undefined as number | undefined });
+  const montantAvanceInput = useMontantInput(avanceForm.montant, v => setAvanceForm(f => ({ ...f, montant: v })));
   const [comptes, setComptes] = useState<any[]>([]);
 
   const [showFournModal, setShowFournModal] = useState(false);
@@ -203,8 +205,12 @@ export default function FournisseursScreen() {
   const [showPaiementModal, setShowPaiementModal] = useState(false);
 
   const [fournForm, setFournForm] = useState({ nom: '', code: '', telephone: '', email: '', adresse: '' });
-  const [achatForm, setAchatForm] = useState({ produitId: 0, produitNom: '', quantite: '1', prixAchatUnitaire: '', prixVente: '', montantPaye: '0', commentaire: '' });
-  const [paiForm, setPaiForm] = useState({ montant: '', modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined as number | undefined });
+  const [achatForm, setAchatForm] = useState({ produitId: 0, produitNom: '', quantite: '1', prixAchatUnitaire: 0, prixVente: 0, montantPaye: 0, commentaire: '' });
+  const prixAchatInput = useMontantInput(achatForm.prixAchatUnitaire, v => setAchatForm(f => ({ ...f, prixAchatUnitaire: v })));
+  const prixVenteAchatInput = useMontantInput(achatForm.prixVente, v => setAchatForm(f => ({ ...f, prixVente: v })));
+  const montantPayeInput = useMontantInput(achatForm.montantPaye, v => setAchatForm(f => ({ ...f, montantPaye: v })));
+  const [paiForm, setPaiForm] = useState({ montant: 0, modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined as number | undefined });
+  const montantPaiementInput = useMontantInput(paiForm.montant, v => setPaiForm(f => ({ ...f, montant: v })));
   const [produits, setProduits] = useState<any[]>([]);
   const [showProduitPicker, setShowProduitPicker] = useState(false);
 
@@ -341,7 +347,7 @@ export default function FournisseursScreen() {
       const data = res.data?.data || res.data?.produits || res.data || [];
       setProduits(data);
     } catch {}
-    setAchatForm({ produitId: 0, produitNom: '', quantite: '1', prixAchatUnitaire: '', prixVente: '', montantPaye: '0', commentaire: '' });
+    setAchatForm({ produitId: 0, produitNom: '', quantite: '1', prixAchatUnitaire: 0, prixVente: 0, montantPaye: 0, commentaire: '' });
     setShowProduitPicker(false);
     setShowAchatModal(true);
   };
@@ -351,13 +357,13 @@ export default function FournisseursScreen() {
     if (!achatForm.quantite || !achatForm.prixAchatUnitaire) { Alert.alert(tr('erreur', lang), 'Quantité et prix obligatoires'); return; }
     try {
       const quantite = parseFloat(achatForm.quantite);
-      const prixAchatUnitaire = parseFloat(achatForm.prixAchatUnitaire);
+      const prixAchatUnitaire = achatForm.prixAchatUnitaire;
 
       const ligne: LigneAchatFournisseur = {
         produitId: achatForm.produitId,
         quantite,
         prixAchatUnitaire,
-        prixVente: parseFloat(achatForm.prixVente || '0'),
+        prixVente: achatForm.prixVente || 0,
       };
 
       // Le produit sélectionné dans ce formulaire provient toujours du catalogue existant
@@ -384,7 +390,7 @@ export default function FournisseursScreen() {
       const payload = {
         fournisseurId: selected.id,
         lignes: [ligne],
-        montantPaye: parseFloat(achatForm.montantPaye || '0'),
+        montantPaye: achatForm.montantPaye || 0,
         commentaire: achatForm.commentaire,
       };
       const res = await executerOuMettreEnFile('achat_fournisseur', payload, () => creerAchatFournisseur(payload));
@@ -405,7 +411,7 @@ export default function FournisseursScreen() {
     try {
       const payload = {
         fournisseurId: selected.id,
-        montant: parseFloat(paiForm.montant),
+        montant: paiForm.montant,
         modePaiement: paiForm.modePaiement,
         reference: paiForm.reference,
         observation: paiForm.observation,
@@ -444,7 +450,7 @@ export default function FournisseursScreen() {
   };
 
   const enregistrerAvance = async () => {
-    if (!avanceForm.montant || isNaN(Number(avanceForm.montant)) || Number(avanceForm.montant) <= 0) {
+    if (!avanceForm.montant || avanceForm.montant <= 0) {
       Alert.alert(tr('erreur', lang), 'Montant invalide'); return;
     }
     if (avanceForm.sourceFinancement === 'BANQUE' && !avanceForm.compteId) {
@@ -453,13 +459,13 @@ export default function FournisseursScreen() {
     try {
       await creerAvanceFournisseur({
         fournisseurId: selected.id,
-        montant: parseFloat(avanceForm.montant),
+        montant: avanceForm.montant,
         motif: avanceForm.motif,
         sourceFinancement: avanceForm.sourceFinancement as 'CAISSE' | 'BANQUE',
         compteId: avanceForm.sourceFinancement === 'BANQUE' ? avanceForm.compteId : undefined,
       });
       setShowAvanceModal(false);
-      setAvanceForm({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
+      setAvanceForm({ montant: 0, motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
       rechargerDetailCourant();
     } catch {
       Alert.alert(tr('erreur', lang), 'Impossible d\'enregistrer l\'avance');
@@ -741,7 +747,7 @@ export default function FournisseursScreen() {
                           style={styles.payerBtn}
                           onPress={() => {
                             setPaiForm({
-                              montant: String(a.montantRestant || 0),
+                              montant: a.montantRestant || 0,
                               modePaiement: 'ESPECES',
                               reference: '',
                               observation: `Règlement achat du ${fdate(a.dateAchat)}`,
@@ -765,7 +771,7 @@ export default function FournisseursScreen() {
                 <Card style={[styles.card, { backgroundColor: '#eff6ff', marginBottom: 12 }]}>
                   <Card.Content>
                     <Text style={styles.sitLabel}>Solde total des avances</Text>
-                    <Text style={[styles.moneyVal, { fontSize: 20, color: '#1e88e5', marginTop: 4 }]}>
+                    <Text style={[styles.moneyVal, { fontSize: 20, color: '#1a56db', marginTop: 4 }]}>
                       {money(soldeAvance)}
                     </Text>
                   </Card.Content>
@@ -781,7 +787,7 @@ export default function FournisseursScreen() {
                           <Text style={styles.achatDate}>
                             {a.dateAvance ? new Date(a.dateAvance).toLocaleDateString('fr-FR') : '—'}
                           </Text>
-                          <Text style={[styles.moneyVal, { color: '#1e88e5' }]}>{money(a.montant)}</Text>
+                          <Text style={[styles.moneyVal, { color: '#1a56db' }]}>{money(a.montant)}</Text>
                         </View>
                         {a.motif ? <Text style={[styles.sub, { marginTop: 4 }]}>{a.motif}</Text> : null}
                       </Card.Content>
@@ -794,17 +800,17 @@ export default function FournisseursScreen() {
         )}
 
         {tab === 'achats' && (
-          <FAB icon="cart-plus" style={[styles.fab, { backgroundColor: '#1e88e5' }]} onPress={ouvrirAchat} />
+          <FAB icon="cart-plus" style={[styles.fab, { backgroundColor: '#1a56db' }]} onPress={ouvrirAchat} />
         )}
         {tab === 'paiements' && (
           <FAB icon="cash" style={[styles.fab, { backgroundColor: '#16a34a' }]} onPress={() => {
-            setPaiForm({ montant: '', modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined });
+            setPaiForm({ montant: 0, modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined });
             setShowPaiementModal(true);
           }} />
         )}
         {tab === 'avances' && (
-          <FAB icon="plus" style={[styles.fab, { backgroundColor: '#1e88e5' }]} onPress={() => {
-            setAvanceForm({ montant: '', motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
+          <FAB icon="plus" style={[styles.fab, { backgroundColor: '#1a56db' }]} onPress={() => {
+            setAvanceForm({ montant: 0, motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
             setShowAvanceModal(true);
           }} />
         )}
@@ -825,10 +831,10 @@ export default function FournisseursScreen() {
                 <View style={styles.pickerList}>
                   {produits.map((p: any) => (
                     <TouchableOpacity key={p.id} style={styles.pickerItem} onPress={() => {
-                      setAchatForm({ ...achatForm, produitId: p.id, produitNom: p.nom, prixAchatUnitaire: String(p.prixAchat || ''), prixVente: String(p.prixVente || '') });
+                      setAchatForm({ ...achatForm, produitId: p.id, produitNom: p.nom, prixAchatUnitaire: p.prixAchat || 0, prixVente: p.prixVente || 0 });
                       setShowProduitPicker(false);
                     }}>
-                      <Text style={[styles.pickerItemText, achatForm.produitId === p.id && { color: '#1e88e5', fontWeight: 'bold' }]}>
+                      <Text style={[styles.pickerItemText, achatForm.produitId === p.id && { color: '#1a56db', fontWeight: 'bold' }]}>
                         {p.nom}
                       </Text>
                     </TouchableOpacity>
@@ -837,9 +843,9 @@ export default function FournisseursScreen() {
               )}
 
               <TextInput label="Quantité *" value={achatForm.quantite} onChangeText={t => setAchatForm({ ...achatForm, quantite: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
-              <TextInput label="Prix achat unitaire *" value={achatForm.prixAchatUnitaire} onChangeText={t => setAchatForm({ ...achatForm, prixAchatUnitaire: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
-              <TextInput label="Prix vente" value={achatForm.prixVente} onChangeText={t => setAchatForm({ ...achatForm, prixVente: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
-              <TextInput label="Montant payé" value={achatForm.montantPaye} onChangeText={t => setAchatForm({ ...achatForm, montantPaye: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
+              <TextInput label="Prix achat unitaire *" value={prixAchatInput.texte} onChangeText={prixAchatInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
+              <TextInput label="Prix vente" value={prixVenteAchatInput.texte} onChangeText={prixVenteAchatInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
+              <TextInput label="Montant payé" value={montantPayeInput.texte} onChangeText={montantPayeInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
               <TextInput label="Commentaire" value={achatForm.commentaire} onChangeText={t => setAchatForm({ ...achatForm, commentaire: t })} mode="outlined" style={styles.input} />
               <Button mode="contained" onPress={enregistrerAchat} style={{ marginTop: 4 }}>{tr('enregistrer', lang)}</Button>
             </ScrollView>
@@ -850,7 +856,7 @@ export default function FournisseursScreen() {
         <Portal>
           <Modal visible={showPaiementModal} onDismiss={() => setShowPaiementModal(false)} contentContainerStyle={styles.modal}>
             <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('ajouter', lang)} paiement</Text>
-            <TextInput label="Montant *" value={paiForm.montant} onChangeText={t => setPaiForm({ ...paiForm, montant: t })} mode="outlined" keyboardType="numeric" style={styles.input} />
+            <TextInput label="Montant *" value={montantPaiementInput.texte} onChangeText={montantPaiementInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
             <Text style={styles.sectionLabel}>Mode de paiement</Text>
             <View style={{ flexDirection: 'row', marginBottom: 12, gap: 6 }}>
               {MODES_PAIEMENT.map(m => (
@@ -870,7 +876,7 @@ export default function FournisseursScreen() {
                     style={[styles.modeBtn, { marginBottom: 4, flex: 0 }, paiForm.compteId === c.id && styles.modeBtnActive]}
                     onPress={() => setPaiForm({ ...paiForm, compteId: c.id })}>
                     <Text style={[styles.modeBtnText, paiForm.compteId === c.id && { color: '#fff' }]}>
-                      {c.nomBanque} — {(c.soldeActuel || 0).toLocaleString('fr-FR')} FCFA
+                      {c.nomBanque} — {(c.soldeActuel || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -888,8 +894,8 @@ export default function FournisseursScreen() {
             <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('ajouter', lang)} avance</Text>
             <TextInput
               label="Montant *"
-              value={avanceForm.montant}
-              onChangeText={t => setAvanceForm({ ...avanceForm, montant: t })}
+              value={montantAvanceInput.texte}
+              onChangeText={montantAvanceInput.onChangeText}
               mode="outlined"
               keyboardType="numeric"
               style={styles.input}
@@ -913,7 +919,7 @@ export default function FournisseursScreen() {
                     style={[styles.modeBtn, { marginBottom: 4, flex: 0 }, avanceForm.compteId === c.id && styles.modeBtnActive]}
                     onPress={() => setAvanceForm({ ...avanceForm, compteId: c.id })}>
                     <Text style={[styles.modeBtnText, avanceForm.compteId === c.id && { color: '#fff' }]}>
-                      {c.nomBanque} — {(c.soldeActuel || 0).toLocaleString('fr-FR')} FCFA
+                      {c.nomBanque} — {(c.soldeActuel || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -926,7 +932,7 @@ export default function FournisseursScreen() {
               mode="outlined"
               style={styles.input}
             />
-            <Button mode="contained" onPress={enregistrerAvance} style={{ marginTop: 4, backgroundColor: '#1e88e5' }}>
+            <Button mode="contained" onPress={enregistrerAvance} style={{ marginTop: 4, backgroundColor: '#1a56db' }}>
               {tr('enregistrer', lang)}
             </Button>
           </Modal>
@@ -981,22 +987,25 @@ export default function FournisseursScreen() {
   );
 }
 
+// STYLE (2026-08-16) : bleu #1e88e5 (Material blue, différent du reste de
+// l'app) uniformisé sur #1a56db, le bleu Ges Boutique utilisé partout
+// ailleurs — 15 occurrences (en-tête détail, onglets, boutons, badges).
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
   search: { margin: 12 },
-  card: { marginBottom: 10, borderRadius: 12 },
-  cardAnnule: { marginBottom: 10, borderRadius: 12, backgroundColor: '#f3f4f6', opacity: 0.75 },
+  card: { marginBottom: 10, borderRadius: 16 },
+  cardAnnule: { marginBottom: 10, borderRadius: 16, backgroundColor: '#f3f4f6', opacity: 0.75 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sub: { color: '#666', fontSize: 12, marginTop: 2 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
   fab: { position: 'absolute', bottom: 20, right: 20 },
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 16, padding: 20, maxHeight: '85%' },
+  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
   input: { marginBottom: 12 },
-  initiale: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#1e88e5', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  initiale: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   initialeText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
   chevron: { color: '#94a3b8', fontSize: 22, fontWeight: 'bold' },
   // Detail
-  detailHeader: { backgroundColor: '#1e88e5', flexDirection: 'row', alignItems: 'center', padding: 14, paddingTop: 18 },
+  detailHeader: { backgroundColor: '#1a56db', flexDirection: 'row', alignItems: 'center', padding: 14, paddingTop: 18 },
   backBtn: { padding: 6, marginRight: 8 },
   backArrow: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
   detailNom: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
@@ -1005,20 +1014,20 @@ const styles = StyleSheet.create({
   ficheBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   tabBar: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabBtnActive: { borderBottomWidth: 3, borderBottomColor: '#1e88e5' },
+  tabBtnActive: { borderBottomWidth: 3, borderBottomColor: '#1a56db' },
   tabLabel: { color: '#6b7280', fontSize: 13, fontWeight: '500' },
-  tabLabelActive: { color: '#1e88e5', fontWeight: 'bold' },
+  tabLabelActive: { color: '#1a56db', fontWeight: 'bold' },
 
   // Filtre période
   periodBar: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', paddingVertical: 8, paddingHorizontal: 8 },
   periodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   periodBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: '#f0f4f8', borderWidth: 1, borderColor: '#dde3ed' },
-  periodBtnActive: { backgroundColor: '#1e88e5', borderColor: '#1e88e5' },
+  periodBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
   periodBtnText: { fontSize: 12, color: '#666', fontWeight: '600' },
   periodBtnTextActive: { color: '#fff' },
   customDateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   dateInput: { flex: 1, backgroundColor: '#fff', height: 40 },
-  applyBtn: { backgroundColor: '#1e88e5', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  applyBtn: { backgroundColor: '#1a56db', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
   applyBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   // Achats non payés
   payerBtn: { backgroundColor: '#ecfdf5', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: '#a7f3d0' },
@@ -1034,7 +1043,7 @@ const styles = StyleSheet.create({
   ligneRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   ligneProduit: { color: '#334155', fontSize: 13, fontWeight: '500' },
   ligneQty: { color: '#64748b', fontSize: 12 },
-  ligneSous: { color: '#1e88e5', fontSize: 13, fontWeight: 'bold', textAlign: 'right' },
+  ligneSous: { color: '#1a56db', fontSize: 13, fontWeight: 'bold', textAlign: 'right' },
   annulerBtn: { backgroundColor: '#fef2f2', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: '#fecaca' },
   annulerBtnText: { color: '#dc2626', fontSize: 12, fontWeight: '600' },
   // Achats annulés
@@ -1057,8 +1066,8 @@ const styles = StyleSheet.create({
   pickerItemText: { color: '#334155', fontSize: 13 },
   sectionLabel: { color: '#475569', fontSize: 13, marginBottom: 6 },
   modeBtn: { flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', alignItems: 'center' },
-  modeBtnActive: { backgroundColor: '#1e88e5', borderColor: '#1e88e5' },
+  modeBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
   modeBtnText: { color: '#374151', fontSize: 11, fontWeight: '500' },
   recuBtn: { backgroundColor: '#eff6ff', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 8 },
-  recuBtnText: { color: '#1e88e5', fontSize: 12, fontWeight: '600' },
+  recuBtnText: { color: '#1a56db', fontSize: 12, fontWeight: '600' },
 });

@@ -60,7 +60,13 @@ export const BOUTIQUES_CONFIG = [
   { id: 6, nom: '🧪 Local (tunnel, sans wifi)', url: 'https://theories-waterproof-demonstrate-joint.trycloudflare.com/api' },
   // Test via le navigateur du PC lui-même (comme "ionic serve" + Chrome en local) :
   // ouvrir http://localhost:8081 dans Chrome sur le PC, choisir cette boutique.
-  { id: 7, nom: '🧪 Local (navigateur PC)', url: 'http://localhost:8080/api' },
+  // Port 8480 = celui du profil "boutique-local" (application-boutique-local.properties),
+  // le jar autonome dédié aux tests sur ce PC. Pas 8080 (= profil par défaut / boutique 1).
+  { id: 7, nom: '🧪 Local (navigateur PC)', url: 'http://localhost:8480/api' },
+  // Émulateur Android sur le même PC que le backend : 10.0.2.2 est l'alias fixe que
+  // l'émulateur utilise pour désigner "localhost du PC hôte" (localhost tout court,
+  // dans l'émulateur, désigne l'émulateur lui-même, pas le PC — cf. entrée 6/7 plus haut).
+  { id: 8, nom: '🧪 Local (émulateur Android)', url: 'http://10.0.2.2:8480/api' },
 ];
 
 export function getApiUrlForPort(port: number): string {
@@ -165,12 +171,26 @@ export const uploadPhotoProduit = (id: number, form: FormData) =>
 
 // ─── Ventes ────────────────────────────────────────────────────────────────
 export const getVentes = (params?: any) => api.get('/ventes', { params });
-export const getVentesJour = (params?: any) => api.get('/ventes/jour', { params });
-export const createVente = (data: any) => api.post('/ventes', data);
-export const annulerVente = (id: number) => api.delete(`/ventes/${id}`);
+// BUG FIX : /ventes/jour n'existe pas côté backend (404 systématique) — le
+// bon endpoint, identique à celui utilisé par Ionic, est /ventes/aujourdhui
+// (VenteController.java:206).
+export const getVentesJour = (params?: any) => api.get('/ventes/aujourdhui', { params });
+// clientRequestId optionnel : transmis en en-tête (jamais dans le corps JSON)
+// pour laisser le backend reconnaître un rejeu de la même vente (idempotence,
+// voir VenteController.creerVente / creerVenteCredit — X-Client-Request-ID).
+export const createVente = (data: any, clientRequestId?: string) =>
+  api.post('/ventes', data, clientRequestId ? { headers: { 'X-Client-Request-ID': clientRequestId } } : undefined);
+// estCredit détermine l'endpoint (comptant vs crédit, comme sur Ionic —
+// VenteController.java:357 et :418) ; motif transmis en query param.
+export const annulerVente = (id: number, motif?: string, estCredit?: boolean, utilisateurId?: number) =>
+  api.post(`/ventes/${estCredit ? 'credits/' : ''}${id}/annuler`, {}, { params: { motif, utilisateurId } });
 export const getVenteDetail = (id: number) => api.get(`/ventes/${id}`);
-export const getVentesParPeriode = (dateDebut: string, dateFin: string) =>
-  api.get('/ventes/periode', { params: { dateDebut, dateFin } });
+// inclureAnnulees optionnel (défaut backend = false, comportement inchangé
+// pour tous les appels existants qui ne le passent pas) — voir
+// ExportDonneesScreen.chargerVentes qui est le seul appelant à le forcer à
+// true pour inclure les ventes annulées dans l'export.
+export const getVentesParPeriode = (dateDebut: string, dateFin: string, inclureAnnulees?: boolean) =>
+  api.get('/ventes/periode', { params: { dateDebut, dateFin, inclureAnnulees } });
 export const modifierLignesVente = (venteId: number, data: {
   lignes: any[];
   utilisateurId?: number;
@@ -190,10 +210,17 @@ export const updateClient = (id: number, data: any) => api.put(`/clients/${id}`,
 export const deleteClient = (id: number) => api.delete(`/clients/${id}`);
 
 // ─── Fournisseurs ──────────────────────────────────────────────────────────
-export const getFournisseurs = (params?: any) => api.get('/fournisseurs', { params });
-export const createFournisseur = (data: any) => api.post('/fournisseurs', data);
-export const updateFournisseur = (id: number, data: any) => api.put(`/fournisseurs/${id}`, data);
-export const deleteFournisseur = (id: number) => api.delete(`/fournisseurs/${id}`);
+// BUG FIX (2026-08-13) : ces routes sont exposées côté backend sous
+// ProduitController (@RequestMapping("/api/produits")), donc nichées sous
+// /api/produits/fournisseurs — pas /api/fournisseurs. L'ancienne URL ne
+// correspondait à aucune route réelle : Spring renvoyait la page Angular
+// (fallback SPA) au lieu de JSON, et le HTML récupéré finissait assigné à
+// `fournisseurs` côté écran, provoquant "undefined is not a function" au
+// premier fournisseurs.map(...) rencontré (ProduitsScreen, Ventes...).
+export const getFournisseurs = (params?: any) => api.get('/produits/fournisseurs', { params });
+export const createFournisseur = (data: any) => api.post('/produits/fournisseurs', data);
+export const updateFournisseur = (id: number, data: any) => api.put(`/produits/fournisseurs/${id}`, data);
+export const deleteFournisseur = (id: number) => api.delete(`/produits/fournisseurs/${id}`);
 export const getHistoriqueAchatsFournisseur = (id: number, dateDebut?: string, dateFin?: string) =>
   api.get(`/fournisseur-achats/achats/${id}`, { params: { dateDebut, dateFin } });
 export const getHistoriquePaiementsFournisseur = (id: number, dateDebut?: string, dateFin?: string) =>
@@ -294,6 +321,8 @@ export const reglerCreditCaisse = (data: {
 }) => api.post('/caisse/credits/reglement', data);
 export const getCreditsEnRetard = () => api.get('/caisse/credits/retard');
 export const getStatsCaisseJour = () => api.get('/caisse/statistiques/aujourdhui');
+export const getStatsCaisseParPeriode = (dateDebut: string, dateFin: string) =>
+  api.get('/caisse/statistiques/periode', { params: { dateDebut, dateFin } });
 export const getHistoriqueReglementsCredit = (venteId: number) => api.get(`/caisse/credits/${venteId}/reglements`);
 export const getCreditsRegles = () => api.get('/caisse/credits/regles');
 export const getPaiementsGroupes = () => api.get('/caisse/paiements-groupes');
@@ -401,9 +430,9 @@ export const getEmployes = (params?: any) => api.get('/employes', { params });
 export const createEmploye = (data: any) => api.post('/employes', data);
 export const updateEmploye = (id: number, data: any) => api.put(`/employes/${id}`, data);
 export const deleteEmploye = (id: number) => api.delete(`/employes/${id}`);
-export const toggleStatutEmploye = (id: number, actif: boolean) => api.patch(`/employes/${id}/statut`, { actif });
+export const toggleStatutEmploye = (id: number, actif: boolean) => api.patch(`/employes/${id}/${actif ? 'activer' : 'desactiver'}`);
 export const getPaiementsEmployeById = (id: number) => api.get(`/employes/${id}/paiements`);
-export const createPaiementEmploye = (id: number, data: any) => api.post(`/employes/${id}/paiements`, data);
+export const createPaiementEmploye = (data: any) => api.post('/paiements-employe', data);
 
 // ─── Dettes anciennes ──────────────────────────────────────────────────────
 export const getDettesAnciennes = (params?: any) => api.get('/dettes-anciennes', { params });
@@ -411,7 +440,7 @@ export const createDetteAncienne = (data: any) => api.post('/dettes-anciennes', 
 export const updateDetteAncienne = (id: number, data: any) => api.put(`/dettes-anciennes/${id}`, data);
 export const deleteDetteAncienne = (id: number) => api.delete(`/dettes-anciennes/${id}`);
 export const getReglementsDetteAncienne = (id: number) => api.get(`/dettes-anciennes/${id}/reglements`);
-export const ajouterReglementDetteAncienne = (id: number, data: any) => api.post(`/dettes-anciennes/${id}/reglements`, data);
+export const ajouterReglementDetteAncienne = (data: any) => api.post('/dettes-anciennes/reglement', data);
 export const getStatsDettesAnciennes = () => api.get('/dettes-anciennes/statistiques').catch(() => ({ data: {} }));
 
 // ─── Comptes bancaires ──────────────────────────────────────────────────────
@@ -420,8 +449,8 @@ export const createCompte = (data: any) => api.post('/comptes', data);
 export const updateCompte = (id: number, data: any) => api.put(`/comptes/${id}`, data);
 export const deleteCompte = (id: number) => api.delete(`/comptes/${id}`);
 export const getOperationsCompte = (id: number) => api.get(`/comptes/${id}/operations`);
-export const versementCompte = (id: number, data: any) => api.post(`/comptes/${id}/versement`, data);
-export const retraitCompte = (id: number, data: any) => api.post(`/comptes/${id}/retrait`, data);
+export const versementCompte = (data: any) => api.post('/comptes/operation', data);
+export const retraitCompte = (data: any) => api.post('/comptes/operation', data);
 
 // ─── Objectifs fournisseurs ─────────────────────────────────────────────────
 export const getObjectifsFournisseur = () => api.get('/objectifs-fournisseur');
@@ -432,8 +461,8 @@ export const getAvancementObjectif = (id: number) => api.get(`/objectifs-fournis
 
 // ─── Vendeurs / Utilisateurs ────────────────────────────────────────────────
 export const getVendeurs = () => api.get('/users');
-export const createVendeur = (data: any) => api.post('/users', data);
-export const updateVendeur = (id: number, data: any) => api.put(`/users/${id}`, data);
+export const createVendeur = (data: any) => api.post('/utilisateurs', data);
+export const updateVendeur = (id: number, data: any) => api.put(`/utilisateurs/${id}`, data);
 export const toggleStatutVendeur = (id: number, actif: boolean) => api.patch(`/users/${id}/statut`, { actif });
 export const resetPasswordVendeur = (id: number, newPassword: string) => api.post(`/users/${id}/reset-password`, { newPassword });
 
@@ -541,3 +570,39 @@ export const reinitialiserParametres = (selection: SelectionParametres) =>
   api.post('/parametres/reinitialiser', selection);
 export const supprimerParametres = (selection: SelectionParametres) =>
   api.delete('/parametres/supprimer', { data: selection });
+
+// ─── Objectifs vendeurs (primes hebdomadaires — module séparé du paiement
+// employé, ne déclenche aucun paiement automatique ni écriture stock) ───────
+export const getObjectifsVendeur = () => api.get('/objectifs-vendeur');
+export const getObjectifVendeur = (id: number) => api.get(`/objectifs-vendeur/${id}`);
+export const getObjectifsVendeurParSemaine = (semaine: number, annee: number) =>
+  api.get('/objectifs-vendeur/semaine', { params: { semaine, annee } });
+export const getObjectifsVendeurParVendeur = (vendeurId: number) => api.get(`/objectifs-vendeur/vendeur/${vendeurId}`);
+export const getObjectifsVendeurParAnnee = (annee: number) => api.get('/objectifs-vendeur/annee', { params: { annee } });
+export const createObjectifVendeur = (data: any) => api.post('/objectifs-vendeur', data);
+export const updateObjectifVendeur = (id: number, data: any) => api.put(`/objectifs-vendeur/${id}`, data);
+export const validerObjectifVendeur = (id: number) => api.patch(`/objectifs-vendeur/${id}/valider`, {});
+export const deleteObjectifVendeur = (id: number) => api.delete(`/objectifs-vendeur/${id}`);
+
+// ─── Suggestions promo flash (produits proches de la péremption — ADMIN) ───
+export const getProduitsProchePeremption = (jours: number = 7) =>
+  api.get('/produits/proche-peremption', { params: { jours } });
+
+// ─── Réconciliation caisse par vendeur (ADMIN) — rapport en lecture seule :
+// pour chaque vendeur, ventes espèces/crédit du jour + règlements crédit
+// encaissés en espèces + total à remettre en caisse. Réponse : { success,
+// date, reconciliation: [...] } — la liste est dans la clé "reconciliation".
+export const getReconciliationVendeurs = (date?: string) =>
+  api.get('/caisse/reconciliation-vendeurs', { params: date ? { date } : undefined });
+
+// ─── Sauvegarde automatique programmée (ADMIN) ─────────────────────────────
+// GET /backup/liste (liste triée du plus récent au plus ancien côté backend)
+// et POST /backup/declencher (mysqldump exécuté de façon SYNCHRONE côté
+// serveur — peut prendre plusieurs secondes, d'où le timeout spécifique bien
+// plus généreux que celui de l'instance globale (15s), pour cet appel
+// précis uniquement). Le téléchargement du fichier (GET /backup/telecharger/
+// {nomFichier}) ne passe pas par ces wrappers : voir backup.service.ts,
+// qui utilise expo-file-system (headers Authorization joints manuellement,
+// hors de l'intercepteur axios) pour écrire puis partager le fichier binaire.
+export const getListeSauvegardes = () => api.get('/backup/liste');
+export const declencherSauvegarde = () => api.post('/backup/declencher', {}, { timeout: 120000 });

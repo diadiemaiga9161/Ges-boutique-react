@@ -80,8 +80,9 @@ const styles = StyleSheet.create({
   grid: { paddingHorizontal: 12, paddingBottom: 20 },
   gridRow: { gap: 12 },
   card: {
-    flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1.5, borderColor: '#e2e8f0',
+    flex: 1, backgroundColor: '#fff', borderRadius: 18, borderWidth: 1.5, borderColor: '#e2e8f0',
     alignItems: 'center', justifyContent: 'center', paddingVertical: 22, marginBottom: 12, position: 'relative',
+    elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   cardActive: { borderColor: '#1a56db', backgroundColor: '#eff6ff' },
   cardFlag: { fontSize: 32, marginBottom: 8 },

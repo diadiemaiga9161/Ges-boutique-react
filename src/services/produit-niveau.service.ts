@@ -46,24 +46,34 @@ export const ajusterStock = (id: number, stock: number) =>
   api.patch(`/produits/niveaux/${id}/stock`, { stock });
 
 /**
- * Calcule le facteur total entre un niveau et la racine de la hiérarchie.
- * Utilise parentId si disponible, sinon fallback sur ordre pour compatibilité.
+ * Calcule le facteur total entre un niveau et l'unité de base (le niveau
+ * feuille, sans enfant) — c'est-à-dire combien d'unités de base représente
+ * 1 unité de CE niveau (ex: 1 Carton = 12 Paquets x 6 Pièces = 72 Pièces).
+ * C'est exactement ce que le backend attend dans LigneVenteRequest.niveauFacteur
+ * ("facteur pour déduction stock", cf. LigneVente.java) et ce que fait déjà
+ * Ionic (cart.page.ts, calculerFacteurTotal) via sa propre récursion enfants.
+ *
+ * BUG FIX (2026-08-16) : la version précédente remontait la chaîne parentId
+ * (vers la racine) en multipliant le facteur DE CHAQUE NIVEAU TRAVERSÉ, y
+ * compris celui du niveau de départ lui-même — l'inverse de ce qu'il fallait
+ * (descendre vers les enfants). Résultat vérifié faux dans les 3 cas (Pièce
+ * vendue → 72 au lieu de 1 ; Paquet → 12 au lieu de 6 ; Carton → 1 au lieu
+ * de 72), donc une mauvaise quantité de stock déduite côté serveur à chaque
+ * vente utilisant un niveau d'emballage.
  */
 export function calculerFacteurTotal(niveaux: ProduitNiveau[], niveauIdOuOrdre: number, parId = true): number {
   if (parId) {
-    // Remonte la chaîne parentId jusqu'à la racine en multipliant les facteurs
-    let total = 1;
     const map = new Map<number, ProduitNiveau>(niveaux.filter(n => n.id !== undefined).map(n => [n.id!, n]));
-    let courant = map.get(niveauIdOuOrdre);
-    while (courant) {
-      total *= courant.facteur;
-      courant = courant.parentId !== undefined && courant.parentId !== null
-        ? map.get(courant.parentId)
-        : undefined;
-    }
-    return total;
+    const facteurVersBase = (n: ProduitNiveau): number => {
+      const enfant = niveaux.find(c => c.parentId === n.id);
+      if (!enfant) return 1;
+      return enfant.facteur * facteurVersBase(enfant);
+    };
+    const depart = map.get(niveauIdOuOrdre);
+    return depart ? facteurVersBase(depart) : 1;
   }
-  // Fallback mode ordre (compatibilité ancienne API)
+  // Fallback mode ordre (compatibilité ancienne API) — chemin legacy non
+  // exercé en pratique (l'API renvoie toujours un id), laissé inchangé.
   const sorted = [...niveaux].sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
   const maxOrdre = Math.max(...sorted.map(n => n.ordre ?? 0));
   let total = 1;

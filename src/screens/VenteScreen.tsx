@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
 import { Text, ActivityIndicator, Switch } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -10,10 +10,14 @@ import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database
 import { enregistrerVente, getNombreVentesPending, sauvegarderCache, lireCache } from '../services/offline.service';
 import { Produit, Client, LigneVenteRequest } from '../types';
 import { ProduitNiveau, getNiveauxEtPrincipal, calculerFacteurTotal, disponibleNiveau } from '../services/produit-niveau.service';
+import { Promotion, getPromosPourProduit, calculerPrixPromo } from '../services/promotion.service';
+import { showToast } from '../services/toast.service';
+import { annoncerMontantVente } from '../services/vocalConfirmation.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
+import { MontantInput } from '../components/MontantInput';
 
 interface CartItem {
   produit: Produit;
@@ -25,6 +29,15 @@ interface CartItem {
   niveauPrixAchat?: number;
   niveauFacteurTotal?: number;
   niveauStockMax?: number;
+  // BUG FIX (2026-08-16) : parité Ionic (cart.page.ts addWithPromo/choisirNiveau)
+  // — la promo active était vérifiée et appliquée automatiquement à l'ajout
+  // au panier côté Ionic, jamais côté React Native (toujours prix plein).
+  promo?: Promotion;
+  prixOriginal?: number;
+  // BUG FIX (2026-08-16) : parité Ionic (ci-price-btn/toggleEditPrice) — le
+  // prix était toujours un champ éditable ouvert côté React Native ; Ionic le
+  // cache par défaut derrière une icône crayon.
+  editingPrice?: boolean;
 }
 
 const MODES_PAIEMENT = ['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'WAVE_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'];
@@ -100,10 +113,10 @@ export default function VenteScreen() {
   // ─── Crédit ──────────────────────────────────────────────────────────────
   const [estCredit, setEstCredit] = useState(false);
   const [dateEcheance, setDateEcheance] = useState(dateEcheanceParDefaut());
-  const [montantVerse, setMontantVerse] = useState('');
+  const [montantVerse, setMontantVerse] = useState(0);
   const [soldeAvanceClient, setSoldeAvanceClient] = useState(0);
   const [utiliserAvance, setUtiliserAvance] = useState(false);
-  const [montantAvanceAUtiliser, setMontantAvanceAUtiliser] = useState('');
+  const [montantAvanceAUtiliser, setMontantAvanceAUtiliser] = useState(0);
   const [isLoadingAvance, setIsLoadingAvance] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -186,7 +199,7 @@ export default function VenteScreen() {
     setCreerClient(false);
     setSoldeAvanceClient(0);
     setUtiliserAvance(false);
-    setMontantAvanceAUtiliser('');
+    setMontantAvanceAUtiliser(0);
     if (c.nom) {
       setIsLoadingAvance(true);
       try {
@@ -208,7 +221,7 @@ export default function VenteScreen() {
     setShowClientDropdown(false);
     setSoldeAvanceClient(0);
     setUtiliserAvance(false);
-    setMontantAvanceAUtiliser('');
+    setMontantAvanceAUtiliser(0);
   };
 
   // ─── Scanner ─────────────────────────────────────────────────────────────
@@ -257,7 +270,22 @@ export default function VenteScreen() {
     ajouterSansNiveau(p);
   };
 
-  const ajouterSansNiveau = (p: Produit) => {
+  // BUG FIX (2026-08-16) : parité Ionic (addWithPromo) — vérifie la promo
+  // active du produit avant d'ajouter au panier, applique le prix réduit et
+  // affiche un toast, exactement comme cart.page.ts. Auparavant, aucun appel
+  // au service promotions n'existait ici : toute vente passait au prix plein
+  // même avec une promo active.
+  const ajouterSansNiveau = async (p: Produit) => {
+    let promo: Promotion | undefined;
+    const prixOriginal = p.prixVente;
+    let prixUnitaire = prixOriginal;
+    try {
+      const promos = await getPromosPourProduit(p.id);
+      if (promos.length > 0) {
+        promo = promos[0];
+        prixUnitaire = calculerPrixPromo(prixOriginal, promo);
+      }
+    } catch { /* pas de promo trouvable → prix plein */ }
     setPanier(prev => {
       const idx = prev.findIndex(i => i.produit.id === p.id && !i.niveauId);
       if (idx >= 0) {
@@ -265,11 +293,15 @@ export default function VenteScreen() {
         updated[idx] = { ...updated[idx], quantite: updated[idx].quantite + 1 };
         return updated;
       }
-      return [...prev, { produit: p, quantite: 1, prixUnitaire: p.prixVente, remisePourcentage: 0 }];
+      return [...prev, { produit: p, quantite: 1, prixUnitaire, remisePourcentage: 0, promo, prixOriginal }];
     });
+    if (promo) {
+      const label = promo.typeReduction === 'POURCENTAGE' ? `-${promo.valeurReduction}%` : `-${promo.valeurReduction} FCFA`;
+      showToast(`🏷️ ${promo.titre} ${label} appliqué`, 'success');
+    }
   };
 
-  const choisirNiveau = (niveau: ProduitNiveau) => {
+  const choisirNiveau = async (niveau: ProduitNiveau) => {
     const p = produitEnAttente;
     if (!p) return;
     const facteurTotal = niveau.id !== undefined
@@ -281,6 +313,20 @@ export default function VenteScreen() {
     const niveauStockMax = niveau.id !== undefined ? disponibleNiveau(niveauxDisponibles, niveau.id, quantitePrincipale) : (niveau.stock ?? 0);
     setShowNiveauModal(false);
     setProduitEnAttente(null);
+
+    // BUG FIX (2026-08-16) : même parité promo qu'en ajout direct (voir
+    // ajouterSansNiveau) — Ionic vérifie aussi la promo dans choisirNiveau().
+    let promo: Promotion | undefined;
+    const prixOriginal = niveau.prixVente;
+    let prixUnitaire = prixOriginal;
+    try {
+      const promos = await getPromosPourProduit(p.id);
+      if (promos.length > 0) {
+        promo = promos[0];
+        prixUnitaire = calculerPrixPromo(prixOriginal, promo);
+      }
+    } catch { /* pas de promo trouvable → prix plein */ }
+
     setPanier(prev => {
       const idx = prev.findIndex(i => i.produit.id === p.id && i.niveauId === niveau.id);
       if (idx >= 0) {
@@ -291,15 +337,21 @@ export default function VenteScreen() {
       return [...prev, {
         produit: p,
         quantite: 1,
-        prixUnitaire: niveau.prixVente,
+        prixUnitaire,
         remisePourcentage: 0,
         niveauId: niveau.id,
         niveauNom: niveau.nom,
         niveauPrixAchat: niveau.prixAchat,
         niveauFacteurTotal: facteurTotal,
         niveauStockMax,
+        promo,
+        prixOriginal,
       }];
     });
+    if (promo) {
+      const label = promo.typeReduction === 'POURCENTAGE' ? `-${promo.valeurReduction}%` : `-${promo.valeurReduction} FCFA`;
+      showToast(`🏷️ ${promo.titre} ${label} appliqué`, 'success');
+    }
   };
 
   const getStockMax = (item: CartItem) => (item.niveauId !== undefined && item.niveauStockMax !== undefined ? item.niveauStockMax : item.produit.quantite);
@@ -317,11 +369,40 @@ export default function VenteScreen() {
     });
   };
 
-  const modifierPrixLigne = (id: number, niveauId: number | undefined, prix: string) => {
-    const val = parseFloat(prix);
+  const modifierPrixLigne = (id: number, niveauId: number | undefined, val: number) => {
     setPanier(prev => prev.map(i => (i.produit.id === id && i.niveauId === niveauId)
       ? { ...i, prixUnitaire: isNaN(val) || val < 0 ? 0 : val }
       : i));
+  };
+
+  // BUG FIX (2026-08-16) : parité Ionic (ci-qty-input) — permet de taper la
+  // quantité directement, en plus des boutons −/+ (clampée entre 1 et le
+  // stock max, comme clampQty() côté Ionic).
+  const modifierQteDirecte = (id: number, niveauId: number | undefined, valeur: string) => {
+    const val = parseInt(valeur, 10);
+    setPanier(prev => prev.map(i => {
+      if (i.produit.id !== id || i.niveauId !== niveauId) return i;
+      const max = getStockMax(i);
+      let q = isNaN(val) || val < 1 ? 1 : val;
+      if (q > max) {
+        q = max;
+        showToast(`Stock maximum : ${max} unité(s)`, 'error');
+      }
+      return { ...i, quantite: q };
+    }));
+  };
+
+  // BUG FIX (2026-08-16) : parité Ionic (toggleEditPrice) — le prix se
+  // cache/affiche via une icône crayon ; fermer l'édition annule la saisie
+  // et revient au prix de base de la ligne (celui du niveau vendu si
+  // applicable, sinon celui du produit — prixOriginal, déjà suivi pour les
+  // promos), comme item.product.prixVente côté Ionic.
+  const toggleEditPrice = (id: number, niveauId: number | undefined) => {
+    setPanier(prev => prev.map(i => {
+      if (i.produit.id !== id || i.niveauId !== niveauId) return i;
+      const editing = !i.editingPrice;
+      return { ...i, editingPrice: editing, prixUnitaire: editing ? i.prixUnitaire : (i.prixOriginal ?? i.produit.prixVente) };
+    }));
   };
 
   const modifierRemiseLigne = (id: number, niveauId: number | undefined, remise: string) => {
@@ -344,9 +425,21 @@ export default function VenteScreen() {
     if (typeRemiseGlobale === 'POURCENTAGE') return Math.max(0, subTotal - (subTotal * rg / 100));
     return Math.max(0, subTotal - rg);
   })();
-  const resteAPayerCredit = Math.max(0, total - (parseFloat(montantVerse) || 0) - (utiliserAvance ? (parseFloat(montantAvanceAUtiliser) || 0) : 0));
+  const resteAPayerCredit = Math.max(0, total - (montantVerse || 0) - (utiliserAvance ? (montantAvanceAUtiliser || 0) : 0));
 
-  const utiliserTouteAvance = () => setMontantAvanceAUtiliser(String(Math.min(soldeAvanceClient, total)));
+  // BUG FIX (2026-08-16) : parité Ionic (cart.page.ts getBeneficeTotal) — le
+  // bénéfice/perte estimé du panier entier n'était affiché nulle part côté
+  // React Native (seulement ligne par ligne), contrairement à Ionic qui
+  // l'affiche juste sous le sous-total dans la carte des totaux.
+  const remiseGlobaleMontant = Math.max(0, subTotal - total);
+  const beneficeTotal = Math.round(panier.reduce((s, i) => {
+    const prixAchatEffectif = i.niveauId ? (i.niveauPrixAchat || 0) : (i.produit.prixAchat || 0);
+    return s + (calculerPrixApresRemise(i.prixUnitaire, i.remisePourcentage) - prixAchatEffectif) * i.quantite;
+  }, 0) - remiseGlobaleMontant);
+  const beneficeTotalLabel = beneficeTotal > 0 ? 'Bénéfice estimé' : beneficeTotal < 0 ? 'Perte estimée' : 'Équilibre';
+  const beneficeTotalColor = beneficeTotal > 0 ? colors.success : beneficeTotal < 0 ? colors.danger : colors.textSecondary;
+
+  const utiliserTouteAvance = () => setMontantAvanceAUtiliser(Math.min(soldeAvanceClient, total));
 
   // ─── Stock local (optimiste après vente) ────────────────────────────────
   const mettreAJourStockLocal = (panierVendu: CartItem[]) => {
@@ -367,7 +460,7 @@ export default function VenteScreen() {
     setTypeRemiseGlobale('POURCENTAGE');
     clearClient();
     setCreerClient(false);
-    setMontantVerse('');
+    setMontantVerse(0);
     setEstCredit(false);
     setDateEcheance(dateEcheanceParDefaut());
   };
@@ -417,8 +510,8 @@ export default function VenteScreen() {
       clientPrenom: clientPrenom.trim() || undefined,
       clientTelephone: clientTelephone.trim() || undefined,
       dateEcheance: estCredit ? dateEcheance : undefined,
-      montantVerse: estCredit ? Number(montantVerse || 0) : 0,
-      montantAvanceUtilise: estCredit && utiliserAvance ? Math.min(Number(montantAvanceAUtiliser || 0), soldeAvanceClient) : 0,
+      montantVerse: estCredit ? (montantVerse || 0) : 0,
+      montantAvanceUtilise: estCredit && utiliserAvance ? Math.min(montantAvanceAUtiliser || 0, soldeAvanceClient) : 0,
       creerClient,
       clientDivers: !clientId && !clientNom.trim(),
       estCredit,
@@ -430,6 +523,11 @@ export default function VenteScreen() {
       mettreAJourStockLocal(panierSnapshot);
       const msg = result.offline ? tr('vente_hors_ligne', lang) : tr('vente_enregistree', lang);
       Alert.alert(result.offline ? tr('hors_ligne', lang) : tr('succes', lang), msg);
+      // Confirmation vocale "fire and forget" — ne bloque jamais la
+      // validation de vente, avale toute erreur en interne (voir
+      // vocalConfirmation.service.ts). Réglable et activée par défaut
+      // depuis "Mon profil".
+      annoncerMontantVente(total);
       reset();
       const n = await getNombreVentesPending();
       setVentesPending(n);
@@ -465,18 +563,6 @@ export default function VenteScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 
-        {offline && (
-          <View style={styles.offlineBanner}>
-            <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
-            <Text style={styles.offlineText}>{tr('hors_ligne', lang)} — ventes sauvegardées localement</Text>
-          </View>
-        )}
-        {fromCache && (
-          <View style={styles.cacheBanner}>
-            <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-            <Text style={styles.cacheTxt}>Mode hors ligne — catalogue local</Text>
-          </View>
-        )}
         {ventesPending > 0 && (
           <View style={styles.pendingBanner}>
             <MaterialCommunityIcons name="clock-outline" size={14} color="#92400e" />
@@ -515,7 +601,7 @@ export default function VenteScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text numberOfLines={1} style={[styles.pcName, { color: colors.text }]}>{product.nom}</Text>
-                  <Text style={[styles.pcPrice, { color: colors.primary }]}>{product.prixVente?.toLocaleString('fr-FR')} FCFA</Text>
+                  <Text style={[styles.pcPrice, { color: colors.primary }]}>{product.prixVente?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
                 </View>
                 <Text style={[styles.pcStock, product.quantite <= 5 && { color: '#dc2626' }]}>{product.quantite}</Text>
                 <MaterialCommunityIcons name="plus-circle" size={20} color={colors.primary} />
@@ -559,16 +645,47 @@ export default function VenteScreen() {
                       </View>
                     )}
 
-                    {/* Prix de vente modifiable */}
+                    {/* Badge promo active (parité Ionic ci-promo-badge) */}
+                    {item.promo && (
+                      <View style={[styles.niveauBadge, { backgroundColor: '#fef3c7' }]}>
+                        <MaterialCommunityIcons name="tag" size={11} color="#b45309" />
+                        <Text style={[styles.niveauBadgeText, { color: '#b45309' }]}>
+                          {item.promo.titre} {item.promo.typeReduction === 'POURCENTAGE' ? `-${item.promo.valeurReduction}%` : `-${item.promo.valeurReduction} FCFA`}
+                        </Text>
+                        {item.prixOriginal !== undefined && (
+                          <Text style={{ fontSize: 10, color: '#92400e', textDecorationLine: 'line-through', marginLeft: 4 }}>
+                            {item.prixOriginal.toLocaleString('de-DE', { maximumFractionDigits: 0 })}
+                          </Text>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Prix de vente — masqué derrière une icône crayon par défaut,
+                        comme Ionic (ci-price-btn / toggleEditPrice), au lieu d'un
+                        champ toujours ouvert. */}
                     <View style={styles.ciPriceRow}>
-                      <RNTextInput
-                        style={[styles.ciPriceInput, { borderColor: colors.border, color: colors.text }]}
-                        value={String(item.prixUnitaire)}
-                        onChangeText={v => modifierPrixLigne(item.produit.id, item.niveauId, v)}
-                        keyboardType="numeric"
-                      />
-                      <Text style={{ fontSize: 11, color: colors.textSecondary }}>FCFA / unité</Text>
+                      <Text style={{ fontSize: 12, color: colors.text, flex: 1 }}>
+                        {item.prixUnitaire.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA / unité
+                        {item.prixUnitaire !== (item.prixOriginal ?? item.produit.prixVente) && !item.promo && (
+                          <Text style={{ color: colors.primary, fontWeight: '700' }}> · modifié</Text>
+                        )}
+                      </Text>
+                      <TouchableOpacity onPress={() => toggleEditPrice(item.produit.id, item.niveauId)} style={styles.ciPriceBtn}>
+                        <MaterialCommunityIcons name={item.editingPrice ? 'close' : 'pencil-outline'} size={15} color={colors.textSecondary} />
+                      </TouchableOpacity>
                     </View>
+                    {item.editingPrice && (
+                      <View style={styles.ciPriceEditRow}>
+                        <MaterialCommunityIcons name="cash" size={14} color={colors.textSecondary} />
+                        <MontantInput
+                          style={[styles.ciPriceInput, { borderColor: colors.border, color: colors.text }]}
+                          value={item.prixUnitaire}
+                          onChangeValue={v => modifierPrixLigne(item.produit.id, item.niveauId, v)}
+                          autoFocus
+                        />
+                        <Text style={{ fontSize: 11, color: colors.textSecondary }}>FCFA</Text>
+                      </View>
+                    )}
 
                     {/* Bénéfice / prix d'achat */}
                     {prixAchatEffectif > 0 && (
@@ -600,7 +717,14 @@ export default function VenteScreen() {
                       <TouchableOpacity style={styles.ciQtyBtn} onPress={() => modifierQte(item.produit.id, -1, item.niveauId)}>
                         <Text style={styles.ciQtyBtnText}>−</Text>
                       </TouchableOpacity>
-                      <Text style={[styles.ciQtyVal, { color: colors.text }]}>{item.quantite}</Text>
+                      {/* Quantité saisissable directement (comme Ionic ci-qty-input),
+                          en plus des boutons −/+ — avant, seuls les boutons existaient. */}
+                      <RNTextInput
+                        style={[styles.ciQtyInput, { color: colors.text, borderColor: colors.border }]}
+                        value={String(item.quantite)}
+                        onChangeText={v => modifierQteDirecte(item.produit.id, item.niveauId, v)}
+                        keyboardType="numeric"
+                      />
                       <TouchableOpacity
                         style={[styles.ciQtyBtn, item.quantite >= stockMax && { opacity: 0.3 }]}
                         onPress={() => modifierQte(item.produit.id, 1, item.niveauId)}
@@ -612,7 +736,7 @@ export default function VenteScreen() {
                     <Text style={[styles.ciStockBadge, { color: item.quantite >= stockMax ? '#dc2626' : colors.textSecondary }]}>
                       {item.quantite}/{stockMax}
                     </Text>
-                    <Text style={[styles.ciTotal, { color: colors.primary }]}>{totalLigne(item).toLocaleString('fr-FR')}</Text>
+                    <Text style={[styles.ciTotal, { color: colors.primary }]}>{totalLigne(item).toLocaleString('de-DE', { maximumFractionDigits: 0 })}</Text>
                     <TouchableOpacity onPress={() => retirerLigne(item.produit.id, item.niveauId)} style={{ marginTop: 4 }}>
                       <MaterialCommunityIcons name="trash-can-outline" size={18} color={colors.danger} />
                     </TouchableOpacity>
@@ -631,8 +755,15 @@ export default function VenteScreen() {
           <View style={[styles.totauxCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
             <View style={styles.rowBetween}>
               <Text style={{ color: colors.textSecondary }}>Sous-total</Text>
-              <Text style={{ fontWeight: 'bold', color: colors.text }}>{subTotal.toLocaleString('fr-FR')} FCFA</Text>
+              <Text style={{ fontWeight: 'bold', color: colors.text }}>{subTotal.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
             </View>
+
+            {panier.length > 0 && (
+              <View style={[styles.rowBetween, { marginTop: 8 }]}>
+                <Text style={{ color: beneficeTotalColor, fontSize: 12, fontWeight: '600' }}>{beneficeTotalLabel}</Text>
+                <Text style={{ fontWeight: 'bold', color: beneficeTotalColor }}>{Math.abs(beneficeTotal).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+              </View>
+            )}
 
             <View style={styles.remiseRow}>
               <View style={{ flex: 1 }}>
@@ -664,7 +795,7 @@ export default function VenteScreen() {
 
             <View style={[styles.totalLine, { borderTopColor: colors.border }]}>
               <Text style={{ fontWeight: 'bold', color: colors.text }}>TOTAL À PAYER</Text>
-              <Text style={[styles.totalVal, { color: colors.primary }]}>{total.toLocaleString('fr-FR')} FCFA</Text>
+              <Text style={[styles.totalVal, { color: colors.primary }]}>{total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
             </View>
           </View>
 
@@ -795,7 +926,7 @@ export default function VenteScreen() {
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
                   <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Montant versé (acompte)</Text>
-                  <RNTextInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={montantVerse} onChangeText={setMontantVerse} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.placeholder} />
+                  <MontantInput style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]} value={montantVerse} onChangeValue={setMontantVerse} placeholder="0" placeholderTextColor={colors.placeholder} />
                 </View>
               </View>
 
@@ -809,7 +940,7 @@ export default function VenteScreen() {
                         <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
                       ) : (
                         <Text style={{ marginLeft: 6, fontSize: 12, color: colors.text }}>
-                          Avance disponible : <Text style={{ fontWeight: 'bold' }}>{soldeAvanceClient.toLocaleString('fr-FR')} FCFA</Text>
+                          Avance disponible : <Text style={{ fontWeight: 'bold' }}>{soldeAvanceClient.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
                         </Text>
                       )}
                     </View>
@@ -823,11 +954,10 @@ export default function VenteScreen() {
                   {utiliserAvance && !isLoadingAvance && (
                     <View style={{ marginTop: 8 }}>
                       <View style={styles.rowStart}>
-                        <RNTextInput
+                        <MontantInput
                           style={[styles.fieldInput, { flex: 1, borderColor: colors.border, color: colors.text }]}
                           value={montantAvanceAUtiliser}
-                          onChangeText={setMontantAvanceAUtiliser}
-                          keyboardType="numeric"
+                          onChangeValue={setMontantAvanceAUtiliser}
                           placeholder="0"
                           placeholderTextColor={colors.placeholder}
                         />
@@ -836,8 +966,8 @@ export default function VenteScreen() {
                         </TouchableOpacity>
                       </View>
                       <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
-                        Max : {soldeAvanceClient.toLocaleString('fr-FR')} FCFA
-                        {Number(montantAvanceAUtiliser) > 0 ? ` · Reste : ${resteAPayerCredit.toLocaleString('fr-FR')} FCFA` : ''}
+                        Max : {soldeAvanceClient.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
+                        {montantAvanceAUtiliser > 0 ? ` · Reste : ${resteAPayerCredit.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA` : ''}
                       </Text>
                     </View>
                   )}
@@ -860,7 +990,7 @@ export default function VenteScreen() {
             ) : (
               <>
                 <MaterialCommunityIcons name="check-circle-outline" size={20} color="#fff" />
-                <Text style={styles.submitBtnText}>Valider la vente · {total.toLocaleString('fr-FR')} FCFA</Text>
+                <Text style={styles.submitBtnText}>Valider la vente · {total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
               </>
             )}
           </TouchableOpacity>
@@ -911,13 +1041,13 @@ export default function VenteScreen() {
                             </Text>
                           </View>
                           <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 3 }}>
-                            Achat : {n.prixAchat} FCFA
+                            Achat : {(n.prixAchat || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
                           </Text>
                           <Text style={{ fontSize: 12, marginTop: 2, fontWeight: '600', color: stockColor }}>
                             {stockLabel}
                           </Text>
                         </View>
-                        <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>{n.prixVente} FCFA</Text>
+                        <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>{(n.prixVente || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -985,6 +1115,8 @@ const styles = StyleSheet.create({
   niveauBadgeText: { fontSize: 10, fontWeight: '700' },
   ciPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
   ciPriceInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, width: 80 },
+  ciPriceBtn: { padding: 4 },
+  ciPriceEditRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   ciDiscountRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
   ciDiscountInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, width: 50, textAlign: 'center' },
   ciRight: { alignItems: 'flex-end', justifyContent: 'flex-start', minWidth: 90 },
@@ -992,6 +1124,7 @@ const styles = StyleSheet.create({
   ciQtyBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f0f4f8', alignItems: 'center', justifyContent: 'center' },
   ciQtyBtnText: { fontSize: 16, fontWeight: 'bold', color: '#1a56db' },
   ciQtyVal: { minWidth: 20, textAlign: 'center', fontWeight: 'bold' },
+  ciQtyInput: { minWidth: 32, textAlign: 'center', fontWeight: 'bold', fontSize: 13, borderWidth: 1, borderRadius: 6, paddingVertical: 2, paddingHorizontal: 2 },
   ciStockBadge: { fontSize: 10, marginTop: 3 },
   ciTotal: { fontSize: 13, fontWeight: '700', marginTop: 6 },
 

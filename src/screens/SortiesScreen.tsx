@@ -127,13 +127,6 @@ export default function SortiesScreen() {
         </View>
       </View>
 
-      {/* ── Bandeau offline ── */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* ── Filtre période ── */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 10, paddingVertical: 6 }}>
@@ -242,7 +235,7 @@ const styles = StyleSheet.create({
   typeChip: { flexDirection: 'row', gap: 4, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
   typeChipText: { fontSize: 11, fontWeight: '500', color: '#64748b' },
 
-  card: { marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },

@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
-  Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl,
+  Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl, Linking,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,7 +12,7 @@ import { tr } from '../i18n';
 
 const AVATAR_COLORS = ['#1e88e5', '#43a047', '#e53935', '#8e24aa', '#fb8c00', '#00acc1', '#d81b60'];
 
-function money(v: number) { return (v || 0).toLocaleString('fr-FR') + ' FCFA'; }
+function money(v: number) { return (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA'; }
 function fdate(d?: string) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('fr-FR');
@@ -46,6 +46,7 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ ...FORM_INITIAL });
   const [userId, setUserId] = useState<number>(0);
+  const [boutique, setBoutique] = useState<any>({});
 
   const cacheKey = `paiements_employe_${employe.id}`;
   const charger = async () => {
@@ -68,6 +69,9 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
   useEffect(() => {
     AsyncStorage.getItem('user').then(raw => {
       if (raw) { try { setUserId(JSON.parse(raw)?.id || 0); } catch {} }
+    });
+    AsyncStorage.getItem('boutique_info').then(raw => {
+      if (raw) { try { setBoutique(JSON.parse(raw)); } catch {} }
     });
     if (employe.id) {
       charger();
@@ -131,16 +135,36 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
     ]);
   };
 
+  /** Envoi du reçu de paiement par WhatsApp directement au numéro enregistré sur la fiche employé. */
+  const envoyerRecuWhatsApp = (p: any) => {
+    const telPropre = String(employe.telephone || '').replace(/\D/g, '');
+    if (!telPropre) {
+      Alert.alert('Aucun numéro enregistré', `Ajoutez un numéro de téléphone à la fiche de ${nomComplet} pour activer l'envoi WhatsApp.`);
+      return;
+    }
+    const periodeLabel = p.periodeFin && p.periodeFin !== p.periodeDebut ? `${p.periodeDebut} à ${p.periodeFin}` : p.periodeDebut;
+    const lignes = [
+      `*${boutique.nom || 'Ges Boutique'}*`,
+      `Reçu de paiement de salaire`,
+      `Employé : ${nomComplet}`,
+      `Date : ${fdate(p.datePaiement)}`,
+      ``,
+      `Poste : ${employe.poste || '—'}`,
+      `Période : ${periodeLabel || '—'}`,
+      `Nombre de mois : ${p.nombreMois || 1}`,
+      ``,
+      `Montant payé : ${money(p.montant)}`,
+      ``,
+      `Merci de votre confiance.`,
+    ];
+    if (boutique.telephone) lignes.push(`${boutique.nom} — ${boutique.telephone}`);
+    Linking.openURL(`https://wa.me/${telPropre}?text=${encodeURIComponent(lignes.join('\n'))}`);
+  };
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#081648" />;
 
   return (
     <View style={styles.container}>
-      {fromCache && (
-        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 }}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={{ color: '#92400e', fontSize: 12 }}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -231,9 +255,15 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
             {p.observation ? <Text style={styles.paiNote}>{p.observation}</Text> : null}
 
             {p.statut !== 'ANNULE' && (
-              <TouchableOpacity onPress={() => annulerPaiement(p)} style={{ alignSelf: 'flex-end', marginTop: 6 }}>
-                <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{tr('annuler', lang)}</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 6, gap: 16 }}>
+                <TouchableOpacity onPress={() => envoyerRecuWhatsApp(p)} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <MaterialCommunityIcons name="whatsapp" size={14} color="#25D366" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#25D366', fontSize: 12, fontWeight: '600' }}>WhatsApp</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => annulerPaiement(p)}>
+                  <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{tr('annuler', lang)}</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         )}
@@ -356,10 +386,10 @@ const styles = StyleSheet.create({
   ficheCard: {
     backgroundColor: '#fff',
     margin: 12,
-    borderRadius: 14,
+    borderRadius: 18,
     padding: 16,
     elevation: 3,
-    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6,
+    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8,
   },
   ficheTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   avatar: {
@@ -390,7 +420,7 @@ const styles = StyleSheet.create({
   // Paiement card
   paiCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 10,
     padding: 14,
     elevation: 2,
@@ -437,8 +467,8 @@ const styles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     maxHeight: '90%' as any,
     padding: 20,
   },

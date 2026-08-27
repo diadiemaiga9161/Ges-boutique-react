@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, Alert, RefreshControl, TouchableOpacity, ScrollView, Modal, TextInput } from 'react-native';
 import { Text, FAB, ActivityIndicator, Switch, Card } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import api, { createPromotion, updatePromotion } from '../services/api.service';
+import api, { createPromotion, updatePromotion, getProduitsProchePeremption } from '../services/api.service';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
@@ -17,10 +17,24 @@ interface Promotion {
   dateDebut?: string;
   dateFin?: string;
   produits?: { id: number; nom: string }[];
+  // L'entité backend expose bien produitIds (List<Long>), pas d'objets {id,nom}
+  // enrichis — voir Promotion.java côté Spring. Utilisé pour le filtrage des
+  // suggestions (produit déjà couvert par une promo en cours).
+  produitIds?: number[];
 }
 
-const money = (v: number) => v?.toLocaleString('fr-FR') + ' FCFA';
-const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
+interface ProduitPeremption {
+  id: number;
+  nom: string;
+  datePeremption: string | null;
+  quantite: number;
+  uniteMesure?: string;
+  categorie?: { id: number; nom: string };
+}
+
+const money = (v: number) => v?.toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
+const dateStr = (d?: string | null) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function PromotionsScreen() {
   const { lang } = useLang();
@@ -36,14 +50,24 @@ export default function PromotionsScreen() {
     valeurReduction: '',
     active: true,
     globale: true,
+    dateDebut: '',
+    dateFin: '',
   });
   const [saving, setSaving] = useState(false);
+  // Suggestions de promo flash (produits proches de la date de péremption)
+  const [suggestions, setSuggestions] = useState<ProduitPeremption[]>([]);
+  // Produit ciblé quand le formulaire a été pré-rempli depuis une suggestion
+  const [suggestedProduit, setSuggestedProduit] = useState<{ id: number; nom: string } | null>(null);
 
   const charger = async (event?: any) => {
     setLoading(true);
     try {
       const res = await api.get('/promotions');
-      const data = res.data?.data || res.data || [];
+      // BUG FIX (2026-08-14) : le backend renvoie { success, promotions: [...] },
+      // pas { data: [...] } — l'ancien fallback sur res.data (l'objet entier, pas
+      // un tableau) plantait tout render utilisant .filter/.map sur `promos`
+      // ("undefined is not a function").
+      const data = res.data?.promotions || res.data?.data || [];
       setPromos(data);
       setFromCache(false);
       sauvegarderCache('promotions', data).catch(() => {});
@@ -57,22 +81,58 @@ export default function PromotionsScreen() {
     if (event?.target?.complete) event.target.complete();
   };
 
-  useEffect(() => { charger(); }, []);
+  // Réservé ADMIN côté backend (/api/produits/proche-peremption) : si l'appel
+  // échoue (403 pour un compte non-admin, etc.), on échoue silencieusement —
+  // la section Suggestions ne s'affiche simplement pas, pas d'Alert d'erreur.
+  const chargerSuggestions = async () => {
+    try {
+      const res = await getProduitsProchePeremption(7);
+      const data = Array.isArray(res.data) ? res.data : [];
+      setSuggestions(data);
+    } catch {
+      setSuggestions([]);
+    }
+  };
+
+  useEffect(() => { charger(); chargerSuggestions(); }, []);
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ titre: '', typeReduction: 'POURCENTAGE', valeurReduction: '', active: true, globale: true });
+    setSuggestedProduit(null);
+    setForm({ titre: '', typeReduction: 'POURCENTAGE', valeurReduction: '', active: true, globale: true, dateDebut: todayISO(), dateFin: '' });
     setShowModal(true);
   };
 
   const openEdit = (p: Promotion) => {
     setEditing(p);
+    setSuggestedProduit(null);
     setForm({
       titre: p.titre,
       typeReduction: p.typeReduction,
       valeurReduction: String(p.valeurReduction),
       active: p.active,
       globale: p.globale ?? true,
+      dateDebut: p.dateDebut ? p.dateDebut.slice(0, 10) : todayISO(),
+      dateFin: p.dateFin ? p.dateFin.slice(0, 10) : '',
+    });
+    setShowModal(true);
+  };
+
+  // Pré-remplit le formulaire de création à partir d'une suggestion — n'ouvre
+  // que le modal, ne crée JAMAIS la promo automatiquement. L'utilisateur peut
+  // modifier tous les champs (y compris la remise proposée) avant de valider
+  // via le bouton "Créer" existant.
+  const openCreateFromSuggestion = (prod: ProduitPeremption) => {
+    setEditing(null);
+    setSuggestedProduit({ id: prod.id, nom: prod.nom });
+    setForm({
+      titre: `Promo flash - ${prod.nom}`,
+      typeReduction: 'POURCENTAGE',
+      valeurReduction: '20',
+      active: true,
+      globale: false,
+      dateDebut: todayISO(),
+      dateFin: prod.datePeremption ? prod.datePeremption.slice(0, 10) : '',
     });
     setShowModal(true);
   };
@@ -82,10 +142,18 @@ export default function PromotionsScreen() {
     const valeur = parseFloat(form.valeurReduction);
     if (!valeur || valeur <= 0) { Alert.alert(tr('erreur', lang), tr('valeur', lang)); return; }
     if (form.typeReduction === 'POURCENTAGE' && valeur > 100) { Alert.alert(tr('erreur', lang), tr('remise', lang)); return; }
+    if (!form.dateFin.trim()) { Alert.alert(tr('erreur', lang), tr('date_fin_obligatoire', lang)); return; }
 
     setSaving(true);
     try {
-      const payload = { ...form, valeurReduction: valeur };
+      const payload: any = {
+        ...form,
+        valeurReduction: valeur,
+        dateDebut: form.dateDebut || todayISO(),
+      };
+      if (suggestedProduit) {
+        payload.produitIds = [suggestedProduit.id];
+      }
       let offline = false;
       if (editing) {
         const editingId = editing.id;
@@ -153,6 +221,23 @@ export default function PromotionsScreen() {
     ? Math.round(pctPromos.reduce((s, p) => s + p.valeurReduction, 0) / pctPromos.length)
     : 0;
 
+  // Suggestions filtrées : on exclut les produits déjà couverts par une promo
+  // active en cours (pas de nouvel appel réseau, on se base sur `promos`
+  // déjà chargées). Un produit est "déjà couvert" si une promo active a
+  // globale=true, ou globale=false avec produitIds contenant l'id du produit,
+  // et que sa dateFin (si renseignée) n'est pas déjà dépassée.
+  const today = todayISO();
+  const suggestionsFiltrees = suggestions.filter(prod => {
+    if (!prod.datePeremption) return false;
+    const dejaCouvert = promos.some(p => {
+      if (!p.active) return false;
+      if (p.dateFin && p.dateFin.slice(0, 10) < today) return false;
+      if (p.globale) return true;
+      return Array.isArray(p.produitIds) && p.produitIds.includes(prod.id);
+    });
+    return !dejaCouvert;
+  });
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
 
   return (
@@ -173,11 +258,49 @@ export default function PromotionsScreen() {
         </View>
       </View>
 
-      {/* Bandeau offline */}
-      {fromCache && (
-        <View style={s.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={s.offlineTxt}>Mode hors ligne — données locales</Text>
+      {/* Suggestions de promo flash — produits proches de la péremption.
+          N'apparaît que si l'appel ADMIN a réussi et qu'il reste des produits
+          non déjà couverts par une promo active. Ne crée jamais rien tout
+          seul : chaque bouton ouvre juste le modal existant pré-rempli. */}
+      {suggestionsFiltrees.length > 0 && (
+        <View style={s.suggestionsSection}>
+          <View style={s.suggestionsHeader}>
+            <MaterialCommunityIcons name="clock-alert-outline" size={18} color="#d97706" />
+            <Text style={s.suggestionsTitle}>{tr('suggestions_promo', lang)}</Text>
+          </View>
+          <Text style={s.suggestionsSub}>{tr('suggestions_promo_sub', lang)}</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 4 }}
+          >
+            {suggestionsFiltrees.map(prod => {
+              const jours = prod.datePeremption
+                ? Math.ceil((new Date(prod.datePeremption).getTime() - Date.now()) / 86400000)
+                : null;
+              return (
+                <View key={prod.id} style={s.suggestionCard}>
+                  <Text style={s.suggestionNom} numberOfLines={1}>{prod.nom}</Text>
+                  <Text style={s.suggestionInfo}>
+                    {tr('stock', lang)}: {prod.quantite} {prod.uniteMesure || ''}
+                  </Text>
+                  <Text style={s.suggestionInfo}>{dateStr(prod.datePeremption)}</Text>
+                  {jours !== null && (
+                    <Text style={[s.suggestionJours, jours <= 2 && { color: '#dc2626' }]}>
+                      {tr('expire_dans', lang)} {jours} {tr('jours_unite', lang)}
+                    </Text>
+                  )}
+                  <TouchableOpacity
+                    style={s.suggestionBtn}
+                    onPress={() => openCreateFromSuggestion(prod)}
+                  >
+                    <MaterialCommunityIcons name="tag-plus-outline" size={14} color="#fff" />
+                    <Text style={s.suggestionBtnText}>{tr('creer_promo_suggestion', lang)}</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </ScrollView>
         </View>
       )}
 
@@ -318,6 +441,24 @@ export default function PromotionsScreen() {
                 placeholder={form.typeReduction === 'POURCENTAGE' ? 'Ex: 20' : 'Ex: 5000'}
               />
 
+              <Text style={s.fieldLabel}>{tr('date_fin_promo', lang)}</Text>
+              <TextInput
+                style={s.input}
+                value={form.dateFin}
+                onChangeText={t => setForm({ ...form, dateFin: t })}
+                placeholder="AAAA-MM-JJ"
+                autoCapitalize="none"
+              />
+
+              {suggestedProduit && (
+                <View style={s.produitCibleTag}>
+                  <MaterialCommunityIcons name="tag-outline" size={14} color="#1a56db" />
+                  <Text style={s.produitCibleText}>
+                    {tr('produit_cible', lang)} : {suggestedProduit.nom}
+                  </Text>
+                </View>
+              )}
+
               <View style={s.switchRow}>
                 <View>
                   <Text style={s.fieldLabel}>{tr('promo_globale', lang)}</Text>
@@ -361,6 +502,20 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f8' },
 
   hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+
+  // Suggestions promo flash (produits proches de la péremption)
+  suggestionsSection: { backgroundColor: '#fffbeb', paddingTop: 10, borderBottomWidth: 1, borderBottomColor: '#fde68a' },
+  suggestionsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12 },
+  suggestionsTitle: { fontWeight: '700', fontSize: 14, color: '#92400e' },
+  suggestionsSub: { fontSize: 11, color: '#b45309', paddingHorizontal: 12, marginTop: 2, marginBottom: 8 },
+  suggestionCard: { width: 170, backgroundColor: '#fff', borderRadius: 12, padding: 10, marginRight: 8, borderWidth: 1, borderColor: '#fde68a' },
+  suggestionNom: { fontWeight: '600', fontSize: 13, color: '#1e293b', marginBottom: 4 },
+  suggestionInfo: { fontSize: 11, color: '#64748b' },
+  suggestionJours: { fontSize: 11, fontWeight: '700', color: '#d97706', marginTop: 4 },
+  suggestionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#d97706', borderRadius: 8, paddingVertical: 6, marginTop: 8 },
+  suggestionBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  produitCibleTag: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#e3f2fd', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginTop: 12 },
+  produitCibleText: { color: '#1a56db', fontSize: 12, fontWeight: '600' },
   heroStat: { flex: 1, alignItems: 'center' },
   heroVal: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
@@ -368,7 +523,7 @@ const s = StyleSheet.create({
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
   offlineTxt: { color: '#92400e', fontSize: 12 },
 
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardInactive: { opacity: 0.55 },
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
@@ -398,7 +553,7 @@ const s = StyleSheet.create({
   fab: { position: 'absolute', bottom: 20, right: 16, backgroundColor: '#1a56db' },
 
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
   handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   modalTitle: { fontWeight: 'bold', fontSize: 16, color: '#1a1a1a' },

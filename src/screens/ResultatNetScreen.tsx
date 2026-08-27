@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -14,7 +14,7 @@ const MOIS = [
 ];
 const ANNEES = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
 
-const money = (v: number) => `${(v || 0).toLocaleString('fr-FR')} FCFA`;
+const money = (v: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 
 interface ResultatNet {
   periode: string; dateDebut: string; dateFin: string;
@@ -135,12 +135,6 @@ export default function ResultatNetScreen() {
           contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
         >
-          {fromCache && (
-            <View style={styles.offlineBanner}>
-              <MaterialCommunityIcons name="wifi-off" size={14} color="#fff" />
-              <Text style={styles.offlineBannerText}>Hors ligne — dernier résultat connu</Text>
-            </View>
-          )}
           {data && (
             <>
               {/* Carte principale GAIN/PERTE */}
@@ -244,7 +238,7 @@ const styles = StyleSheet.create({
   resultatMontant: { fontSize: 26, fontWeight: 'bold' },
   resultatPeriode: { fontSize: 11, color: '#64748b', marginTop: 6 },
 
-  detailCard: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 12, elevation: 1 },
+  detailCard: { backgroundColor: '#fff', borderRadius: 18, padding: 14, marginBottom: 12, elevation: 1 },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
   detailIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   detailLabel: { fontSize: 13, color: '#334155' },
@@ -256,7 +250,7 @@ const styles = StyleSheet.create({
   detailTotalLabel: { flex: 1, fontSize: 13, fontWeight: '700', color: '#1e293b' },
   detailTotalValue: { fontSize: 15, fontWeight: 'bold' },
 
-  barsCard: { backgroundColor: '#fff', borderRadius: 14, padding: 14, elevation: 1 },
+  barsCard: { backgroundColor: '#fff', borderRadius: 18, padding: 14, elevation: 1 },
   barRow: { marginBottom: 10 },
   barLabel: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
   barTrack: { height: 8, backgroundColor: '#f1f5f9', borderRadius: 4, overflow: 'hidden' },

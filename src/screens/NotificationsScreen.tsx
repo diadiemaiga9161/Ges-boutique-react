@@ -88,13 +88,6 @@ export default function NotificationsScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bandeau offline */}
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       <FlatList
         data={notifs}
@@ -165,7 +158,7 @@ const styles = StyleSheet.create({
   btnToutLire: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginHorizontal: 12, marginTop: 10, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: '#1a56db' },
   btnToutLireText: { color: '#1a56db', fontWeight: '700', fontSize: 12 },
 
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardUnread: { borderLeftWidth: 4, borderLeftColor: '#1a56db' },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },

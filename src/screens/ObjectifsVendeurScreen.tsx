@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   FlatList,
@@ -19,45 +19,37 @@ import {
   Divider,
   IconButton,
 } from 'react-native-paper';
-import api, { getFournisseurs, getProduits } from '../services/api.service';
+import api, { getVendeurs } from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useMontantInput } from '../components/MontantInput';
 
-// Modèle réel (ObjectifFournisseurController/Dto) : un objectif est un
-// QUANTITATIF d'achat (objectifQuantite unités, sur un fournisseur+mois/année,
-// optionnellement lié à un produit précis) avec un bonus par unité — PAS un
-// "montant cible" en FCFA avec date limite comme une version précédente de cet
-// écran l'implémentait (endpoints /avancement, montantCible, dateLimite
-// inexistants côté backend). Voir objectif-fournisseur.service.ts (Ionic).
-interface ObjectifFournisseur {
+// Modèle réel (ObjectifVendeurController/Dto) : une PRIME HEBDOMADAIRE pour un
+// vendeur — semaine ISO-8601 (1 à 53) + année, objectif de nombre de ventes,
+// bonus FIXE en FCFA versé si l'objectif est atteint. Module totalement séparé
+// du paiement de salaire (PaiementsEmployeScreen) : "valider" ne fait que
+// marquer un flag admin, ça ne déclenche AUCUN paiement automatique ni écriture
+// stock (contrairement au bonus fournisseur, qui ajoute au stock). Tout ce qui
+// est calculé (nombreVentesAtteint, statut) vient du backend à chaque lecture —
+// on ne l'envoie jamais dans le payload POST/PUT.
+interface ObjectifVendeur {
   id: number;
-  fournisseurId: number;
-  fournisseurNom: string;
-  produitId?: number;
-  produitNom?: string;
-  mois: number;
+  vendeurId: number;
+  vendeurNom: string;
+  semaine: number;
   annee: number;
-  objectifQuantite: number;
-  bonusParUnite: number;
-  quantiteAtteinte: number;
-  bonusCalcule: number;
-  quantiteBonusRecue: number;
+  objectifNombreVentes: number;
+  bonusMontant: number;
+  nombreVentesAtteint: number;
   statut: 'ATTEINT' | 'NON_ATTEINT';
+  bonusValide: boolean;
   observation?: string;
-  stockAjoute: boolean;
   dateValidation?: string;
   dateCreation: string;
 }
 
-interface FournisseurLite { id: number; nom: string }
-interface ProduitLite { id: number; nom: string }
-
-const MOIS_LABELS = [
-  '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
-];
+interface VendeurLite { id: number; nom: string }
 
 const STATUT_LABEL: Record<string, string> = {
   ATTEINT: 'Atteint',
@@ -77,49 +69,53 @@ function couleurProgression(pct: number): string {
 
 const money = (v: number) => `${Math.round(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 
+function semaineISOCourante(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
 const FORM_INITIAL = {
-  fournisseurId: 0,
-  produitId: undefined as number | undefined,
-  mois: new Date().getMonth() + 1,
+  vendeurId: 0,
+  semaine: semaineISOCourante(new Date()),
   annee: new Date().getFullYear(),
-  objectifQuantite: '',
-  bonusParUnite: 0,
-  quantiteBonusRecue: '',
+  objectifNombreVentes: '',
+  bonusMontant: 0,
   observation: '',
 };
 
-export default function ObjectifsFournisseurScreen() {
+export default function ObjectifsVendeurScreen() {
   const { lang } = useLang();
-  const [objectifs, setObjectifs] = useState<ObjectifFournisseur[]>([]);
+  const [objectifs, setObjectifs] = useState<ObjectifVendeur[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
 
-  const [fournisseurs, setFournisseurs] = useState<FournisseurLite[]>([]);
-  const [produits, setProduits] = useState<ProduitLite[]>([]);
+  const [vendeurs, setVendeurs] = useState<VendeurLite[]>([]);
 
   // Modal ajout/modification
   const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<ObjectifFournisseur | null>(null);
+  const [editing, setEditing] = useState<ObjectifVendeur | null>(null);
   const [form, setForm] = useState({ ...FORM_INITIAL });
-  const bonusParUniteInput = useMontantInput(form.bonusParUnite, v => setForm(f => ({ ...f, bonusParUnite: v })));
-  const [fournisseurSearch, setFournisseurSearch] = useState('');
-  const [produitSearch, setProduitSearch] = useState('');
+  const bonusMontantInput = useMontantInput(form.bonusMontant, v => setForm(f => ({ ...f, bonusMontant: v })));
+  const [vendeurSearch, setVendeurSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Modal détails
-  const [selected, setSelected] = useState<ObjectifFournisseur | null>(null);
+  const [selected, setSelected] = useState<ObjectifVendeur | null>(null);
   const [showDetails, setShowDetails] = useState(false);
 
   const charger = async () => {
     try {
-      const res = await api.get('/objectifs-fournisseur');
+      const res = await api.get('/objectifs-vendeur');
       const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       setObjectifs(liste);
       setFromCache(false);
-      sauvegarderCache('objectifs_fournisseur', liste).catch(() => {});
+      sauvegarderCache('objectifs_vendeur', liste).catch(() => {});
     } catch {
-      const cached = await lireCache<ObjectifFournisseur>('objectifs_fournisseur');
+      const cached = await lireCache<ObjectifVendeur>('objectifs_vendeur');
       if (cached.length > 0) { setObjectifs(cached); setFromCache(true); }
       else setFromCache(false);
     }
@@ -129,63 +125,59 @@ export default function ObjectifsFournisseurScreen() {
 
   useEffect(() => {
     charger();
-    getFournisseurs().then(res => {
-      const liste = res.data?.data || res.data?.fournisseurs || (Array.isArray(res.data) ? res.data : []);
-      setFournisseurs(liste.map((f: any) => ({ id: f.id, nom: f.nom })));
-    }).catch(() => {});
-    getProduits().then(res => {
+    getVendeurs().then(res => {
       const liste = res.data?.data || (Array.isArray(res.data) ? res.data : []);
-      setProduits(liste.map((p: any) => ({ id: p.id, nom: p.nom })));
+      setVendeurs(
+        liste
+          .filter((v: any) => v.role === 'VENDEUR' || v.role === 'ADMIN')
+          .map((v: any) => ({ id: v.id, nom: v.nomComplet || v.nom || v.username }))
+      );
     }).catch(() => {});
   }, []);
 
   const nbActifs = objectifs.filter(o => o.statut === 'NON_ATTEINT').length;
-  const totalBonus = objectifs.reduce((s, o) => s + (o.bonusCalcule || 0), 0);
+  const totalBonusValide = objectifs.filter(o => o.bonusValide).reduce((s, o) => s + (o.bonusMontant || 0), 0);
   const nbAtteints = objectifs.filter(o => o.statut === 'ATTEINT').length;
 
   const ouvrirCreation = () => {
     setEditing(null);
     setForm({ ...FORM_INITIAL });
-    setFournisseurSearch('');
-    setProduitSearch('');
+    setVendeurSearch('');
     setShowModal(true);
   };
 
-  const ouvrirModif = (o: ObjectifFournisseur) => {
+  const ouvrirModif = (o: ObjectifVendeur) => {
     setEditing(o);
     setForm({
-      fournisseurId: o.fournisseurId,
-      produitId: o.produitId,
-      mois: o.mois,
+      vendeurId: o.vendeurId,
+      semaine: o.semaine,
       annee: o.annee,
-      objectifQuantite: String(o.objectifQuantite),
-      bonusParUnite: o.bonusParUnite || 0,
-      quantiteBonusRecue: o.quantiteBonusRecue ? String(o.quantiteBonusRecue) : '',
+      objectifNombreVentes: String(o.objectifNombreVentes),
+      bonusMontant: o.bonusMontant || 0,
       observation: o.observation || '',
     });
-    setFournisseurSearch(o.fournisseurNom);
-    setProduitSearch(o.produitNom || '');
+    setVendeurSearch(o.vendeurNom);
     setShowModal(true);
   };
 
-  const ouvrir = (o: ObjectifFournisseur) => {
+  const ouvrir = (o: ObjectifVendeur) => {
     setSelected(o);
     setShowDetails(true);
   };
 
-  const supprimer = (o: ObjectifFournisseur) => {
-    if (o.stockAjoute) {
-      Alert.alert(tr('erreur', lang), 'Impossible de supprimer un objectif déjà validé (stock ajouté)');
+  const supprimer = (o: ObjectifVendeur) => {
+    if (o.bonusValide) {
+      Alert.alert(tr('erreur', lang), 'Impossible de supprimer une prime déjà validée');
       return;
     }
-    Alert.alert('Confirmer', 'Supprimer cet objectif ?', [
+    Alert.alert('Confirmer', 'Supprimer cette prime ?', [
       { text: tr('annuler', lang), style: 'cancel' },
       {
         text: 'Supprimer',
         style: 'destructive',
         onPress: async () => {
           try {
-            await executerOuMettreEnFile('objectif_delete', { id: o.id }, () => api.delete(`/objectifs-fournisseur/${o.id}`));
+            await executerOuMettreEnFile('objectif_vendeur_delete', { id: o.id }, () => api.delete(`/objectifs-vendeur/${o.id}`));
             charger();
           } catch (err: any) {
             Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Impossible de supprimer');
@@ -196,74 +188,72 @@ export default function ObjectifsFournisseurScreen() {
   };
 
   const enregistrer = async () => {
-    if (!form.fournisseurId) {
-      Alert.alert(tr('erreur', lang), 'Sélectionnez un fournisseur');
+    if (!form.vendeurId) {
+      Alert.alert(tr('erreur', lang), 'Sélectionnez un vendeur');
       return;
     }
-    const objectifQuantite = parseFloat(form.objectifQuantite);
-    if (!objectifQuantite || objectifQuantite <= 0) {
-      Alert.alert(tr('erreur', lang), "L'objectif de quantité doit être supérieur à 0");
+    if (!form.semaine || form.semaine < 1 || form.semaine > 53) {
+      Alert.alert(tr('erreur', lang), 'La semaine doit être comprise entre 1 et 53');
       return;
     }
-    const bonusParUnite = form.bonusParUnite;
-    if (bonusParUnite === undefined || isNaN(bonusParUnite) || bonusParUnite < 0) {
-      Alert.alert(tr('erreur', lang), 'Le bonus par unité est invalide');
+    if (!form.annee) {
+      Alert.alert(tr('erreur', lang), "L'année est invalide");
+      return;
+    }
+    const objectifNombreVentes = parseFloat(form.objectifNombreVentes);
+    if (!objectifNombreVentes || objectifNombreVentes <= 0) {
+      Alert.alert(tr('erreur', lang), "L'objectif de ventes doit être supérieur à 0");
+      return;
+    }
+    const bonusMontant = form.bonusMontant;
+    if (bonusMontant === undefined || isNaN(bonusMontant) || bonusMontant < 0) {
+      Alert.alert(tr('erreur', lang), 'Le montant du bonus est invalide');
       return;
     }
     setSaving(true);
-    // ObjectifFournisseurRequest : fournisseurId, produitId?, mois, annee,
-    // objectifQuantite, bonusParUnite, quantiteAtteinte?, quantiteBonusRecue?, observation?
+    // ObjectifVendeurRequest : vendeurId, semaine, annee, objectifNombreVentes,
+    // bonusMontant, observation? — jamais nombreVentesAtteint/statut, calculés
+    // côté backend à chaque lecture.
     const payload = {
-      fournisseurId: form.fournisseurId,
-      produitId: form.produitId,
-      mois: form.mois,
+      vendeurId: form.vendeurId,
+      semaine: form.semaine,
       annee: form.annee,
-      objectifQuantite,
-      bonusParUnite,
-      quantiteAtteinte: editing?.quantiteAtteinte || 0,
-      quantiteBonusRecue: form.quantiteBonusRecue ? parseFloat(form.quantiteBonusRecue) : 0,
+      objectifNombreVentes,
+      bonusMontant,
       observation: form.observation.trim() || undefined,
     };
     try {
       if (editing) {
-        await executerOuMettreEnFile('objectif_update', { id: editing.id, data: payload }, () => api.put(`/objectifs-fournisseur/${editing.id}`, payload));
+        await executerOuMettreEnFile('objectif_vendeur_update', { id: editing.id, data: payload }, () => api.put(`/objectifs-vendeur/${editing.id}`, payload));
       } else {
-        await executerOuMettreEnFile('objectif_create', payload, () => api.post('/objectifs-fournisseur', payload));
+        await executerOuMettreEnFile('objectif_vendeur_create', payload, () => api.post('/objectifs-vendeur', payload));
       }
       setShowModal(false);
       charger();
     } catch (err: any) {
-      Alert.alert(tr('erreur', lang), err.response?.data?.message || "Impossible d'enregistrer l'objectif");
+      Alert.alert(tr('erreur', lang), err.response?.data?.message || "Impossible d'enregistrer la prime");
     }
     setSaving(false);
   };
 
-  const confirmerValider = (o: ObjectifFournisseur) => {
+  const confirmerValider = (o: ObjectifVendeur) => {
     if (o.statut !== 'ATTEINT') {
-      Alert.alert(tr('erreur', lang), 'Seuls les objectifs atteints peuvent être validés');
-      return;
-    }
-    if (!o.produitId) {
-      Alert.alert(tr('erreur', lang), 'Associez un produit avant de valider');
-      return;
-    }
-    if (!o.quantiteBonusRecue || o.quantiteBonusRecue <= 0) {
-      Alert.alert(tr('erreur', lang), 'Renseignez la quantité bonus reçue');
+      Alert.alert(tr('erreur', lang), 'Seules les primes atteintes peuvent être validées');
       return;
     }
     Alert.alert(
-      'Valider le bonus ?',
-      `${o.quantiteBonusRecue} unités de "${o.produitNom}" seront ajoutées au stock.`,
+      'Valider la prime ?',
+      `${o.vendeurNom} a atteint son objectif de ${o.objectifNombreVentes} ventes (semaine ${o.semaine}/${o.annee}). Le bonus de ${money(o.bonusMontant)} sera marqué comme validé (aucun paiement automatique).`,
       [
         { text: tr('annuler', lang), style: 'cancel' },
         {
           text: 'Valider',
           onPress: async () => {
             try {
-              await api.patch(`/objectifs-fournisseur/${o.id}/valider`, {});
+              await api.patch(`/objectifs-vendeur/${o.id}/valider`, {});
               setShowDetails(false);
               charger();
-              Alert.alert('✅ Stock mis à jour', `${o.quantiteBonusRecue} unité(s) de "${o.produitNom}" ajoutées au stock.`);
+              Alert.alert('✅ Prime validée', `Le bonus de ${money(o.bonusMontant)} pour ${o.vendeurNom} a été marqué comme validé.`);
             } catch (err: any) {
               Alert.alert(tr('erreur', lang), err.response?.data?.message || 'Validation impossible');
             }
@@ -273,11 +263,8 @@ export default function ObjectifsFournisseurScreen() {
     );
   };
 
-  const fournisseursFiltres = fournisseurSearch.trim()
-    ? fournisseurs.filter(f => f.nom.toLowerCase().includes(fournisseurSearch.toLowerCase())).slice(0, 15)
-    : [];
-  const produitsFiltres = produitSearch.trim()
-    ? produits.filter(p => p.nom.toLowerCase().includes(produitSearch.toLowerCase())).slice(0, 15)
+  const vendeursFiltres = vendeurSearch.trim()
+    ? vendeurs.filter(v => v.nom.toLowerCase().includes(vendeurSearch.toLowerCase())).slice(0, 15)
     : [];
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
@@ -292,8 +279,8 @@ export default function ObjectifsFournisseurScreen() {
         </View>
         <View style={styles.bannerSep} />
         <View style={styles.bannerItem}>
-          <Text style={styles.bannerVal}>{totalBonus.toLocaleString('de-DE', { maximumFractionDigits: 0 })}</Text>
-          <Text style={styles.bannerLabel}>Bonus calculés (FCFA)</Text>
+          <Text style={styles.bannerVal}>{totalBonusValide.toLocaleString('de-DE', { maximumFractionDigits: 0 })}</Text>
+          <Text style={styles.bannerLabel}>Primes validées (FCFA)</Text>
         </View>
         <View style={styles.bannerSep} />
         <View style={styles.bannerItem}>
@@ -313,11 +300,11 @@ export default function ObjectifsFournisseurScreen() {
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>Aucun objectif enregistré</Text>
+          <Text style={styles.empty}>Aucune prime enregistrée</Text>
         }
         renderItem={({ item }) => {
-          const pct = item.objectifQuantite > 0
-            ? Math.min(Math.round((item.quantiteAtteinte / item.objectifQuantite) * 100), 100)
+          const pct = item.objectifNombreVentes > 0
+            ? Math.min(Math.round((item.nombreVentesAtteint / item.objectifNombreVentes) * 100), 100)
             : 0;
           const couleur = couleurProgression(pct);
           return (
@@ -327,10 +314,10 @@ export default function ObjectifsFournisseurScreen() {
                   {/* Ligne titre + statut + supprimer */}
                   <View style={styles.row}>
                     <View style={{ flex: 1 }}>
-                      <Text variant="titleMedium" style={styles.fournisseurNom}>
-                        {item.fournisseurNom}
+                      <Text variant="titleMedium" style={styles.vendeurNom}>
+                        {item.vendeurNom}
                       </Text>
-                      <Text style={styles.sub}>{MOIS_LABELS[item.mois]} {item.annee}{item.produitNom ? ` · ${item.produitNom}` : ''}</Text>
+                      <Text style={styles.sub}>Semaine {item.semaine}/{item.annee}</Text>
                     </View>
                     <View style={styles.rowEnd}>
                       <View style={[styles.badge, { backgroundColor: STATUT_COLOR[item.statut] + '22' }]}>
@@ -338,7 +325,7 @@ export default function ObjectifsFournisseurScreen() {
                           {STATUT_LABEL[item.statut] || item.statut}
                         </Text>
                       </View>
-                      {!item.stockAjoute && (
+                      {!item.bonusValide && (
                         <IconButton
                           icon="pencil-outline"
                           size={18}
@@ -366,7 +353,7 @@ export default function ObjectifsFournisseurScreen() {
                   </View>
                   <View style={styles.row}>
                     <Text style={styles.progLabel}>
-                      {item.quantiteAtteinte?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} / {item.objectifQuantite?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} unités
+                      {item.nombreVentesAtteint?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} / {item.objectifNombreVentes?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} ventes
                     </Text>
                     <Text style={[styles.progPct, { color: couleur }]}>{pct}%</Text>
                   </View>
@@ -374,16 +361,12 @@ export default function ObjectifsFournisseurScreen() {
                   <Divider style={{ marginVertical: 6 }} />
 
                   <View style={styles.row}>
-                    <Text style={styles.date}>Bonus/unité : {money(item.bonusParUnite)}</Text>
-                    {item.stockAjoute ? (
+                    <Text style={styles.date}>Bonus : {money(item.bonusMontant)}</Text>
+                    {item.bonusValide && (
                       <Text style={styles.bonusOk}>
-                        Stock ajouté : {item.quantiteBonusRecue} u.
+                        Prime validée
                       </Text>
-                    ) : item.quantiteBonusRecue ? (
-                      <Text style={styles.bonusPrevu}>
-                        Bonus reçu : {item.quantiteBonusRecue} u.
-                      </Text>
-                    ) : null}
+                    )}
                   </View>
                 </Card.Content>
               </Card>
@@ -402,69 +385,39 @@ export default function ObjectifsFournisseurScreen() {
           contentContainerStyle={styles.modal}
         >
           <Text variant="titleLarge" style={styles.modalTitle}>
-            {editing ? 'Modifier l\'objectif' : 'Nouvel objectif'}
+            {editing ? 'Modifier la prime' : 'Nouvelle prime'}
           </Text>
 
-          <Text style={styles.fieldLabel}>Fournisseur *</Text>
+          <Text style={styles.fieldLabel}>Vendeur *</Text>
           <TextInput
-            value={fournisseurSearch}
-            onChangeText={t => { setFournisseurSearch(t); setForm({ ...form, fournisseurId: 0 }); }}
+            value={vendeurSearch}
+            onChangeText={t => { setVendeurSearch(t); setForm({ ...form, vendeurId: 0 }); }}
             mode="outlined"
-            placeholder="Rechercher un fournisseur..."
+            placeholder="Rechercher un vendeur..."
             style={styles.input}
           />
-          {fournisseursFiltres.length > 0 && !form.fournisseurId && (
+          {vendeursFiltres.length > 0 && !form.vendeurId && (
             <View style={styles.pickerList}>
-              {fournisseursFiltres.map(f => (
+              {vendeursFiltres.map(v => (
                 <TouchableOpacity
-                  key={f.id}
+                  key={v.id}
                   style={styles.pickerItem}
-                  onPress={() => { setForm({ ...form, fournisseurId: f.id }); setFournisseurSearch(f.nom); }}
+                  onPress={() => { setForm({ ...form, vendeurId: v.id }); setVendeurSearch(v.nom); }}
                 >
-                  <Text style={styles.pickerItemText}>{f.nom}</Text>
+                  <Text style={styles.pickerItemText}>{v.nom}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           )}
 
-          <Text style={styles.fieldLabel}>Produit concerné (pour le bonus stock)</Text>
           <TextInput
-            value={produitSearch}
-            onChangeText={t => { setProduitSearch(t); setForm({ ...form, produitId: undefined }); }}
+            label="Semaine (1-53) *"
+            value={String(form.semaine)}
+            onChangeText={t => setForm({ ...form, semaine: parseInt(t) || form.semaine })}
             mode="outlined"
-            placeholder="Rechercher un produit..."
+            keyboardType="numeric"
             style={styles.input}
           />
-          {produitsFiltres.length > 0 && !form.produitId && (
-            <View style={styles.pickerList}>
-              {produitsFiltres.map(p => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={styles.pickerItem}
-                  onPress={() => { setForm({ ...form, produitId: p.id }); setProduitSearch(p.nom); }}
-                >
-                  <Text style={styles.pickerItemText}>{p.nom}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          <View style={styles.rowFields}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Mois *</Text>
-              <View style={styles.moisRow}>
-                {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[styles.moisChip, form.mois === m && styles.moisChipActive]}
-                    onPress={() => setForm({ ...form, mois: m })}
-                  >
-                    <Text style={[styles.moisChipText, form.mois === m && { color: '#fff' }]}>{MOIS_LABELS[m].slice(0, 3)}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </View>
           <TextInput
             label="Année *"
             value={String(form.annee)}
@@ -474,38 +427,21 @@ export default function ObjectifsFournisseurScreen() {
             style={styles.input}
           />
           <TextInput
-            label="Objectif quantité *"
-            value={form.objectifQuantite}
-            onChangeText={t => setForm({ ...form, objectifQuantite: t })}
+            label="Objectif nombre de ventes *"
+            value={form.objectifNombreVentes}
+            onChangeText={t => setForm({ ...form, objectifNombreVentes: t })}
             mode="outlined"
             keyboardType="numeric"
-            placeholder="ex: 50000"
+            placeholder="ex: 1000"
             style={styles.input}
           />
           <TextInput
-            label="Bonus/unité (FCFA) *"
-            value={bonusParUniteInput.texte}
-            onChangeText={bonusParUniteInput.onChangeText}
+            label="Bonus (FCFA) *"
+            value={bonusMontantInput.texte}
+            onChangeText={bonusMontantInput.onChangeText}
             mode="outlined"
             keyboardType="numeric"
-            placeholder="ex: 25"
-            style={styles.input}
-          />
-          {editing && (
-            <TextInput
-              label="Quantité atteinte"
-              value={String(editing.quantiteAtteinte)}
-              mode="outlined"
-              disabled
-              style={styles.input}
-            />
-          )}
-          <TextInput
-            label="Quantité bonus reçue"
-            value={form.quantiteBonusRecue}
-            onChangeText={t => setForm({ ...form, quantiteBonusRecue: t })}
-            mode="outlined"
-            keyboardType="numeric"
+            placeholder="ex: 10000"
             style={styles.input}
           />
           <TextInput
@@ -536,9 +472,9 @@ export default function ObjectifsFournisseurScreen() {
           {selected && (
             <>
               <Text variant="titleLarge" style={styles.modalTitle}>
-                {selected.fournisseurNom}
+                {selected.vendeurNom}
               </Text>
-              <Text style={styles.sub}>{MOIS_LABELS[selected.mois]} {selected.annee}{selected.produitNom ? ` · ${selected.produitNom}` : ' · Aucun produit lié'}</Text>
+              <Text style={styles.sub}>Semaine {selected.semaine}/{selected.annee}</Text>
 
               <View style={[styles.badge, { alignSelf: 'flex-start', marginTop: 10, marginBottom: 10, backgroundColor: STATUT_COLOR[selected.statut] + '22' }]}>
                 <Text style={[styles.badgeText, { color: STATUT_COLOR[selected.statut] }]}>
@@ -551,36 +487,34 @@ export default function ObjectifsFournisseurScreen() {
                   style={[
                     styles.progressFill,
                     {
-                      width: `${selected.objectifQuantite > 0 ? Math.min(Math.round((selected.quantiteAtteinte / selected.objectifQuantite) * 100), 100) : 0}%` as any,
-                      backgroundColor: couleurProgression(selected.objectifQuantite > 0 ? (selected.quantiteAtteinte / selected.objectifQuantite) * 100 : 0),
+                      width: `${selected.objectifNombreVentes > 0 ? Math.min(Math.round((selected.nombreVentesAtteint / selected.objectifNombreVentes) * 100), 100) : 0}%` as any,
+                      backgroundColor: couleurProgression(selected.objectifNombreVentes > 0 ? (selected.nombreVentesAtteint / selected.objectifNombreVentes) * 100 : 0),
                     },
                   ]}
                 />
               </View>
               <Text style={[styles.progPct, { marginBottom: 12 }]}>
-                {selected.quantiteAtteinte?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} / {selected.objectifQuantite?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} unités
+                {selected.nombreVentesAtteint?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} / {selected.objectifNombreVentes?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} ventes
               </Text>
 
               <Divider style={{ marginBottom: 10 }} />
 
-              <Text style={styles.detailLine}>Bonus par unité : {money(selected.bonusParUnite)}</Text>
-              <Text style={styles.detailLine}>Bonus calculé : {money(selected.bonusCalcule)}</Text>
-              <Text style={styles.detailLine}>Quantité bonus reçue : {selected.quantiteBonusRecue || 0}</Text>
+              <Text style={styles.detailLine}>Bonus : {money(selected.bonusMontant)}</Text>
               {!!selected.observation && <Text style={[styles.sub, { marginTop: 6 }]}>{selected.observation}</Text>}
 
-              {selected.stockAjoute ? (
+              {selected.bonusValide ? (
                 <Text style={[styles.bonusOk, { marginTop: 8 }]}>
-                  ✅ Stock déjà ajouté{selected.dateValidation ? ` le ${new Date(selected.dateValidation).toLocaleDateString('fr-FR')}` : ''}
+                  ✅ Prime déjà validée{selected.dateValidation ? ` le ${new Date(selected.dateValidation).toLocaleDateString('fr-FR')}` : ''}
                 </Text>
-              ) : (
+              ) : selected.statut === 'ATTEINT' ? (
                 <Button
                   mode="contained"
                   onPress={() => confirmerValider(selected)}
                   style={{ marginTop: 12, backgroundColor: '#4caf50' }}
                 >
-                  Valider et ajouter au stock
+                  Valider la prime
                 </Button>
-              )}
+              ) : null}
 
               <Button
                 mode="outlined"
@@ -616,10 +550,9 @@ const styles = StyleSheet.create({
 
   // Cards
   card: { marginBottom: 10, borderRadius: 16 },
-  fournisseurNom: { fontWeight: 'bold' },
+  vendeurNom: { fontWeight: 'bold' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowEnd: { flexDirection: 'row', alignItems: 'center' },
-  rowFields: { marginBottom: 4 },
 
   // Badge statut
   badge: {
@@ -649,9 +582,7 @@ const styles = StyleSheet.create({
   // Divers
   sub: { color: '#666', fontSize: 12, marginTop: 2 },
   date: { color: '#aaa', fontSize: 11 },
-  bold: { fontWeight: 'bold', fontSize: 13 },
   bonusOk: { color: '#4caf50', fontWeight: 'bold', fontSize: 12 },
-  bonusPrevu: { color: '#ff9800', fontSize: 12 },
   detailLine: { fontSize: 14, marginBottom: 4 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
 
@@ -671,14 +602,8 @@ const styles = StyleSheet.create({
   input: { marginBottom: 10 },
   fieldLabel: { fontSize: 12, color: '#666', fontWeight: '600', marginBottom: 4, marginTop: 4 },
 
-  // Picker fournisseur/produit
+  // Picker vendeur
   pickerList: { maxHeight: 150, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, marginBottom: 10 },
   pickerItem: { paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   pickerItemText: { fontSize: 13, color: '#1e293b' },
-
-  // Chips mois
-  moisRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
-  moisChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: '#d1d5db' },
-  moisChipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  moisChipText: { fontSize: 11, color: '#374151', fontWeight: '600' },
 });

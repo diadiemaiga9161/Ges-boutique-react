@@ -35,12 +35,16 @@ const getMenuItems = (lang: string) => [
   { icon: 'currency-usd-off', label: 'Dettes anciennes', screen: 'DettesAnciennes' },
   { icon: 'bank', label: 'Comptes bancaires', screen: 'Comptes' },
   { icon: 'target', label: 'Objectifs fournisseurs', screen: 'ObjectifsFournisseur' },
+  { icon: 'cash-multiple', label: 'Primes vendeurs', screen: 'ObjectifsVendeur' },
   { icon: 'account-tie', label: 'Vendeurs', screen: 'Vendeurs' },
   { icon: 'chart-bar', label: 'Historique vendeur', screen: 'HistoriqueVendeur' },
   { icon: 'cash-remove', label: 'Annulation paiements', screen: 'AnnulationPaiements' },
   { icon: 'help-circle', label: tr('aide_ressources', lang), screen: 'Resources' },
   { icon: 'store-settings', label: tr('parametres_boutique', lang), screen: 'BoutiqueSettings' },
   { icon: 'cog-outline', label: 'Paramètres (données)', screen: 'Parametres', adminOnly: true },
+  { icon: 'tray-arrow-down', label: 'Export de données', screen: 'ExportDonnees', adminOnly: true },
+  { icon: 'clipboard-text-clock-outline', label: "Journal d'audit", screen: 'JournalAudit', adminOnly: true },
+  { icon: 'cloud-upload-outline', label: tr('backup_titre', lang), screen: 'Sauvegardes', adminOnly: true },
   { icon: 'account', label: tr('mon_profil', lang), screen: 'Profil' },
 ];
 

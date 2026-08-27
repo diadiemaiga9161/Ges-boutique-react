@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, Card, ActivityIndicator, Searchbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,7 +10,7 @@ import { tr } from '../i18n';
 type Type = 'TOUS' | 'ORANGE_MONEY' | 'MOOV_MONEY';
 type Periode = 'JOUR' | 'SEMAINE' | 'MOIS' | 'ANNEE';
 
-const money = (v: number) => `${(v || 0).toLocaleString('fr-FR')} FCFA`;
+const money = (v: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 
 export default function MobileMoneyScreen() {
   const { lang } = useLang();
@@ -100,12 +100,6 @@ export default function MobileMoneyScreen() {
         </View>
       )}
 
-      {fromCache && (
-        <View style={styles.offlineBanner}>
-          <MaterialCommunityIcons name="wifi-off" size={14} color="#92400e" />
-          <Text style={styles.offlineTxt}>Mode hors ligne — données locales</Text>
-        </View>
-      )}
 
       {/* Filtre type */}
       <View style={styles.filterRow}>
@@ -179,7 +173,7 @@ const styles = StyleSheet.create({
   heroVal: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
 
-  resumeRow: { flexDirection: 'row', backgroundColor: '#fff', marginHorizontal: 12, marginTop: 10, borderRadius: 10, paddingVertical: 10, elevation: 1 },
+  resumeRow: { flexDirection: 'row', backgroundColor: '#fff', marginHorizontal: 12, marginTop: 10, borderRadius: 14, paddingVertical: 10, elevation: 1 },
   resumeCol: { flex: 1, alignItems: 'center' },
   resumeLbl: { fontSize: 10, color: '#94a3b8' },
   resumeVal: { fontSize: 12, fontWeight: '700', color: '#1a56db', marginTop: 2 },
@@ -195,7 +189,7 @@ const styles = StyleSheet.create({
 
   searchBar: { marginHorizontal: 12, marginTop: 8, marginBottom: 4, borderRadius: 10, backgroundColor: '#fff', elevation: 1 },
 
-  card: { marginBottom: 8, borderRadius: 12, elevation: 1 },
+  card: { marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },

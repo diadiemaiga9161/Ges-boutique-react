@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, Alert, TouchableOpacity } from 'react-native';
-import { Text, TextInput, Button, Avatar, Card } from 'react-native-paper';
+import { Text, TextInput, Button, Avatar, Card, Switch } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { updateProfil, changerMotDePasse } from '../services/api.service';
 import { useColors } from '../theme/colors';
 import { useThemeMode, ThemeMode } from '../theme/ThemeContext';
+import { isConfirmationVocaleActivee, setConfirmationVocaleActivee } from '../services/vocalConfirmation.service';
+import TutorielVendeurModal from '../components/TutorielVendeurModal';
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; icon: string }[] = [
   { value: 'auto', label: 'Auto', icon: '🌗' },
@@ -20,6 +22,8 @@ export default function ProfilScreen() {
   const { mode, setMode } = useThemeMode();
   const [user, setUser] = useState<any>({});
   const [form, setForm] = useState({ nomComplet: '', email: '', telephone: '', ancienMotDePasse: '', nouveauMotDePasse: '' });
+  const [confirmationVocale, setConfirmationVocale] = useState(true);
+  const [showTutorielVendeur, setShowTutorielVendeur] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('user').then(raw => {
@@ -29,7 +33,13 @@ export default function ProfilScreen() {
         setForm(f => ({ ...f, nomComplet: u.nomComplet || '', email: u.email || '', telephone: u.telephone || '' }));
       }
     });
+    isConfirmationVocaleActivee().then(setConfirmationVocale);
   }, []);
+
+  const toggleConfirmationVocale = async (v: boolean) => {
+    setConfirmationVocale(v);
+    await setConfirmationVocaleActivee(v);
+  };
 
   const initiales = (user.nomComplet || 'U').split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2);
 
@@ -103,6 +113,21 @@ export default function ProfilScreen() {
 
       <Card style={[styles.card, { backgroundColor: colors.card }]}>
         <Card.Content>
+          <Text variant="titleMedium" style={[styles.sectionTitle, { color: colors.primary }]}>Ventes</Text>
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={{ color: colors.text, fontWeight: '600' }}>Confirmation vocale du montant</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                Le téléphone annonce à voix haute le total dès qu'une vente est validée.
+              </Text>
+            </View>
+            <Switch value={confirmationVocale} onValueChange={toggleConfirmationVocale} color={colors.primary} />
+          </View>
+        </Card.Content>
+      </Card>
+
+      <Card style={[styles.card, { backgroundColor: colors.card }]}>
+        <Card.Content>
           <Text variant="titleMedium" style={[styles.sectionTitle, { color: colors.primary }]}>Informations personnelles</Text>
           <TextInput label={tr('nom_complet', lang)} value={form.nomComplet} onChangeText={t => setForm({ ...form, nomComplet: t })} mode="outlined" style={styles.input} />
           <TextInput label={tr('email', lang)} value={form.email} onChangeText={t => setForm({ ...form, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
@@ -123,6 +148,30 @@ export default function ProfilScreen() {
           </Button>
         </Card.Content>
       </Card>
+
+      {/* Revoir le tutoriel — uniquement pour les VENDEUR (le tutoriel d'accueil
+          ne concerne jamais les ADMIN) : réaffiche le même overlay que celui vu
+          au premier login, sans jamais réinitialiser d'autres réglages. */}
+      {user.role === 'VENDEUR' && (
+        <Card style={[styles.card, { backgroundColor: colors.card }]}>
+          <Card.Content>
+            <Button
+              mode="outlined"
+              icon="school-outline"
+              style={styles.btn}
+              onPress={() => setShowTutorielVendeur(true)}
+            >
+              {tr('tuto_vendeur_revoir', lang)}
+            </Button>
+          </Card.Content>
+        </Card>
+      )}
+
+      <TutorielVendeurModal
+        visible={showTutorielVendeur}
+        onClose={() => setShowTutorielVendeur(false)}
+        userId={user.id}
+      />
     </ScrollView>
   );
 }
@@ -139,4 +188,5 @@ const styles = StyleSheet.create({
   themeRow: { flexDirection: 'row', gap: 10 },
   themeOption: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1.5, gap: 4 },
   themeOptionText: { fontSize: 12, fontWeight: '700' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 });
