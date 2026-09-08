@@ -19,6 +19,7 @@ import {
   annulerReglementCredit,
 } from '../services/api.service';
 import { sauvegarderCache, lireCache } from '../services/offline.service';
+import { useColors } from '../theme/colors';
 
 type Periode = 'today' | 'week' | 'month' | 'year' | 'all';
 type Onglet = 'fournisseur' | 'credit';
@@ -55,6 +56,8 @@ function getDateRange(period: Periode): { dateDebut: string; dateFin: string } {
 }
 
 export default function AnnulationPaiementsScreen() {
+  const colors = useColors();
+  const styles = createStyles(colors);
   const [onglet, setOnglet] = useState<Onglet>('fournisseur');
   const [paiements, setPaiements] = useState<any[]>([]);
   const [reglements, setReglements] = useState<any[]>([]);
@@ -194,7 +197,8 @@ export default function AnnulationPaiementsScreen() {
         <RefreshControl
           refreshing={refreshing}
           onRefresh={() => charger(selectedPeriod, true)}
-          tintColor="#fff"
+          tintColor={colors.primary}
+          colors={[colors.primary]}
         />
       }
     >
@@ -263,7 +267,7 @@ export default function AnnulationPaiementsScreen() {
 
         {/* Loading */}
         {loading && (
-          <ActivityIndicator color="#1a56db" style={{ marginTop: 32 }} />
+          <ActivityIndicator color={colors.primary} style={{ marginTop: 32 }} />
         )}
 
         {/* Liste */}
@@ -291,7 +295,7 @@ export default function AnnulationPaiementsScreen() {
                     <View
                       style={[
                         styles.avatar,
-                        { backgroundColor: annule ? '#fef2f2' : '#eff6ff' },
+                        { backgroundColor: annule ? colors.dangerBg : colors.infoBg },
                       ]}
                     >
                       <MaterialCommunityIcons
@@ -303,7 +307,7 @@ export default function AnnulationPaiementsScreen() {
                             : 'card-account-details-outline'
                         }
                         size={22}
-                        color={annule ? '#dc2626' : '#1a56db'}
+                        color={annule ? colors.danger : colors.primary}
                       />
                     </View>
                     <View style={styles.cardInfo}>
@@ -314,7 +318,7 @@ export default function AnnulationPaiementsScreen() {
                       <Text
                         style={[
                           styles.cardAmt,
-                          annule && { color: '#dc2626' },
+                          annule && { color: colors.danger },
                         ]}
                       >
                         {fmt(item.montant)}
@@ -332,7 +336,7 @@ export default function AnnulationPaiementsScreen() {
                         {
                           backgroundColor:
                             item.modePaiement === 'ESPECES'
-                              ? '#eff6ff'
+                              ? colors.infoBg
                               : '#f5f3ff',
                         },
                       ]}
@@ -342,7 +346,7 @@ export default function AnnulationPaiementsScreen() {
                           fontSize: 11,
                           color:
                             item.modePaiement === 'ESPECES'
-                              ? '#1a56db'
+                              ? colors.info
                               : '#7c3aed',
                         }}
                       >
@@ -359,7 +363,7 @@ export default function AnnulationPaiementsScreen() {
                     <Text
                       style={[
                         styles.cardSub,
-                        { color: '#dc2626', marginTop: 4 },
+                        { color: colors.danger, marginTop: 4 },
                       ]}
                     >
                       Annule le {fmtDate(annuleDate)}
@@ -374,7 +378,7 @@ export default function AnnulationPaiementsScreen() {
                       <MaterialCommunityIcons
                         name="close-circle-outline"
                         size={16}
-                        color="#dc2626"
+                        color={colors.danger}
                       />
                       <Text style={styles.cancelBtnTxt}>
                         Annuler ce paiement
@@ -392,7 +396,7 @@ export default function AnnulationPaiementsScreen() {
             <MaterialCommunityIcons
               name="cash-remove"
               size={56}
-              color="#94a3b8"
+              color={colors.placeholder}
             />
             <Text style={styles.emptyTitle}>Aucun paiement</Text>
             <Text style={styles.emptySub}>
@@ -405,9 +409,9 @@ export default function AnnulationPaiementsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  hero: { backgroundColor: '#081648', padding: 20, paddingBottom: 24 },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+  hero: { backgroundColor: colors.hero, padding: 20, paddingBottom: 24 },
   heroLabel: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 11,
@@ -439,11 +443,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     alignItems: 'center',
-    backgroundColor: '#fef3c7',
+    backgroundColor: colors.warningBg,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  offlineTxt: { color: '#92400e', fontSize: 12 },
+  offlineTxt: { color: colors.warning, fontSize: 12 },
   body: { padding: 12, gap: 8 },
   chips: {
     flexDirection: 'row',
@@ -456,15 +460,15 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderColor: colors.border,
+    backgroundColor: colors.inputBg,
   },
   chipSm: { paddingHorizontal: 10, paddingVertical: 5 },
-  chipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  chipTxt: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipTxt: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   chipTxtSm: { fontSize: 11 },
   chipTxtActive: { color: '#fff' },
-  card: { borderRadius: 16, marginBottom: 8, backgroundColor: '#fff' },
+  card: { borderRadius: 16, marginBottom: 8, backgroundColor: colors.card },
   cardRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -479,12 +483,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardInfo: { flex: 1 },
-  cardName: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-  cardSub: { fontSize: 11, color: '#94a3b8', marginTop: 1 },
-  cardAmt: { fontSize: 16, fontWeight: '800', color: '#1a56db' },
+  cardName: { fontSize: 14, fontWeight: '700', color: colors.text },
+  cardSub: { fontSize: 11, color: colors.textSecondary, marginTop: 1 },
+  cardAmt: { fontSize: 16, fontWeight: '800', color: colors.primary },
   badgeAnnule: {
     fontSize: 10,
-    color: '#dc2626',
+    color: colors.danger,
     fontWeight: '700',
     marginTop: 2,
   },
@@ -503,21 +507,21 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fef2f2',
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerBg,
     justifyContent: 'center',
   },
-  cancelBtnTxt: { fontSize: 13, color: '#dc2626', fontWeight: '600' },
+  cancelBtnTxt: { fontSize: 13, color: colors.danger, fontWeight: '600' },
   empty: { alignItems: 'center', paddingVertical: 48 },
   emptyTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#334155',
+    color: colors.text,
     marginTop: 12,
   },
   emptySub: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: colors.textSecondary,
     marginTop: 6,
     textAlign: 'center',
   },

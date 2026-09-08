@@ -4,14 +4,15 @@ import {
   ScrollView, TouchableOpacity,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import {
   Text, Card, FAB, Searchbar, ActivityIndicator, Modal, Portal,
-  TextInput, Button,
+  TextInput, Button, Switch,
 } from 'react-native-paper';
 import * as Print from 'expo-print';
 import {
-  getFournisseurs, createFournisseur,
+  getFournisseurs, createFournisseur, updateFournisseur, deleteFournisseur,
   getHistoriqueAchatsFournisseur, getHistoriquePaiementsFournisseur,
   getSituationFournisseur, creerAchatFournisseur, payerFournisseur,
   getProduits, annulerAchatFournisseur,
@@ -22,6 +23,7 @@ import { buildRecuPaiementFournisseurHtml } from '../services/invoice.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useMontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 const MODES_PAIEMENT = ['ESPECES', 'BANQUE'];
 const STATUT_COLOR: Record<string, string> = {
@@ -170,6 +172,8 @@ tr:nth-child(even){background:#fafafa}
 
 export default function FournisseursScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const styles = createStyles(colors);
 
   const [mode, setMode] = useState<'list' | 'detail'>('list');
   const [fournisseurs, setFournisseurs] = useState<any[]>([]);
@@ -204,15 +208,35 @@ export default function FournisseursScreen() {
   const [showAchatModal, setShowAchatModal] = useState(false);
   const [showPaiementModal, setShowPaiementModal] = useState(false);
 
-  const [fournForm, setFournForm] = useState({ nom: '', code: '', telephone: '', email: '', adresse: '' });
+  const [userId, setUserId] = useState<number | undefined>(undefined);
+
+  const FOURN_FORM_INITIAL = { id: 0, nom: '', code: '', telephone: '', email: '', adresse: '', description: '', actif: true };
+  const [fournForm, setFournForm] = useState(FOURN_FORM_INITIAL);
   const [achatForm, setAchatForm] = useState({ produitId: 0, produitNom: '', quantite: '1', prixAchatUnitaire: 0, prixVente: 0, montantPaye: 0, commentaire: '' });
   const prixAchatInput = useMontantInput(achatForm.prixAchatUnitaire, v => setAchatForm(f => ({ ...f, prixAchatUnitaire: v })));
   const prixVenteAchatInput = useMontantInput(achatForm.prixVente, v => setAchatForm(f => ({ ...f, prixVente: v })));
   const montantPayeInput = useMontantInput(achatForm.montantPaye, v => setAchatForm(f => ({ ...f, montantPaye: v })));
-  const [paiForm, setPaiForm] = useState({ montant: 0, modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined as number | undefined });
+  const [paiForm, setPaiForm] = useState({ montant: 0, modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined as number | undefined, achatCibleId: undefined as number | undefined });
   const montantPaiementInput = useMontantInput(paiForm.montant, v => setPaiForm(f => ({ ...f, montant: v })));
   const [produits, setProduits] = useState<any[]>([]);
   const [showProduitPicker, setShowProduitPicker] = useState(false);
+
+  // Top produits achetés (calculé côté client à partir de l'historique d'achats déjà chargé,
+  // comme sur Ionic — section affichée dans l'onglet Situation).
+  const topProduits = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of achats) {
+      if (a.statut === 'ANNULE') continue;
+      for (const l of (a.lignes || [])) {
+        const nom = l.produit?.nom || l.produitNom || 'Inconnu';
+        map.set(nom, (map.get(nom) || 0) + Number(l.quantite || 0));
+      }
+    }
+    return Array.from(map.entries())
+      .map(([nom, quantite]) => ({ nom, quantite }))
+      .sort((a, b) => b.quantite - a.quantite)
+      .slice(0, 5);
+  }, [achats]);
 
   const charger = async () => {
     try {
@@ -232,6 +256,12 @@ export default function FournisseursScreen() {
   useEffect(() => {
     charger();
     getComptes().then(r => setComptes(r.data?.data || r.data || [])).catch(() => {});
+    AsyncStorage.getItem('user').then(raw => {
+      try {
+        const u = raw ? JSON.parse(raw) : null;
+        if (u?.id) setUserId(u.id);
+      } catch {}
+    });
   }, []);
   useEffect(() => {
     if (!search) { setFiltered(fournisseurs); return; }
@@ -254,9 +284,13 @@ export default function FournisseursScreen() {
       setAchats(ra.data?.achats || []);
       setPaiements(rp.data?.paiements || []);
       setSituation(rs.data?.data || rs.data);
-      const avancesData: any[] = rv.data?.avances || rv.data || [];
+      // rv.data = { fournisseurId, soldeDisponible, historique, totalDepose, totalUtilise }
+      // (voir /avances-fournisseurs/historique/{id}) — le solde disponible est calculé
+      // côté backend (dépôts moins montants déjà utilisés sur des achats), on ne le
+      // recalcule pas en sommant naïvement les montants côté client.
+      const avancesData: any[] = rv.data?.historique || [];
       setAvances(avancesData);
-      setSoldeAvance(avancesData.reduce((s: number, a: any) => s + (a.montant || 0), 0));
+      setSoldeAvance(Number(rv.data?.soldeDisponible ?? 0));
       setAchatsNonPayes(rnp.data?.achats || []);
     } catch {}
     setLoadingDetail(false);
@@ -323,22 +357,76 @@ export default function FournisseursScreen() {
     setPeriodePreset('tout'); setFiltreDateDebut(''); setFiltreDateFin('');
   };
 
-  const ajouterFournisseur = async () => {
+  const ouvrirNouveauFournisseur = () => {
+    setFournForm(FOURN_FORM_INITIAL);
+    setShowFournModal(true);
+  };
+
+  const ouvrirModifierFournisseur = (f: any) => {
+    setFournForm({
+      id: f.id,
+      nom: f.nom || '',
+      code: f.code || '',
+      telephone: f.telephone || '',
+      email: f.email || '',
+      adresse: f.adresse || '',
+      description: f.description || '',
+      actif: f.actif !== false,
+    });
+    setShowFournModal(true);
+  };
+
+  const enregistrerFournisseur = async () => {
     if (!fournForm.nom || !fournForm.code) { Alert.alert(tr('erreur', lang), 'Nom et code obligatoires'); return; }
+    const { id, ...payload } = fournForm;
     try {
-      const payload = { ...fournForm };
-      const res = await executerOuMettreEnFile('fournisseur_create', payload, () => createFournisseur(payload));
-      setShowFournModal(false);
-      setFournForm({ nom: '', code: '', telephone: '', email: '', adresse: '' });
-      if (res.offline) {
-        const tempItem = { ...payload, id: Date.now() };
-        setFournisseurs(prev => [...prev, tempItem]);
-        setFiltered(prev => [...prev, tempItem]);
-        Alert.alert('Sauvegardé', 'Fournisseur sauvegardé hors ligne — sync au retour connexion');
+      if (id) {
+        const res = await executerOuMettreEnFile('fournisseur_update', { id, data: payload }, () => updateFournisseur(id, payload));
+        setShowFournModal(false);
+        setFournForm(FOURN_FORM_INITIAL);
+        if (res.offline) {
+          setFournisseurs(prev => prev.map(f => (f.id === id ? { ...f, ...payload } : f)));
+          setFiltered(prev => prev.map(f => (f.id === id ? { ...f, ...payload } : f)));
+          Alert.alert('Sauvegardé', 'Modification sauvegardée hors ligne — sync au retour connexion');
+        } else {
+          charger();
+        }
       } else {
-        charger();
+        const res = await executerOuMettreEnFile('fournisseur_create', payload, () => createFournisseur(payload));
+        setShowFournModal(false);
+        setFournForm(FOURN_FORM_INITIAL);
+        if (res.offline) {
+          const tempItem = { ...payload, id: Date.now() };
+          setFournisseurs(prev => [...prev, tempItem]);
+          setFiltered(prev => [...prev, tempItem]);
+          Alert.alert('Sauvegardé', 'Fournisseur sauvegardé hors ligne — sync au retour connexion');
+        } else {
+          charger();
+        }
       }
-    } catch { Alert.alert(tr('erreur', lang), 'Impossible d\'ajouter le fournisseur'); }
+    } catch { Alert.alert(tr('erreur', lang), id ? 'Impossible de modifier le fournisseur' : 'Impossible d\'ajouter le fournisseur'); }
+  };
+
+  const confirmerSupprimerFournisseur = (f: any) => {
+    Alert.alert(
+      'Supprimer le fournisseur',
+      `${f.nom} sera supprimé définitivement.`,
+      [
+        { text: tr('annuler', lang), style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteFournisseur(f.id);
+              charger();
+            } catch (err: any) {
+              Alert.alert(tr('erreur', lang), err?.response?.data?.message || 'Suppression impossible');
+            }
+          },
+        },
+      ],
+    );
   };
 
   const ouvrirAchat = async () => {
@@ -392,6 +480,7 @@ export default function FournisseursScreen() {
         lignes: [ligne],
         montantPaye: achatForm.montantPaye || 0,
         commentaire: achatForm.commentaire,
+        utilisateurId: userId,
       };
       const res = await executerOuMettreEnFile('achat_fournisseur', payload, () => creerAchatFournisseur(payload));
       setShowAchatModal(false);
@@ -416,6 +505,8 @@ export default function FournisseursScreen() {
         reference: paiForm.reference,
         observation: paiForm.observation,
         compteId: paiForm.modePaiement === 'BANQUE' ? paiForm.compteId : undefined,
+        achatCibleId: paiForm.achatCibleId,
+        utilisateurId: userId,
       };
       const res = await executerOuMettreEnFile('paiement_fournisseur', payload, () => payerFournisseur(payload));
       setShowPaiementModal(false);
@@ -438,7 +529,7 @@ export default function FournisseursScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await annulerAchatFournisseur(achat.id);
+              await annulerAchatFournisseur(achat.id, userId);
               rechargerDetailCourant();
             } catch {
               Alert.alert(tr('erreur', lang), 'Impossible d\'annuler cet achat');
@@ -463,6 +554,7 @@ export default function FournisseursScreen() {
         motif: avanceForm.motif,
         sourceFinancement: avanceForm.sourceFinancement as 'CAISSE' | 'BANQUE',
         compteId: avanceForm.sourceFinancement === 'BANQUE' ? avanceForm.compteId : undefined,
+        utilisateurId: userId,
       });
       setShowAvanceModal(false);
       setAvanceForm({ montant: 0, motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
@@ -588,12 +680,12 @@ export default function FournisseursScreen() {
                             </View>
                             <View style={styles.row}>
                               <Text style={styles.moneyLabel}>Payé</Text>
-                              <Text style={[styles.moneyVal, { color: '#16a34a' }]}>{money(a.montantPaye)}</Text>
+                              <Text style={[styles.moneyVal, { color: colors.success }]}>{money(a.montantPaye)}</Text>
                             </View>
                             {a.montantRestant > 0 && (
                               <View style={styles.row}>
                                 <Text style={styles.moneyLabel}>Restant</Text>
-                                <Text style={[styles.moneyVal, { color: '#dc2626' }]}>{money(a.montantRestant)}</Text>
+                                <Text style={[styles.moneyVal, { color: colors.danger }]}>{money(a.montantRestant)}</Text>
                               </View>
                             )}
                             {a.commentaire ? <Text style={styles.sub}>{a.commentaire}</Text> : null}
@@ -694,11 +786,11 @@ export default function FournisseursScreen() {
                   </View>
                   <View style={styles.sitRow}>
                     <Text style={styles.sitLabel}>Total payé</Text>
-                    <Text style={[styles.sitVal, { color: '#16a34a' }]}>{money(situation.totalPaye ?? situation.montantPaye ?? 0)}</Text>
+                    <Text style={[styles.sitVal, { color: colors.success }]}>{money(situation.totalPaye ?? situation.montantPaye ?? 0)}</Text>
                   </View>
-                  <View style={[styles.sitRow, { borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 8, paddingTop: 8 }]}>
+                  <View style={[styles.sitRow, { borderTopWidth: 1, borderTopColor: colors.border, marginTop: 8, paddingTop: 8 }]}>
                     <Text style={[styles.sitLabel, { fontWeight: 'bold' }]}>Solde dû</Text>
-                    <Text style={[styles.sitVal, { color: '#dc2626', fontWeight: 'bold', fontSize: 18 }]}>
+                    <Text style={[styles.sitVal, { color: colors.danger, fontWeight: 'bold', fontSize: 18 }]}>
                       {money(situation.solde ?? situation.resteAPayer ?? 0)}
                     </Text>
                   </View>
@@ -736,11 +828,11 @@ export default function FournisseursScreen() {
                         </View>
                         <View style={styles.row}>
                           <Text style={styles.moneyLabel}>Payé</Text>
-                          <Text style={[styles.moneyVal, { color: '#16a34a' }]}>{money(a.montantPaye)}</Text>
+                          <Text style={[styles.moneyVal, { color: colors.success }]}>{money(a.montantPaye)}</Text>
                         </View>
                         <View style={styles.row}>
                           <Text style={styles.moneyLabel}>Restant</Text>
-                          <Text style={[styles.moneyVal, { color: '#dc2626' }]}>{money(a.montantRestant)}</Text>
+                          <Text style={[styles.moneyVal, { color: colors.danger }]}>{money(a.montantRestant)}</Text>
                         </View>
                         {a.commentaire ? <Text style={styles.sub}>{a.commentaire}</Text> : null}
                         <TouchableOpacity
@@ -752,6 +844,7 @@ export default function FournisseursScreen() {
                               reference: '',
                               observation: `Règlement achat du ${fdate(a.dateAchat)}`,
                               compteId: undefined,
+                              achatCibleId: a.id,
                             });
                             setShowPaiementModal(true);
                           }}
@@ -765,13 +858,28 @@ export default function FournisseursScreen() {
               </>
             )}
 
+            {/* ── TOP PRODUITS ACHETÉS ── */}
+            {tab === 'situation' && topProduits.length > 0 && (
+              <Card style={[styles.card, { marginTop: 4 }]}>
+                <Card.Content>
+                  <Text style={styles.sitTitle}>Top produits achetés</Text>
+                  {topProduits.map((t, i) => (
+                    <View key={t.nom} style={styles.sitRow}>
+                      <Text style={styles.sitLabel}>{i + 1}. {t.nom}</Text>
+                      <Text style={styles.sitVal}>{t.quantite} unité(s)</Text>
+                    </View>
+                  ))}
+                </Card.Content>
+              </Card>
+            )}
+
             {/* ── AVANCES ── */}
             {tab === 'avances' && (
               <>
-                <Card style={[styles.card, { backgroundColor: '#eff6ff', marginBottom: 12 }]}>
+                <Card style={[styles.card, { backgroundColor: colors.infoBg, marginBottom: 12 }]}>
                   <Card.Content>
                     <Text style={styles.sitLabel}>Solde total des avances</Text>
-                    <Text style={[styles.moneyVal, { fontSize: 20, color: '#1a56db', marginTop: 4 }]}>
+                    <Text style={[styles.moneyVal, { fontSize: 20, color: colors.primary, marginTop: 4 }]}>
                       {money(soldeAvance)}
                     </Text>
                   </Card.Content>
@@ -785,10 +893,13 @@ export default function FournisseursScreen() {
                       <Card.Content>
                         <View style={styles.row}>
                           <Text style={styles.achatDate}>
-                            {a.dateAvance ? new Date(a.dateAvance).toLocaleDateString('fr-FR') : '—'}
+                            {a.dateDepot ? new Date(a.dateDepot).toLocaleDateString('fr-FR') : '—'}
                           </Text>
-                          <Text style={[styles.moneyVal, { color: '#1a56db' }]}>{money(a.montant)}</Text>
+                          <Text style={[styles.moneyVal, { color: colors.primary }]}>{money(a.montant)}</Text>
                         </View>
+                        {a.montantUtilise > 0 && (
+                          <Text style={[styles.sub, { marginTop: 2 }]}>Utilisé : {money(a.montantUtilise)} · Disponible : {money(a.montantDisponible)}</Text>
+                        )}
                         {a.motif ? <Text style={[styles.sub, { marginTop: 4 }]}>{a.motif}</Text> : null}
                       </Card.Content>
                     </Card>
@@ -800,16 +911,16 @@ export default function FournisseursScreen() {
         )}
 
         {tab === 'achats' && (
-          <FAB icon="cart-plus" style={[styles.fab, { backgroundColor: '#1a56db' }]} onPress={ouvrirAchat} />
+          <FAB icon="cart-plus" style={[styles.fab, { backgroundColor: colors.primary }]} onPress={ouvrirAchat} />
         )}
         {tab === 'paiements' && (
-          <FAB icon="cash" style={[styles.fab, { backgroundColor: '#16a34a' }]} onPress={() => {
-            setPaiForm({ montant: 0, modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined });
+          <FAB icon="cash" style={[styles.fab, { backgroundColor: colors.success }]} onPress={() => {
+            setPaiForm({ montant: 0, modePaiement: 'ESPECES', reference: '', observation: '', compteId: undefined, achatCibleId: undefined });
             setShowPaiementModal(true);
           }} />
         )}
         {tab === 'avances' && (
-          <FAB icon="plus" style={[styles.fab, { backgroundColor: '#1a56db' }]} onPress={() => {
+          <FAB icon="plus" style={[styles.fab, { backgroundColor: colors.primary }]} onPress={() => {
             setAvanceForm({ montant: 0, motif: '', sourceFinancement: 'CAISSE', compteId: undefined });
             setShowAvanceModal(true);
           }} />
@@ -825,7 +936,7 @@ export default function FournisseursScreen() {
                 <Text style={achatForm.produitNom ? styles.pickerVal : styles.pickerPh}>
                   {achatForm.produitNom || 'Sélectionner un produit *'}
                 </Text>
-                <Text style={{ color: '#94a3b8' }}>{showProduitPicker ? '▲' : '▼'}</Text>
+                <Text style={{ color: colors.placeholder }}>{showProduitPicker ? '▲' : '▼'}</Text>
               </TouchableOpacity>
               {showProduitPicker && (
                 <View style={styles.pickerList}>
@@ -834,7 +945,7 @@ export default function FournisseursScreen() {
                       setAchatForm({ ...achatForm, produitId: p.id, produitNom: p.nom, prixAchatUnitaire: p.prixAchat || 0, prixVente: p.prixVente || 0 });
                       setShowProduitPicker(false);
                     }}>
-                      <Text style={[styles.pickerItemText, achatForm.produitId === p.id && { color: '#1a56db', fontWeight: 'bold' }]}>
+                      <Text style={[styles.pickerItemText, achatForm.produitId === p.id && { color: colors.primary, fontWeight: 'bold' }]}>
                         {p.nom}
                       </Text>
                     </TouchableOpacity>
@@ -856,6 +967,12 @@ export default function FournisseursScreen() {
         <Portal>
           <Modal visible={showPaiementModal} onDismiss={() => setShowPaiementModal(false)} contentContainerStyle={styles.modal}>
             <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('ajouter', lang)} paiement</Text>
+            {paiForm.achatCibleId != null && (
+              <View style={styles.cibleNote}>
+                <MaterialCommunityIcons name="tag-outline" size={16} color={colors.warning} />
+                <Text style={styles.cibleNoteText}>Règle en priorité l'achat #{paiForm.achatCibleId}</Text>
+              </View>
+            )}
             <TextInput label="Montant *" value={montantPaiementInput.texte} onChangeText={montantPaiementInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
             <Text style={styles.sectionLabel}>Mode de paiement</Text>
             <View style={{ flexDirection: 'row', marginBottom: 12, gap: 6 }}>
@@ -884,7 +1001,7 @@ export default function FournisseursScreen() {
             )}
             <TextInput label="Reference" value={paiForm.reference} onChangeText={t => setPaiForm({ ...paiForm, reference: t })} mode="outlined" style={styles.input} />
             <TextInput label="Observation" value={paiForm.observation} onChangeText={t => setPaiForm({ ...paiForm, observation: t })} mode="outlined" style={styles.input} />
-            <Button mode="contained" onPress={enregistrerPaiement} style={{ marginTop: 4, backgroundColor: '#16a34a' }}>{tr('enregistrer', lang)}</Button>
+            <Button mode="contained" onPress={enregistrerPaiement} style={{ marginTop: 4, backgroundColor: colors.success }}>{tr('enregistrer', lang)}</Button>
           </Modal>
         </Portal>
 
@@ -932,7 +1049,7 @@ export default function FournisseursScreen() {
               mode="outlined"
               style={styles.input}
             />
-            <Button mode="contained" onPress={enregistrerAvance} style={{ marginTop: 4, backgroundColor: '#1a56db' }}>
+            <Button mode="contained" onPress={enregistrerAvance} style={{ marginTop: 4, backgroundColor: colors.primary }}>
               {tr('enregistrer', lang)}
             </Button>
           </Modal>
@@ -951,8 +1068,8 @@ export default function FournisseursScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
         contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
         renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => selectionner(item)}>
-            <Card style={styles.card}>
+          <Card style={styles.card}>
+            <TouchableOpacity onPress={() => selectionner(item)}>
               <Card.Content>
                 <View style={styles.row}>
                   <View style={styles.initiale}>
@@ -962,25 +1079,45 @@ export default function FournisseursScreen() {
                     <Text variant="titleMedium">{item.nom}</Text>
                     {item.code && <Text style={styles.sub}>{item.code}</Text>}
                     {item.telephone && <Text style={styles.sub}>{item.telephone}</Text>}
+                    {item.actif === false && <Text style={styles.inactifBadge}>Inactif</Text>}
                   </View>
                   <Text style={styles.chevron}>›</Text>
                 </View>
               </Card.Content>
-            </Card>
-          </TouchableOpacity>
+            </TouchableOpacity>
+            <View style={styles.listActionsRow}>
+              <TouchableOpacity style={styles.listActionBtn} onPress={() => ouvrirModifierFournisseur(item)}>
+                <MaterialCommunityIcons name="pencil-outline" size={15} color={colors.primary} />
+                <Text style={styles.listActionText}>Modifier</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.listActionBtn} onPress={() => confirmerSupprimerFournisseur(item)}>
+                <MaterialCommunityIcons name="trash-can-outline" size={15} color={colors.danger} />
+                <Text style={[styles.listActionText, { color: colors.danger }]}>Supprimer</Text>
+              </TouchableOpacity>
+            </View>
+          </Card>
         )}
         ListEmptyComponent={<Text style={styles.empty}>{tr('aucun_resultat', lang)}</Text>}
       />
-      <FAB icon="plus" style={styles.fab} onPress={() => setShowFournModal(true)} />
+      <FAB icon="plus" style={styles.fab} onPress={ouvrirNouveauFournisseur} />
       <Portal>
         <Modal visible={showFournModal} onDismiss={() => setShowFournModal(false)} contentContainerStyle={styles.modal}>
-          <Text variant="titleLarge" style={{ marginBottom: 16 }}>{tr('nouveau_fournisseur', lang)}</Text>
-          <TextInput label={tr('nom_fournisseur', lang)} value={fournForm.nom} onChangeText={t => setFournForm({ ...fournForm, nom: t })} mode="outlined" style={styles.input} />
-          <TextInput label="Code *" value={fournForm.code} onChangeText={t => setFournForm({ ...fournForm, code: t })} mode="outlined" style={styles.input} placeholder="ex: FOUR-001" />
-          <TextInput label={tr('telephone', lang)} value={fournForm.telephone} onChangeText={t => setFournForm({ ...fournForm, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
-          <TextInput label={tr('email', lang)} value={fournForm.email} onChangeText={t => setFournForm({ ...fournForm, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
-          <TextInput label={tr('adresse', lang)} value={fournForm.adresse} onChangeText={t => setFournForm({ ...fournForm, adresse: t })} mode="outlined" style={styles.input} />
-          <Button mode="contained" onPress={ajouterFournisseur}>{tr('enregistrer', lang)}</Button>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <Text variant="titleLarge" style={{ marginBottom: 16 }}>
+              {fournForm.id ? 'Modifier' : tr('nouveau_fournisseur', lang)}
+            </Text>
+            <TextInput label={tr('nom_fournisseur', lang)} value={fournForm.nom} onChangeText={t => setFournForm({ ...fournForm, nom: t })} mode="outlined" style={styles.input} />
+            <TextInput label="Code *" value={fournForm.code} onChangeText={t => setFournForm({ ...fournForm, code: t })} mode="outlined" style={styles.input} placeholder="ex: FOUR-001" />
+            <TextInput label={tr('telephone', lang)} value={fournForm.telephone} onChangeText={t => setFournForm({ ...fournForm, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
+            <TextInput label={tr('email', lang)} value={fournForm.email} onChangeText={t => setFournForm({ ...fournForm, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" />
+            <TextInput label={tr('adresse', lang)} value={fournForm.adresse} onChangeText={t => setFournForm({ ...fournForm, adresse: t })} mode="outlined" style={styles.input} />
+            <TextInput label="Description" value={fournForm.description} onChangeText={t => setFournForm({ ...fournForm, description: t })} mode="outlined" style={styles.input} multiline numberOfLines={2} />
+            <View style={styles.actifRow}>
+              <Text style={styles.sectionLabel}>Actif</Text>
+              <Switch value={fournForm.actif} onValueChange={v => setFournForm({ ...fournForm, actif: v })} />
+            </View>
+            <Button mode="contained" onPress={enregistrerFournisseur}>{tr('enregistrer', lang)}</Button>
+          </ScrollView>
         </Modal>
       </Portal>
     </View>
@@ -990,84 +1127,91 @@ export default function FournisseursScreen() {
 // STYLE (2026-08-16) : bleu #1e88e5 (Material blue, différent du reste de
 // l'app) uniformisé sur #1a56db, le bleu Ges Boutique utilisé partout
 // ailleurs — 15 occurrences (en-tête détail, onglets, boutons, badges).
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   search: { margin: 12 },
-  card: { marginBottom: 10, borderRadius: 16 },
-  cardAnnule: { marginBottom: 10, borderRadius: 16, backgroundColor: '#f3f4f6', opacity: 0.75 },
+  card: { marginBottom: 10, borderRadius: 16, backgroundColor: colors.card },
+  cardAnnule: { marginBottom: 10, borderRadius: 16, backgroundColor: colors.inputBg, opacity: 0.75 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sub: { color: '#666', fontSize: 12, marginTop: 2 },
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  sub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  empty: { textAlign: 'center', marginTop: 40, color: colors.textSecondary },
   fab: { position: 'absolute', bottom: 20, right: 20 },
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
+  modal: { backgroundColor: colors.card, margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
   input: { marginBottom: 12 },
-  initiale: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#1a56db', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  initiale: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   initialeText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
-  chevron: { color: '#94a3b8', fontSize: 22, fontWeight: 'bold' },
+  inactifBadge: { color: colors.textSecondary, fontSize: 11, fontWeight: '600', marginTop: 2 },
+  listActionsRow: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: colors.border },
+  listActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10 },
+  listActionText: { color: colors.primary, fontSize: 12, fontWeight: '600' },
+  actifRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  cibleNote: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.warningBg, borderRadius: 8, padding: 10, marginBottom: 12 },
+  cibleNoteText: { color: colors.warning, fontSize: 12, fontWeight: '600', flex: 1 },
+  chevron: { color: colors.placeholder, fontSize: 22, fontWeight: 'bold' },
   // Detail
-  detailHeader: { backgroundColor: '#1a56db', flexDirection: 'row', alignItems: 'center', padding: 14, paddingTop: 18 },
+  detailHeader: { backgroundColor: colors.primary, flexDirection: 'row', alignItems: 'center', padding: 14, paddingTop: 18 },
   backBtn: { padding: 6, marginRight: 8 },
   backArrow: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
   detailNom: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
   detailCode: { color: '#bbdefb', fontSize: 13 },
   ficheBtn: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, padding: 8, marginLeft: 8 },
   ficheBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  tabBar: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  tabBar: { flexDirection: 'row', backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabBtnActive: { borderBottomWidth: 3, borderBottomColor: '#1a56db' },
-  tabLabel: { color: '#6b7280', fontSize: 13, fontWeight: '500' },
-  tabLabelActive: { color: '#1a56db', fontWeight: 'bold' },
+  tabBtnActive: { borderBottomWidth: 3, borderBottomColor: colors.primary },
+  tabLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '500' },
+  tabLabelActive: { color: colors.primary, fontWeight: 'bold' },
 
   // Filtre période
-  periodBar: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', paddingVertical: 8, paddingHorizontal: 8 },
+  periodBar: { backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border, paddingVertical: 8, paddingHorizontal: 8 },
   periodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  periodBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: '#f0f4f8', borderWidth: 1, borderColor: '#dde3ed' },
-  periodBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  periodBtnText: { fontSize: 12, color: '#666', fontWeight: '600' },
+  periodBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border },
+  periodBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  periodBtnText: { fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
   periodBtnTextActive: { color: '#fff' },
   customDateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  dateInput: { flex: 1, backgroundColor: '#fff', height: 40 },
-  applyBtn: { backgroundColor: '#1a56db', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  dateInput: { flex: 1, backgroundColor: colors.inputBg, height: 40 },
+  applyBtn: { backgroundColor: colors.primary, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
   applyBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   // Achats non payés
-  payerBtn: { backgroundColor: '#ecfdf5', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: '#a7f3d0' },
-  payerBtnText: { color: '#16a34a', fontSize: 12, fontWeight: '600' },
+  payerBtn: { backgroundColor: colors.successBg, borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: colors.success },
+  payerBtnText: { color: colors.success, fontSize: 12, fontWeight: '600' },
   // Achats
-  achatDate: { color: '#475569', fontSize: 13, fontWeight: '500' },
+  achatDate: { color: colors.textSecondary, fontSize: 13, fontWeight: '500' },
   statutBadge: { color: '#fff', fontSize: 11, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, overflow: 'hidden' },
-  modeBadge: { backgroundColor: '#eff6ff', color: '#1e40af', fontSize: 11, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, overflow: 'hidden' },
-  moneyLabel: { color: '#6b7280', fontSize: 13 },
-  moneyVal: { fontWeight: 'bold', fontSize: 14, color: '#1e293b' },
-  expandHint: { color: '#94a3b8', fontSize: 11, marginTop: 6 },
-  lignes: { backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 4 },
-  ligneRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  ligneProduit: { color: '#334155', fontSize: 13, fontWeight: '500' },
-  ligneQty: { color: '#64748b', fontSize: 12 },
-  ligneSous: { color: '#1a56db', fontSize: 13, fontWeight: 'bold', textAlign: 'right' },
-  annulerBtn: { backgroundColor: '#fef2f2', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: '#fecaca' },
-  annulerBtnText: { color: '#dc2626', fontSize: 12, fontWeight: '600' },
+  modeBadge: { backgroundColor: colors.infoBg, color: colors.info, fontSize: 11, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, overflow: 'hidden' },
+  moneyLabel: { color: colors.textSecondary, fontSize: 13 },
+  moneyVal: { fontWeight: 'bold', fontSize: 14, color: colors.text },
+  expandHint: { color: colors.placeholder, fontSize: 11, marginTop: 6 },
+  lignes: { backgroundColor: colors.inputBg, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 4 },
+  ligneRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
+  ligneProduit: { color: colors.text, fontSize: 13, fontWeight: '500' },
+  ligneQty: { color: colors.textSecondary, fontSize: 12 },
+  ligneSous: { color: colors.primary, fontSize: 13, fontWeight: 'bold', textAlign: 'right' },
+  annulerBtn: { backgroundColor: colors.dangerBg, borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: colors.danger },
+  annulerBtnText: { color: colors.danger, fontSize: 12, fontWeight: '600' },
   // Achats annulés
   separateurAnnules: { flexDirection: 'row', alignItems: 'center', marginVertical: 14 },
-  separateurLine: { flex: 1, height: 1, backgroundColor: '#d1d5db' },
-  separateurLabel: { color: '#9ca3af', fontSize: 12, marginHorizontal: 10, fontWeight: '500' },
-  textAnnule: { color: '#9ca3af' },
+  separateurLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  separateurLabel: { color: colors.textSecondary, fontSize: 12, marginHorizontal: 10, fontWeight: '500' },
+  textAnnule: { color: colors.textSecondary },
   textBarre: { textDecorationLine: 'line-through' },
   // Situation
-  sitTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 14, color: '#1e293b' },
-  sitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  sitLabel: { color: '#475569', fontSize: 14 },
-  sitVal: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
+  sitTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 14, color: colors.text },
+  sitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
+  sitLabel: { color: colors.textSecondary, fontSize: 14 },
+  sitVal: { fontWeight: '600', fontSize: 14, color: colors.text },
   // Produit picker
-  picker: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#94a3b8', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 14, marginBottom: 8, backgroundColor: '#fff' },
-  pickerVal: { color: '#1e293b', fontSize: 14 },
-  pickerPh: { color: '#94a3b8', fontSize: 14 },
-  pickerList: { backgroundColor: '#f8fafc', borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0', maxHeight: 180 },
-  pickerItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  pickerItemText: { color: '#334155', fontSize: 13 },
-  sectionLabel: { color: '#475569', fontSize: 13, marginBottom: 6 },
-  modeBtn: { flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', alignItems: 'center' },
-  modeBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  modeBtnText: { color: '#374151', fontSize: 11, fontWeight: '500' },
-  recuBtn: { backgroundColor: '#eff6ff', borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 8 },
-  recuBtnText: { color: '#1a56db', fontSize: 12, fontWeight: '600' },
+  picker: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: 4, paddingHorizontal: 12, paddingVertical: 14, marginBottom: 8, backgroundColor: colors.inputBg },
+  pickerVal: { color: colors.text, fontSize: 14 },
+  pickerPh: { color: colors.placeholder, fontSize: 14 },
+  pickerList: { backgroundColor: colors.inputBg, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: colors.border, maxHeight: 180 },
+  pickerItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: colors.border },
+  pickerItemText: { color: colors.text, fontSize: 13 },
+  sectionLabel: { color: colors.textSecondary, fontSize: 13, marginBottom: 6 },
+  modeBtn: { flex: 1, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
+  modeBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  modeBtnText: { color: colors.textSecondary, fontSize: 11, fontWeight: '500' },
+  recuBtn: { backgroundColor: colors.infoBg, borderRadius: 6, padding: 6, alignSelf: 'flex-start', marginTop: 8 },
+  recuBtnText: { color: colors.primary, fontSize: 12, fontWeight: '600' },
 });

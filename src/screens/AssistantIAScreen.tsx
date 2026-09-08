@@ -13,8 +13,7 @@ import { Text } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { getQuestionsPredefiniesIA, envoyerQuestionIA } from '../services/api.service';
-
-const BLUE = '#1a56db';
+import { useColors } from '../theme/colors';
 
 interface Message {
   id: string;
@@ -73,6 +72,8 @@ function heureActuelle(): string {
 
 export default function AssistantIAScreen() {
   const navigation = useNavigation();
+  const colors = useColors();
+  const styles = createStyles(colors);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -188,7 +189,7 @@ export default function AssistantIAScreen() {
           loading ? (
             <View style={[styles.bubbleRow, styles.bubbleRowAssistant]}>
               <View style={[styles.bubble, styles.bubbleAssistant, styles.bubbleTyping]}>
-                <ActivityIndicator size="small" color={BLUE} />
+                <ActivityIndicator size="small" color={colors.primary} />
               </View>
             </View>
           ) : null
@@ -201,7 +202,7 @@ export default function AssistantIAScreen() {
           <View style={styles.chipsWrap}>
             {questions.map(q => (
               <TouchableOpacity key={q.id} style={styles.chip} onPress={() => poserQuestionPredefinies(q.id)}>
-                <Ionicons name={ICON_MAP[q.icone] || 'help-circle-outline'} size={14} color={BLUE} />
+                <Ionicons name={ICON_MAP[q.icone] || 'help-circle-outline'} size={14} color={colors.primary} />
                 <Text style={styles.chipText}>{q.label}</Text>
               </TouchableOpacity>
             ))}
@@ -215,7 +216,7 @@ export default function AssistantIAScreen() {
           value={texteLibre}
           onChangeText={setTexteLibre}
           placeholder="Posez votre question..."
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={colors.placeholder}
           onSubmitEditing={envoyerTexteLibre}
           returnKeyType="send"
         />
@@ -231,8 +232,8 @@ export default function AssistantIAScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   headerBtn: {
     width: 34,
     height: 34,
@@ -247,57 +248,57 @@ const styles = StyleSheet.create({
   bubbleRowUser: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   bubbleRowAssistant: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
-  bubbleUser: { backgroundColor: BLUE, borderBottomRightRadius: 4 },
-  bubbleAssistant: { backgroundColor: '#fff', borderBottomLeftRadius: 4, borderWidth: 1, borderColor: '#e2e8f0' },
+  bubbleUser: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
+  bubbleAssistant: { backgroundColor: colors.card, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: colors.border },
   bubbleTyping: { paddingVertical: 12, paddingHorizontal: 18 },
   bubbleTextUser: { color: '#fff', fontSize: 14, lineHeight: 20 },
-  bubbleTextAssistant: { color: '#0f172a', fontSize: 14, lineHeight: 20 },
-  heure: { fontSize: 10, color: '#94a3b8', marginTop: 3, paddingHorizontal: 4 },
+  bubbleTextAssistant: { color: colors.text, fontSize: 14, lineHeight: 20 },
+  heure: { fontSize: 10, color: colors.textSecondary, marginTop: 3, paddingHorizontal: 4 },
   suggestionsWrap: {
     paddingHorizontal: 14,
     paddingTop: 8,
     paddingBottom: 4,
     borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#fff',
+    borderTopColor: colors.border,
+    backgroundColor: colors.card,
   },
-  suggestionsLabel: { fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: '600' },
+  suggestionsLabel: { fontSize: 11, color: colors.textSecondary, marginBottom: 6, fontWeight: '600' },
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     borderWidth: 1.5,
-    borderColor: BLUE,
+    borderColor: colors.primary,
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 7,
     marginBottom: 4,
   },
-  chipText: { fontSize: 12.5, color: BLUE, fontWeight: '600' },
+  chipText: { fontSize: 12.5, color: colors.primary, fontWeight: '600' },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     padding: 12,
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
+    borderTopColor: colors.border,
   },
   input: {
     flex: 1,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.inputBg,
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     fontSize: 14,
-    color: '#0f172a',
+    color: colors.text,
   },
   sendBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: BLUE,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },

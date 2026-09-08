@@ -4,6 +4,7 @@ import { Text, Card, Button, RadioButton, Divider } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
 
 type Template = 'CLASSIQUE' | 'MODERNE' | 'MINIMALISTE';
 
@@ -15,6 +16,7 @@ const TEMPLATES: { value: Template; label: string; desc: string }[] = [
 
 export default function FactureDesignScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [template, setTemplate] = useState<Template>('CLASSIQUE');
 
   React.useEffect(() => {
@@ -62,13 +64,20 @@ export default function FactureDesignScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
-      <Text variant="titleMedium" style={styles.sectionTitle}>{tr('modele_facture', lang)}</Text>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={{ padding: 16 }}>
+      <Text variant="titleMedium" style={[styles.sectionTitle, { color: colors.primary }]}>{tr('modele_facture', lang)}</Text>
+      <Text style={[styles.helper, { color: colors.textSecondary }]}>
+        Ce choix ne change que l'aperçu affiché ici dans l'app — le document PDF envoyé au client garde son propre format d'impression.
+      </Text>
 
       {TEMPLATES.map(t => (
         <Card
           key={t.value}
-          style={[styles.card, template === t.value && styles.cardActive]}
+          style={[
+            styles.card,
+            { backgroundColor: colors.card, borderColor: colors.border },
+            template === t.value && { borderColor: colors.primary, borderWidth: 2 },
+          ]}
           onPress={() => setTemplate(t.value)}
         >
           <Card.Content>
@@ -77,22 +86,25 @@ export default function FactureDesignScreen() {
                 value={t.value}
                 status={template === t.value ? 'checked' : 'unchecked'}
                 onPress={() => setTemplate(t.value)}
+                color={colors.primary}
               />
               <View style={{ flex: 1 }}>
-                <Text variant="titleMedium" style={template === t.value ? styles.activeLabel : {}}>{tr(t.value.toLowerCase(), lang)}</Text>
-                <Text style={styles.desc}>{t.desc}</Text>
+                <Text variant="titleMedium" style={{ color: template === t.value ? colors.primary : colors.text, fontWeight: template === t.value ? 'bold' : 'normal' }}>
+                  {tr(t.value.toLowerCase(), lang)}
+                </Text>
+                <Text style={[styles.desc, { color: colors.textSecondary }]}>{t.desc}</Text>
               </View>
             </View>
             {template === t.value && (
-              <View style={styles.apercu}>
-                <Text style={styles.apercuText}>{apercu(t.value)}</Text>
+              <View style={[styles.apercu, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+                <Text style={[styles.apercuText, { color: colors.text }]}>{apercu(t.value)}</Text>
               </View>
             )}
           </Card.Content>
         </Card>
       ))}
 
-      <Button mode="contained" onPress={sauvegarder} style={styles.btn}>
+      <Button mode="contained" onPress={sauvegarder} style={styles.btn} buttonColor={colors.primary}>
         {tr('sauvegarder', lang)}
       </Button>
     </ScrollView>
@@ -100,14 +112,13 @@ export default function FactureDesignScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
-  sectionTitle: { fontWeight: 'bold', color: '#1a56db', marginBottom: 12 },
-  card: { marginBottom: 12, borderRadius: 16 },
-  cardActive: { borderWidth: 2, borderColor: '#1a56db' },
+  container: { flex: 1 },
+  sectionTitle: { fontWeight: 'bold', marginBottom: 4 },
+  helper: { fontSize: 12, marginBottom: 14 },
+  card: { marginBottom: 12, borderRadius: 16, borderWidth: 1 },
   row: { flexDirection: 'row', alignItems: 'center' },
-  activeLabel: { color: '#1a56db', fontWeight: 'bold' },
-  desc: { color: '#666', fontSize: 12, marginTop: 2 },
-  apercu: { backgroundColor: '#f8f8f8', padding: 12, borderRadius: 10, marginTop: 12 },
-  apercuText: { fontFamily: 'monospace', fontSize: 12, color: '#333' },
+  desc: { fontSize: 12, marginTop: 2 },
+  apercu: { padding: 12, borderRadius: 10, marginTop: 12, borderWidth: 1 },
+  apercuText: { fontFamily: 'monospace', fontSize: 12 },
   btn: { marginTop: 8, borderRadius: 12 },
 });

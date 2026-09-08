@@ -112,22 +112,37 @@ async function chargerClients(): Promise<DonneesExport> {
 async function chargerProduits(): Promise<DonneesExport> {
   const res = await getProduits();
   const raw: any[] = res.data?.data || res.data || [];
+  // Statut (Périmé/Stock faible/OK) — même calcul client-side que
+  // ProductService.normalize() côté Ionic (quantite<=seuilAlerte, datePeremption<aujourd'hui).
+  const now = new Date();
+  const statutProduit = (p: any): string => {
+    const perime = p.datePeremption ? new Date(p.datePeremption) < now : false;
+    if (perime) return 'Périmé';
+    if (Number(p.quantite || 0) <= Number(p.seuilAlerte || 0)) return 'Stock faible';
+    return 'OK';
+  };
   const lignes = raw.map(p => [
     p.nom || '—',
     p.categorie?.nom || '—',
+    p.fournisseur?.nom || '—',
     money(p.prixAchat || 0),
     money(p.prixVente || 0),
     String(p.quantite ?? 0),
     p.seuilAlerte != null ? String(p.seuilAlerte) : '—',
-    p.fournisseur?.nom || '—',
+    statutProduit(p),
   ]);
-  const valeurStock = raw.reduce((s, p) => s + (p.quantite || 0) * (p.prixAchat || 0), 0);
+  const valeurStockAchat = raw.reduce((s, p) => s + (p.quantite || 0) * (p.prixAchat || 0), 0);
+  const valeurStockVente = raw.reduce((s, p) => s + (p.quantite || 0) * (p.prixVente || 0), 0);
   return {
     titre: 'Export — Produits',
     sousTitre: `${raw.length} produit(s)`,
-    colonnes: ['Produit', 'Catégorie', 'Prix achat', 'Prix vente', 'Stock', 'Seuil alerte', 'Fournisseur'],
+    colonnes: ['Produit', 'Catégorie', 'Fournisseur', 'Prix achat', 'Prix vente', 'Stock', 'Seuil alerte', 'Statut'],
     lignes,
-    totaux: [`Nombre de produits : ${raw.length}`, `Valeur du stock (prix d'achat) : ${money(valeurStock)}`],
+    totaux: [
+      `Nombre de produits : ${raw.length}`,
+      `Valeur du stock (prix achat) : ${money(valeurStockAchat)}`,
+      `Valeur du stock (prix vente) : ${money(valeurStockVente)}`,
+    ],
   };
 }
 
@@ -163,11 +178,18 @@ async function chargerVentes(dateDebut: string, dateFin: string): Promise<Donnee
 async function chargerFournisseurs(): Promise<DonneesExport> {
   const res = await getFournisseurs();
   const raw: any[] = res.data?.data || res.data || [];
-  const lignes = raw.map(f => [f.nom || '—', f.code || '—', f.telephone || '—', f.email || '—', f.adresse || '—']);
+  // Colonnes Solde/Statut alignées sur export-donnees.page.ts::exportFournisseurs()
+  // — mêmes champs `solde`/`actif` déjà renvoyés par GET /fournisseurs (voir
+  // FournisseursScreen.tsx qui les utilise aussi directement sur la liste).
+  const lignes = raw.map(f => [
+    f.nom || '—', f.code || '—', f.telephone || '—', f.email || '—', f.adresse || '—',
+    money(f.solde || 0),
+    f.actif === false ? 'Inactif' : 'Actif',
+  ]);
   return {
     titre: 'Export — Fournisseurs',
     sousTitre: `${raw.length} fournisseur(s)`,
-    colonnes: ['Nom', 'Code', 'Téléphone', 'Email', 'Adresse'],
+    colonnes: ['Nom', 'Code', 'Téléphone', 'Email', 'Adresse', 'Solde', 'Statut'],
     lignes,
     totaux: [`Nombre de fournisseurs : ${raw.length}`],
   };
@@ -207,14 +229,17 @@ async function chargerDepenses(dateDebut: string, dateFin: string): Promise<Donn
 async function chargerEmployes(): Promise<DonneesExport> {
   const res = await getEmployes();
   const raw: any[] = res.data?.data || res.data || [];
+  // Convention identique à EmployesScreen.tsx (et depense.page.ts côté Ionic) :
+  // seul un statut explicitement 'INACTIF' est considéré inactif — un statut
+  // manquant/inconnu compte comme actif, pas l'inverse.
   const lignes = raw.map(e => [
     `${e.prenom || ''} ${e.nom || ''}`.trim() || '—',
     e.poste || '—',
     e.telephone || '—',
     money(e.salaireMensuel || 0),
-    e.statut === 'ACTIF' ? 'Actif' : 'Inactif',
+    e.statut === 'INACTIF' ? 'Inactif' : 'Actif',
   ]);
-  const masseSalariale = raw.filter(e => e.statut === 'ACTIF').reduce((s, e) => s + (e.salaireMensuel || 0), 0);
+  const masseSalariale = raw.filter(e => e.statut !== 'INACTIF').reduce((s, e) => s + (e.salaireMensuel || 0), 0);
   return {
     titre: 'Export — Employés',
     sousTitre: `${raw.length} employé(s)`,
@@ -276,19 +301,24 @@ async function chargerCreditsDettes(dateDebut: string, dateFin: string): Promise
 async function chargerTransferts(dateDebut: string, dateFin: string): Promise<DonneesExport> {
   const res = await getTransferts();
   const raw: any[] = res.data?.data || res.data || [];
-  const filtres = raw.filter((t: any) => dansPeriode(t.dateTransfert, dateDebut, dateFin));
+  // Champ réel de l'entité backend (TransfertStock.java) : `dateCreation`, PAS
+  // `dateTransfert` (qui n'existe pas côté serveur et ferait exclure toutes les
+  // lignes dès qu'un filtre de période est actif) — même champ que
+  // export-donnees.page.ts::chargerObservable() côté Ionic.
+  const filtres = raw.filter((t: any) => dansPeriode(t.dateCreation, dateDebut, dateFin));
   const lignes = filtres.map((t: any) => [
-    dateStr(t.dateTransfert),
-    t.produitNom || t.lignes?.[0]?.produitNom || '—',
-    String(t.quantite ?? t.lignes?.[0]?.quantite ?? '—'),
-    t.boutiqueSrcNom || t.boutiqueSourceNom || '—',
+    t.numeroTransfert || '—',
+    t.dateCreation ? dateStr(t.dateCreation) : '—',
+    t.boutiqueSourceNom || t.boutiqueSrcNom || '—',
     t.boutiqueDestNom || '—',
     (t.statut || '—').replace(/_/g, ' '),
+    (t.typePaiement || '—').replace(/_/g, ' '),
+    t.creePar || '—',
   ]);
   return {
     titre: 'Export — Transferts',
     sousTitre: `${periodeLabel(dateDebut, dateFin)} — ${filtres.length} transfert(s)`,
-    colonnes: ['Date', 'Produit', 'Quantité', 'Source', 'Destination', 'Statut'],
+    colonnes: ['N°', 'Date', 'De', 'Vers', 'Statut', 'Type paiement', 'Créé par'],
     lignes,
     totaux: [`Nombre de transferts : ${filtres.length}`],
   };
@@ -427,7 +457,7 @@ export default function ExportDonneesScreen() {
   const renderHeader = () => (
     <View>
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
-      <View style={s.hero}>
+      <View style={[s.hero, { backgroundColor: colors.hero }]}>
         <MaterialCommunityIcons name="database-export-outline" size={26} color="#fff" />
         <Text style={s.heroTitle}>Export de données</Text>
         <Text style={s.heroSub}>Choisissez une catégorie, un format, puis exportez</Text>
@@ -440,15 +470,19 @@ export default function ExportDonneesScreen() {
           {CATEGORIES.map(cat => (
             <TouchableOpacity
               key={cat.value}
-              style={[s.catChip, categorie === cat.value && s.catChipActive]}
+              style={[
+                s.catChip,
+                { borderColor: colors.border, backgroundColor: colors.inputBg },
+                categorie === cat.value && { backgroundColor: colors.primary, borderColor: colors.primary },
+              ]}
               onPress={() => setCategorie(cat.value)}
             >
               <MaterialCommunityIcons
                 name={cat.icon as any}
                 size={16}
-                color={categorie === cat.value ? '#fff' : '#081648'}
+                color={categorie === cat.value ? '#fff' : colors.primary}
               />
-              <Text style={[s.catChipText, categorie === cat.value && s.catChipTextActive]}>{cat.label}</Text>
+              <Text style={[s.catChipText, { color: colors.text }, categorie === cat.value && { color: '#fff', fontWeight: '600' }]}>{cat.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -460,23 +494,23 @@ export default function ExportDonneesScreen() {
           <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>Plage de dates (optionnelle)</Text>
           <View style={s.periodeRow}>
             <TextInput
-              style={s.periodeInput}
+              style={[s.periodeInput, { borderColor: colors.border, backgroundColor: colors.inputBg, color: colors.text }]}
               value={dateDebut}
               onChangeText={setDateDebut}
               placeholder="Début AAAA-MM-JJ"
-              placeholderTextColor="#bbb"
+              placeholderTextColor={colors.placeholder}
             />
-            <Text style={{ color: '#999' }}>→</Text>
+            <Text style={{ color: colors.textSecondary }}>→</Text>
             <TextInput
-              style={s.periodeInput}
+              style={[s.periodeInput, { borderColor: colors.border, backgroundColor: colors.inputBg, color: colors.text }]}
               value={dateFin}
               onChangeText={setDateFin}
               placeholder="Fin AAAA-MM-JJ"
-              placeholderTextColor="#bbb"
+              placeholderTextColor={colors.placeholder}
             />
             {(dateDebut || dateFin) ? (
               <TouchableOpacity onPress={() => { setDateDebut(''); setDateFin(''); }}>
-                <MaterialCommunityIcons name="close-circle" size={18} color="#bbb" />
+                <MaterialCommunityIcons name="close-circle" size={18} color={colors.placeholder} />
               </TouchableOpacity>
             ) : null}
           </View>
@@ -488,18 +522,26 @@ export default function ExportDonneesScreen() {
         <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>Format</Text>
         <View style={s.chips}>
           <TouchableOpacity
-            style={[s.formatChip, format === 'PDF' && s.formatChipActive]}
+            style={[
+              s.formatChip,
+              { borderColor: colors.border, backgroundColor: colors.inputBg },
+              format === 'PDF' && { backgroundColor: colors.primary, borderColor: colors.primary },
+            ]}
             onPress={() => setFormat('PDF')}
           >
-            <MaterialCommunityIcons name="file-pdf-box" size={20} color={format === 'PDF' ? '#fff' : '#dc2626'} />
-            <Text style={[s.formatChipText, format === 'PDF' && s.formatChipTextActive]}>PDF</Text>
+            <MaterialCommunityIcons name="file-pdf-box" size={20} color={format === 'PDF' ? '#fff' : colors.danger} />
+            <Text style={[s.formatChipText, { color: colors.text }, format === 'PDF' && { color: '#fff' }]}>PDF</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[s.formatChip, format === 'EXCEL' && s.formatChipActive]}
+            style={[
+              s.formatChip,
+              { borderColor: colors.border, backgroundColor: colors.inputBg },
+              format === 'EXCEL' && { backgroundColor: colors.primary, borderColor: colors.primary },
+            ]}
             onPress={() => setFormat('EXCEL')}
           >
-            <MaterialCommunityIcons name="file-excel-box" size={20} color={format === 'EXCEL' ? '#fff' : '#16a34a'} />
-            <Text style={[s.formatChipText, format === 'EXCEL' && s.formatChipTextActive]}>Excel</Text>
+            <MaterialCommunityIcons name="file-excel-box" size={20} color={format === 'EXCEL' ? '#fff' : colors.success} />
+            <Text style={[s.formatChipText, { color: colors.text }, format === 'EXCEL' && { color: '#fff' }]}>Excel</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -507,7 +549,7 @@ export default function ExportDonneesScreen() {
       {/* ── Bouton exporter ──────────────────────────────────────────────────── */}
       <View style={s.section}>
         <TouchableOpacity
-          style={[s.btnExporter, exporting && { opacity: 0.6 }]}
+          style={[s.btnExporter, { backgroundColor: colors.primary }, exporting && { opacity: 0.6 }]}
           onPress={lancerExport}
           disabled={exporting}
         >

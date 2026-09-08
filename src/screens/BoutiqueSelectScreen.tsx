@@ -37,7 +37,7 @@ export default function BoutiqueSelectScreen({ onSelect }: Props) {
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
           <TouchableOpacity
-            style={[styles.card, { backgroundColor: colors.card, shadowColor: colors.text }]}
+            style={[styles.card, { backgroundColor: colors.card }]}
             onPress={() => choisir(item)}
             activeOpacity={0.85}
           >

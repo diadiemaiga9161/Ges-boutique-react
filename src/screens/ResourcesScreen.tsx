@@ -3,9 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Image, Linking,
 } from 'react-native';
-
-const DARK = '#081648';
-const BLUE = '#1a56db';
+import { useColors } from '../theme/colors';
 
 const FEATURES = [
   { icon: '🛒', title: 'Ventes & Caisse',         desc: 'Encaissement rapide, Orange Money, Wave et autres modes de paiement.' },
@@ -36,6 +34,8 @@ const ABOUT_ROWS = [
 ];
 
 export default function ResourcesScreen() {
+  const colors = useColors();
+  const styles = createStyles(colors);
   return (
     <ScrollView
       style={styles.root}
@@ -128,13 +128,13 @@ export default function ResourcesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: '#f0f4f8' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  root:   { flex: 1, backgroundColor: colors.background },
   scroll: { paddingBottom: 40 },
 
   /* ── Hero ── */
   hero: {
-    backgroundColor: DARK,
+    backgroundColor: colors.hero,
     alignItems: 'center',
     paddingTop: 56,
     paddingBottom: 44,
@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
   heroSub:   { color: 'rgba(255,255,255,0.70)', fontSize: 14, marginBottom: 14, textAlign: 'center' },
 
   badge: {
-    backgroundColor: BLUE, borderRadius: 20,
+    backgroundColor: colors.primary, borderRadius: 20,
     paddingHorizontal: 16, paddingVertical: 4,
     marginBottom: 14,
   },
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
   /* ── Sections ── */
   section:      { paddingHorizontal: 16, marginTop: 24 },
   sectionTitle: {
-    fontSize: 16, fontWeight: '800', color: DARK,
+    fontSize: 16, fontWeight: '800', color: colors.text,
     marginBottom: 14, letterSpacing: 0.3,
   },
 
@@ -182,26 +182,26 @@ const styles = StyleSheet.create({
   },
   featureCard: {
     width: '48%',
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
-    shadowColor: DARK,
+    shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 12,
     elevation: 4,
   },
   featureIcon:  { fontSize: 28, marginBottom: 8 },
-  featureTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', marginBottom: 6, lineHeight: 18 },
-  featureDesc:  { fontSize: 11, color: '#64748b', lineHeight: 16 },
+  featureTitle: { fontSize: 13, fontWeight: '800', color: colors.text, marginBottom: 6, lineHeight: 18 },
+  featureDesc:  { fontSize: 11, color: colors.textSecondary, lineHeight: 16 },
 
   /* ── Card générique ── */
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: DARK,
+    shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 12,
@@ -214,12 +214,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 18, paddingVertical: 16,
   },
-  contactRowBorder: { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  contactRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
   contactLeft:   { flexDirection: 'row', alignItems: 'center', gap: 14 },
   contactIcon:   { fontSize: 24, marginRight: 14 },
-  contactLabel:  { fontSize: 11, color: '#94a3b8', fontWeight: '600', marginBottom: 2, letterSpacing: 0.2 },
-  contactValue:  { fontSize: 14, color: BLUE, fontWeight: '700' },
-  contactChevron: { fontSize: 22, color: '#cbd5e1', fontWeight: '300' },
+  contactLabel:  { fontSize: 11, color: colors.textSecondary, fontWeight: '600', marginBottom: 2, letterSpacing: 0.2 },
+  contactValue:  { fontSize: 14, color: colors.primary, fontWeight: '700' },
+  contactChevron: { fontSize: 22, color: colors.placeholder, fontWeight: '300' },
 
   /* ── À propos ── */
   aboutRow: {
@@ -227,15 +227,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 18, paddingVertical: 15,
   },
-  aboutRowBorder: { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  aboutLabel:     { fontSize: 13, color: '#64748b', fontWeight: '500' },
-  aboutValue:     { fontSize: 13, color: '#0f172a', fontWeight: '700', maxWidth: '58%', textAlign: 'right' },
+  aboutRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
+  aboutLabel:     { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
+  aboutValue:     { fontSize: 13, color: colors.text, fontWeight: '700', maxWidth: '58%', textAlign: 'right' },
 
   /* ── Footer ── */
   footer: {
     textAlign: 'center',
     fontSize: 12,
-    color: '#94a3b8',
+    color: colors.textSecondary,
     marginTop: 32,
     marginBottom: 8,
     letterSpacing: 0.3,

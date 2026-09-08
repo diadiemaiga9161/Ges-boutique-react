@@ -7,10 +7,12 @@ import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api.service';
+import { transfererCaisseVersBanque } from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Compte {
@@ -42,6 +44,16 @@ interface OperationCompte {
 // frais, paiement/avance fournisseur) le diminue.
 const TYPES_CREDIT: TypeOperationCompte[] = ['VERSEMENT'];
 
+// Mêmes 5 types que le <ion-select> "Type" de resources.page.html (case 'comptes') —
+// Versement, Retrait, Chèque, Frais, Bon caisse.
+const TYPES_OPERATION: { value: TypeOperationCompte; label: string }[] = [
+  { value: 'VERSEMENT', label: 'Versement' },
+  { value: 'RETRAIT', label: 'Retrait' },
+  { value: 'CHEQUE', label: 'Chèque' },
+  { value: 'FRAIS', label: 'Frais' },
+  { value: 'BON_CAISSE', label: 'Bon caisse' },
+];
+
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
 const dateStr = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
@@ -54,6 +66,7 @@ const masquerNumero = (num?: string) => {
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function ComptesScreen() {
   const { lang } = useLang();
+  const colors = useColors();
 
   const [comptes, setComptes] = useState<Compte[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +78,7 @@ export default function ComptesScreen() {
   const [showOpsListe, setShowOpsListe] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [selectedCompte, setSelectedCompte] = useState<Compte | null>(null);
-  const [operationType, setOperationType] = useState<'depot' | 'retrait'>('depot');
+  const [opType, setOpType] = useState<TypeOperationCompte>('VERSEMENT');
   const [operations, setOperations] = useState<OperationCompte[]>([]);
   const [loadingOps, setLoadingOps] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -75,6 +88,16 @@ export default function ComptesScreen() {
   const [opDescription, setOpDescription] = useState('');
   const [savingOp, setSavingOp] = useState(false);
   const [userId, setUserId] = useState<number>(0);
+
+  // Transfert caisse -> banque (compte.service.ts / transfererCaisseVersBanque,
+  // même endpoint POST /caisse/transferer-vers-banque que Ionic) — débite la
+  // caisse, crédite le compte bancaire choisi. Action globale, pas liée à une
+  // carte compte en particulier (on choisit le compte destination dans le modal).
+  const [showTransfert, setShowTransfert] = useState(false);
+  const [transfertCompteId, setTransfertCompteId] = useState<number>(0);
+  const [transfertMontant, setTransfertMontant] = useState(0);
+  const [transfertMotif, setTransfertMotif] = useState('');
+  const [savingTransfert, setSavingTransfert] = useState(false);
 
   // Formulaire compte
   const [formNomBanque, setFormNomBanque] = useState('');
@@ -118,9 +141,9 @@ export default function ComptesScreen() {
   }, []);
 
   // ─── Actions ─────────────────────────────────────────────────────────────
-  const openOperation = (compte: Compte, type: 'depot' | 'retrait') => {
+  const openOperation = (compte: Compte, type: TypeOperationCompte) => {
     setSelectedCompte(compte);
-    setOperationType(type);
+    setOpType(type);
     setOpMontant(0);
     setOpDescription('');
     setShowOperation(true);
@@ -168,30 +191,64 @@ export default function ComptesScreen() {
       Alert.alert(tr('erreur', lang), 'Montant invalide');
       return;
     }
-    if (operationType === 'retrait' && montant > selectedCompte.soldeActuel) {
+    const estCredit = TYPES_CREDIT.includes(opType);
+    if (!estCredit && montant > selectedCompte.soldeActuel) {
       Alert.alert(tr('erreur', lang), `Solde insuffisant : ${money(selectedCompte.soldeActuel)}`);
       return;
     }
     setSavingOp(true);
     const opData = {
       compteId: selectedCompte.id,
-      type: (operationType === 'depot' ? 'VERSEMENT' : 'RETRAIT') as TypeOperationCompte,
+      type: opType,
       montant,
       motif: opDescription.trim() || undefined,
       utilisateurId: userId || undefined,
     };
     try {
       await executerOuMettreEnFile(
-        operationType === 'depot' ? 'compte_versement' : 'compte_retrait',
+        estCredit ? 'compte_versement' : 'compte_retrait',
         opData,
         () => api.post('/comptes/operation', opData)
       );
       setShowOperation(false);
       charger();
     } catch {
-      Alert.alert(tr('erreur', lang), `${operationType === 'depot' ? 'Dépôt' : 'Retrait'} impossible`);
+      Alert.alert(tr('erreur', lang), 'Opération impossible');
     }
     setSavingOp(false);
+  };
+
+  const ouvrirTransfert = () => {
+    setTransfertCompteId(comptes[0]?.id || 0);
+    setTransfertMontant(0);
+    setTransfertMotif('');
+    setShowTransfert(true);
+  };
+
+  const effectuerTransfert = async () => {
+    if (!transfertCompteId) {
+      Alert.alert(tr('erreur', lang), 'Sélectionnez un compte destination');
+      return;
+    }
+    if (!transfertMontant || transfertMontant <= 0) {
+      Alert.alert(tr('erreur', lang), 'Montant invalide');
+      return;
+    }
+    setSavingTransfert(true);
+    try {
+      await transfererCaisseVersBanque({
+        compteId: transfertCompteId,
+        montant: transfertMontant,
+        motif: transfertMotif.trim() || undefined,
+        utilisateurId: userId || undefined,
+      });
+      setShowTransfert(false);
+      charger();
+      Alert.alert(tr('succes', lang), 'Transfert caisse → banque effectué');
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Transfert impossible (solde caisse insuffisant ?)');
+    }
+    setSavingTransfert(false);
   };
 
   const sauvegarderCompte = async () => {
@@ -225,10 +282,10 @@ export default function ComptesScreen() {
   };
 
   // ─── Rendu principal ──────────────────────────────────────────────────────
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1d4ed8" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { backgroundColor: colors.background }]}>
 
       {/* ── Hero stats ─────────────────────────────────────────────────────── */}
       <View style={s.hero}>
@@ -253,14 +310,24 @@ export default function ComptesScreen() {
       </View>
 
       {/* ── Barre d'outils ────────────────────────────────────────────────── */}
-      <View style={s.toolbar}>
-        <Text style={s.toolbarTitle}>
+      <View style={[s.toolbar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        <Text style={[s.toolbarTitle, { color: colors.textSecondary }]}>
           {comptes.length} compte{comptes.length !== 1 ? 's' : ''}
         </Text>
-        <TouchableOpacity style={s.addBtn} onPress={openFormNouveau}>
-          <MaterialCommunityIcons name="plus" size={18} color="#fff" />
-          <Text style={s.addBtnText}>Nouveau compte</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            style={[s.addBtn, { backgroundColor: colors.success }]}
+            onPress={ouvrirTransfert}
+            disabled={!comptes.length}
+          >
+            <MaterialCommunityIcons name="bank-transfer" size={18} color="#fff" />
+            <Text style={s.addBtnText}>Transfert caisse</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.addBtn, { backgroundColor: colors.primary }]} onPress={openFormNouveau}>
+            <MaterialCommunityIcons name="plus" size={18} color="#fff" />
+            <Text style={s.addBtnText}>Nouveau compte</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ── Liste des comptes ──────────────────────────────────────────────── */}
@@ -271,141 +338,160 @@ export default function ComptesScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); charger(); }}
+            colors={[colors.primary]}
           />
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
         ListEmptyComponent={
           <View style={s.emptyState}>
-            <MaterialCommunityIcons name="bank-off-outline" size={48} color="#ccc" />
-            <Text style={s.emptyStateText}>Aucun compte enregistré</Text>
+            <MaterialCommunityIcons name="bank-off-outline" size={48} color={colors.textSecondary} />
+            <Text style={[s.emptyStateText, { color: colors.textSecondary }]}>Aucun compte enregistré</Text>
           </View>
         }
         renderItem={({ item: c }) => (
-          <View style={s.card}>
+          <View style={[s.card, { backgroundColor: colors.card }]}>
             <View style={s.cardTop}>
-              <View style={[s.typeIcon, { backgroundColor: c.actif === false ? '#f3f4f6' : '#eff6ff' }]}>
-                <MaterialCommunityIcons name="bank-outline" size={22} color={c.actif === false ? '#9ca3af' : '#1d4ed8'} />
+              <View style={[s.typeIcon, { backgroundColor: c.actif === false ? colors.border : colors.infoBg }]}>
+                <MaterialCommunityIcons name="bank-outline" size={22} color={c.actif === false ? colors.textSecondary : colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={s.compteNom}>{c.nomBanque}</Text>
-                <Text style={s.compteNumero}>{masquerNumero(c.numeroCompte)}</Text>
-                {!!c.titulaire && <Text style={s.compteBanque}>{c.titulaire}{c.agence ? ` · ${c.agence}` : ''}</Text>}
+                <Text style={[s.compteNom, { color: colors.text }]}>{c.nomBanque}</Text>
+                <Text style={[s.compteNumero, { color: colors.textSecondary }]}>{masquerNumero(c.numeroCompte)}</Text>
+                {!!c.titulaire && <Text style={[s.compteBanque, { color: colors.textSecondary }]}>{c.titulaire}{c.agence ? ` · ${c.agence}` : ''}</Text>}
                 {c.actif === false && (
-                  <View style={[s.typeBadge, { backgroundColor: '#fef2f2' }]}>
-                    <Text style={[s.typeBadgeText, { color: '#dc2626' }]}>Inactif</Text>
+                  <View style={[s.typeBadge, { backgroundColor: colors.dangerBg }]}>
+                    <Text style={[s.typeBadgeText, { color: colors.danger }]}>Inactif</Text>
                   </View>
                 )}
               </View>
               <View style={{ alignItems: 'flex-end' }}>
-                <Text style={[s.soldeText, { color: c.soldeActuel >= 0 ? '#16a34a' : '#dc2626' }]}>
+                <Text style={[s.soldeText, { color: c.soldeActuel >= 0 ? colors.success : colors.danger }]}>
                   {money(c.soldeActuel)}
                 </Text>
-                <Text style={s.soldeLabel}>Solde</Text>
+                <Text style={[s.soldeLabel, { color: colors.textSecondary }]}>Solde</Text>
               </View>
             </View>
 
             {/* Actions */}
             <View style={s.cardActions}>
               <TouchableOpacity
-                style={[s.actionBtn, { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }]}
-                onPress={() => openOperation(c, 'depot')}
+                style={[s.actionBtn, { backgroundColor: colors.successBg, borderColor: colors.successBg }]}
+                onPress={() => openOperation(c, 'VERSEMENT')}
               >
-                <MaterialCommunityIcons name="arrow-down-circle-outline" size={14} color="#047857" />
-                <Text style={[s.actionBtnText, { color: '#047857' }]}>Déposer</Text>
+                <MaterialCommunityIcons name="arrow-down-circle-outline" size={14} color={colors.success} />
+                <Text style={[s.actionBtnText, { color: colors.success }]}>Déposer</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.actionBtn, { backgroundColor: '#fef2f2', borderColor: '#fca5a5' }]}
-                onPress={() => openOperation(c, 'retrait')}
+                style={[s.actionBtn, { backgroundColor: colors.dangerBg, borderColor: colors.dangerBg }]}
+                onPress={() => openOperation(c, 'RETRAIT')}
               >
-                <MaterialCommunityIcons name="arrow-up-circle-outline" size={14} color="#dc2626" />
-                <Text style={[s.actionBtnText, { color: '#dc2626' }]}>Retirer</Text>
+                <MaterialCommunityIcons name="arrow-up-circle-outline" size={14} color={colors.danger} />
+                <Text style={[s.actionBtnText, { color: colors.danger }]}>Retirer</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.actionBtn, { borderColor: '#bfdbfe' }]}
+                style={[s.actionBtn, { borderColor: colors.border }]}
                 onPress={() => openOpsListe(c)}
               >
-                <MaterialCommunityIcons name="history" size={14} color="#1d4ed8" />
-                <Text style={[s.actionBtnText, { color: '#1d4ed8' }]}>Ops.</Text>
+                <MaterialCommunityIcons name="history" size={14} color={colors.primary} />
+                <Text style={[s.actionBtnText, { color: colors.primary }]}>Ops.</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.actionIconBtn} onPress={() => openFormModifier(c)}>
-                <MaterialCommunityIcons name="pencil-outline" size={16} color="#666" />
+              <TouchableOpacity style={[s.actionIconBtn, { borderColor: colors.border }]} onPress={() => openFormModifier(c)}>
+                <MaterialCommunityIcons name="pencil-outline" size={16} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
         )}
       />
 
-      {/* ── Modal Opération (Dépôt / Retrait) ──────────────────────────────── */}
+      {/* ── Modal Opération (5 types, comme <ion-select> "Type" côté Ionic) ──── */}
       <Modal
         visible={showOperation}
         animationType="slide"
         transparent
         onRequestClose={() => setShowOperation(false)}
       >
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.handle} />
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
             <View style={[
               s.modalHead,
-              { backgroundColor: operationType === 'depot' ? '#ecfdf5' : '#fef2f2' },
+              { backgroundColor: TYPES_CREDIT.includes(opType) ? colors.successBg : colors.dangerBg, borderBottomColor: colors.border },
             ]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                 <MaterialCommunityIcons
-                  name={operationType === 'depot' ? 'arrow-down-circle' : 'arrow-up-circle'}
+                  name={TYPES_CREDIT.includes(opType) ? 'arrow-down-circle' : 'arrow-up-circle'}
                   size={22}
-                  color={operationType === 'depot' ? '#047857' : '#dc2626'}
+                  color={TYPES_CREDIT.includes(opType) ? colors.success : colors.danger}
                 />
                 <Text style={[
                   s.modalTitle,
-                  { color: operationType === 'depot' ? '#047857' : '#dc2626' },
+                  { color: TYPES_CREDIT.includes(opType) ? colors.success : colors.danger },
                 ]}>
-                  {operationType === 'depot' ? 'Effectuer un dépôt' : 'Effectuer un retrait'}
+                  Opération compte
                 </Text>
               </View>
               <TouchableOpacity onPress={() => setShowOperation(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#666" />
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
               {selectedCompte && (
-                <View style={s.infoCard}>
-                  <Text style={s.infoCardTitle}>{selectedCompte.nomBanque}</Text>
-                  <View style={s.infoRow}>
-                    <Text style={s.infoLabel}>{tr('solde_actuel', lang)}</Text>
+                <View style={[s.infoCard, { backgroundColor: colors.inputBg }]}>
+                  <Text style={[s.infoCardTitle, { color: colors.primary }]}>{selectedCompte.nomBanque}</Text>
+                  <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                    <Text style={[s.infoLabel, { color: colors.textSecondary }]}>{tr('solde_actuel', lang)}</Text>
                     <Text style={[
                       s.infoVal,
-                      { color: selectedCompte.soldeActuel >= 0 ? '#16a34a' : '#dc2626', fontWeight: '700' },
+                      { color: selectedCompte.soldeActuel >= 0 ? colors.success : colors.danger, fontWeight: '700' },
                     ]}>
                       {money(selectedCompte.soldeActuel)}
                     </Text>
                   </View>
                 </View>
               )}
-              <Text style={s.fieldLabel}>{tr('montant', lang)} *</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Type</Text>
+              <View style={s.chips}>
+                {TYPES_OPERATION.map(t => (
+                  <TouchableOpacity
+                    key={t.value}
+                    style={[
+                      s.chipType,
+                      { borderColor: colors.border },
+                      opType === t.value && { backgroundColor: colors.primary, borderColor: colors.primary },
+                    ]}
+                    onPress={() => setOpType(t.value)}
+                  >
+                    <Text style={[s.chipTypeText, { color: opType === t.value ? '#fff' : colors.textSecondary }]}>
+                      {t.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('montant', lang)} *</Text>
               <MontantInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={opMontant}
                 onChangeValue={setOpMontant}
                 placeholder="0"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('description', lang)}</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={opDescription}
                 onChangeText={setOpDescription}
-                placeholder="Description de l'opération"
-                placeholderTextColor="#bbb"
+                placeholder="Motif de l'opération"
+                placeholderTextColor={colors.placeholder}
               />
             </ScrollView>
-            <View style={s.modalFoot}>
-              <TouchableOpacity style={s.btnCancel} onPress={() => setShowOperation(false)}>
-                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnCancel, { borderColor: colors.border }]} onPress={() => setShowOperation(false)}>
+                <Text style={[s.btnCancelText, { color: colors.textSecondary }]}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   s.btnConfirm,
-                  { backgroundColor: operationType === 'depot' ? '#047857' : '#dc2626' },
+                  { backgroundColor: TYPES_CREDIT.includes(opType) ? colors.success : colors.danger },
                   savingOp && { opacity: 0.5 },
                 ]}
                 onPress={effectuerOperation}
@@ -416,13 +502,92 @@ export default function ComptesScreen() {
                   : (
                     <>
                       <MaterialCommunityIcons
-                        name={operationType === 'depot' ? 'arrow-down' : 'arrow-up'}
+                        name={TYPES_CREDIT.includes(opType) ? 'arrow-down' : 'arrow-up'}
                         size={15}
                         color="#fff"
                       />
                       <Text style={s.btnConfirmText}>
-                        {operationType === 'depot' ? 'Déposer' : 'Retirer'}
+                        Enregistrer
                       </Text>
+                    </>
+                  )
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Modal Transfert caisse → banque ──────────────────────────────────── */}
+      <Modal
+        visible={showTransfert}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowTransfert(false)}
+      >
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
+            <View style={[s.modalHead, { backgroundColor: colors.successBg, borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <MaterialCommunityIcons name="bank-transfer" size={22} color={colors.success} />
+                <Text style={[s.modalTitle, { color: colors.success }]}>Transfert caisse → banque</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowTransfert(false)}>
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Compte destination *</Text>
+              <View style={s.chips}>
+                {comptes.map(c => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[
+                      s.chipType,
+                      { borderColor: colors.border },
+                      transfertCompteId === c.id && { backgroundColor: colors.primary, borderColor: colors.primary },
+                    ]}
+                    onPress={() => setTransfertCompteId(c.id)}
+                  >
+                    <Text style={[s.chipTypeText, { color: transfertCompteId === c.id ? '#fff' : colors.textSecondary }]}>
+                      {c.nomBanque}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('montant', lang)} *</Text>
+              <MontantInput
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
+                value={transfertMontant}
+                onChangeValue={setTransfertMontant}
+                placeholder="0"
+                placeholderTextColor={colors.placeholder}
+              />
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Motif</Text>
+              <TextInput
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
+                value={transfertMotif}
+                onChangeText={setTransfertMotif}
+                placeholder="Motif du transfert"
+                placeholderTextColor={colors.placeholder}
+              />
+            </ScrollView>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnCancel, { borderColor: colors.border }]} onPress={() => setShowTransfert(false)}>
+                <Text style={[s.btnCancelText, { color: colors.textSecondary }]}>{tr('annuler', lang)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.btnConfirm, { backgroundColor: colors.success }, savingTransfert && { opacity: 0.5 }]}
+                onPress={effectuerTransfert}
+                disabled={savingTransfert}
+              >
+                {savingTransfert
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : (
+                    <>
+                      <MaterialCommunityIcons name="bank-transfer" size={15} color="#fff" />
+                      <Text style={s.btnConfirmText}>Transférer</Text>
                     </>
                   )
                 }
@@ -439,39 +604,39 @@ export default function ComptesScreen() {
         transparent
         onRequestClose={() => setShowOpsListe(false)}
       >
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.handle} />
-            <View style={s.modalHead}>
-              <Text style={s.modalTitle} numberOfLines={1}>
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
+            <View style={[s.modalHead, { borderBottomColor: colors.border }]}>
+              <Text style={[s.modalTitle, { color: colors.text }]} numberOfLines={1}>
                 Opérations — {selectedCompte?.nomBanque}
               </Text>
               <TouchableOpacity onPress={() => setShowOpsListe(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#666" />
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody}>
               {loadingOps ? (
-                <ActivityIndicator size="small" style={{ margin: 16 }} />
+                <ActivityIndicator size="small" style={{ margin: 16 }} color={colors.primary} />
               ) : operations.length === 0 ? (
-                <Text style={s.emptyText}>Aucune opération enregistrée</Text>
+                <Text style={[s.emptyText, { color: colors.textSecondary }]}>Aucune opération enregistrée</Text>
               ) : (
                 <>
                   {operations.slice(0, 10).map((op, i) => {
                     const isCredit = TYPES_CREDIT.includes(op.type);
                     return (
-                      <View key={op.id ?? i} style={s.opRow}>
+                      <View key={op.id ?? i} style={[s.opRow, { borderBottomColor: colors.border }]}>
                         <View style={[
                           s.opDot,
-                          { backgroundColor: isCredit ? '#16a34a' : '#dc2626' },
+                          { backgroundColor: isCredit ? colors.success : colors.danger },
                         ]} />
                         <View style={{ flex: 1 }}>
-                          <Text style={s.opDesc}>{op.motif || op.type}</Text>
-                          <Text style={s.opDate}>{dateStr(op.dateOperation)}</Text>
+                          <Text style={[s.opDesc, { color: colors.text }]}>{op.motif || op.type}</Text>
+                          <Text style={[s.opDate, { color: colors.textSecondary }]}>{dateStr(op.dateOperation)}</Text>
                         </View>
                         <Text style={[
                           s.opMontant,
-                          { color: isCredit ? '#16a34a' : '#dc2626' },
+                          { color: isCredit ? colors.success : colors.danger },
                         ]}>
                           {isCredit ? '+' : '-'}{money(op.montant)}
                         </Text>
@@ -479,15 +644,15 @@ export default function ComptesScreen() {
                     );
                   })}
                   {operations.length > 10 && (
-                    <Text style={s.emptyText}>
+                    <Text style={[s.emptyText, { color: colors.textSecondary }]}>
                       10 dernières opérations affichées sur {operations.length}
                     </Text>
                   )}
                 </>
               )}
             </ScrollView>
-            <View style={s.modalFoot}>
-              <TouchableOpacity style={[s.btnConfirm, { flex: 1 }]} onPress={() => setShowOpsListe(false)}>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnConfirm, { flex: 1, backgroundColor: colors.primary }]} onPress={() => setShowOpsListe(false)}>
                 <Text style={s.btnConfirmText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
             </View>
@@ -502,77 +667,77 @@ export default function ComptesScreen() {
         transparent
         onRequestClose={() => setShowForm(false)}
       >
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.handle} />
-            <View style={s.modalHead}>
-              <Text style={s.modalTitle}>
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
+            <View style={[s.modalHead, { borderBottomColor: colors.border }]}>
+              <Text style={[s.modalTitle, { color: colors.text }]}>
                 {isEditing ? 'Modifier le compte' : 'Nouveau compte'}
               </Text>
               <TouchableOpacity onPress={() => setShowForm(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#666" />
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
-              <Text style={s.fieldLabel}>Nom de la banque *</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Nom de la banque *</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formNomBanque}
                 onChangeText={setFormNomBanque}
                 placeholder="Ex : BDM SA, Ecobank..."
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>Numéro de compte</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Numéro de compte</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formNumeroCompte}
                 onChangeText={setFormNumeroCompte}
                 placeholder="Ex : 00123456789"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>Agence</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Agence</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formAgence}
                 onChangeText={setFormAgence}
                 placeholder="Ex : Agence centrale"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>Titulaire</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Titulaire</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formTitulaire}
                 onChangeText={setFormTitulaire}
                 placeholder="Nom du titulaire"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
               {!isEditing && (
                 <>
-                  <Text style={s.fieldLabel}>{tr('solde_initial', lang)}</Text>
+                  <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('solde_initial', lang)}</Text>
                   <MontantInput
-                    style={s.fieldInput}
+                    style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                     value={formSoldeInitial}
                     onChangeValue={setFormSoldeInitial}
                     placeholder="0"
-                    placeholderTextColor="#bbb"
+                    placeholderTextColor={colors.placeholder}
                   />
                 </>
               )}
-              <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('description', lang)}</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formDescription}
                 onChangeText={setFormDescription}
                 placeholder="Description (optionnel)"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
             </ScrollView>
-            <View style={s.modalFoot}>
-              <TouchableOpacity style={s.btnCancel} onPress={() => setShowForm(false)}>
-                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnCancel, { borderColor: colors.border }]} onPress={() => setShowForm(false)}>
+                <Text style={[s.btnCancelText, { color: colors.textSecondary }]}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.btnConfirm, savingForm && { opacity: 0.5 }]}
+                style={[s.btnConfirm, { backgroundColor: colors.primary }, savingForm && { opacity: 0.5 }]}
                 onPress={sauvegarderCompte}
                 disabled={savingForm}
               >

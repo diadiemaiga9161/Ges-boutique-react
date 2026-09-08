@@ -47,6 +47,11 @@ export interface Produit {
   stockFaible?: boolean;
   perime?: boolean;
   prochePeremption?: boolean;
+  // Libellé de l'unité de base du produit (défaut "Unité" côté backend), ex:
+  // "Pièce", "Kg" — utilisé par le système simple gros/détail
+  // (CleFonctionnalite.VENTE_GROS_DETAIL, unite-vente.service.ts), sans
+  // rapport avec l'ancien ProduitNiveau (produit-niveau.service.ts).
+  uniteBase?: string;
 }
 
 export interface Categorie {
@@ -131,7 +136,11 @@ export interface RecommandationIA {
 export interface AlerteIA {
   type: string;
   message: string;
-  severity: string; // CRITIQUE, HAUTE, BASSE
+  // BUG FIX (parité backend) : le DTO Java (AlerteIA.java) sérialise le champ
+  // "severite" (FR), pas "severity" — le check `=== 'CRITIQUE'` dans
+  // IAScreen.tsx ne matchait donc jamais et toutes les alertes s'affichaient
+  // comme des simples avertissements.
+  severite: string; // CRITIQUE, ATTENTION, INFO
 }
 
 export interface AnalyseIAResult {

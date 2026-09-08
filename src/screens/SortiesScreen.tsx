@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getSorties } from '../services/api.service';
 import { sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
+import { useColors } from '../theme/colors';
 
 type Periode = 'today' | 'week' | 'month' | 'year' | 'all';
 type TypeSortie = 'DETAIL' | 'CONSOMMATION' | 'UTILISATION' | 'PERTE' | 'AUTRE';
@@ -65,6 +66,8 @@ function formatDate(d: string) {
 
 export default function SortiesScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const styles = createStyles(colors);
   const [sorties, setSorties] = useState<SortieStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -155,7 +158,7 @@ export default function SortiesScreen() {
                 key={t.value}
                 style={[styles.typeChip, isActive && { backgroundColor: t.color + '22', borderColor: t.color }]}
                 onPress={() => setSelectedType(t.value)}>
-                <MaterialCommunityIcons name={t.icon as any} size={13} color={isActive ? t.color : '#64748b'} />
+                <MaterialCommunityIcons name={t.icon as any} size={13} color={isActive ? t.color : colors.textSecondary} />
                 <Text style={[styles.typeChipText, isActive && { color: t.color, fontWeight: '700' }]}>
                   {t.label} ({count})
                 </Text>
@@ -167,16 +170,16 @@ export default function SortiesScreen() {
 
       {/* ── Liste ── */}
       {loading ? (
-        <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#1a56db" />
+        <ActivityIndicator style={{ marginTop: 40 }} size="large" color={colors.primary} />
       ) : (
         <FlatList
           data={sortiesFiltrees}
           keyExtractor={item => String(item.id)}
           contentContainerStyle={{ padding: 12, paddingBottom: 30 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1a56db']} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary} />}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <MaterialCommunityIcons name="arrow-up-circle-outline" size={64} color="#cbd5e1" />
+              <MaterialCommunityIcons name="arrow-up-circle-outline" size={64} color={colors.border} />
               <Text style={styles.emptyTitle}>Aucune sortie</Text>
               <Text style={styles.emptySub}>Aucune sortie pour cette période</Text>
             </View>
@@ -214,36 +217,36 @@ export default function SortiesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
 
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  hero: { backgroundColor: colors.hero, flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
   heroStat: { flex: 1, alignItems: 'center' },
   heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
 
-  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
-  offlineTxt: { color: '#92400e', fontSize: 12 },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: colors.warningBg, paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: colors.warning, fontSize: 12 },
 
   chipsRow: { flexDirection: 'row', gap: 6 },
 
-  chip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, backgroundColor: '#e5e7eb', borderWidth: 1, borderColor: '#e5e7eb' },
-  chipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  chipText: { fontSize: 12, fontWeight: '500', color: '#374151' },
+  chip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
   chipTextActive: { color: '#fff' },
 
-  typeChip: { flexDirection: 'row', gap: 4, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
-  typeChipText: { fontSize: 11, fontWeight: '500', color: '#64748b' },
+  typeChip: { flexDirection: 'row', gap: 4, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border },
+  typeChipText: { fontSize: 11, fontWeight: '500', color: colors.textSecondary },
 
-  card: { marginBottom: 8, borderRadius: 16, elevation: 1 },
+  card: { marginBottom: 8, borderRadius: 16, elevation: 1, backgroundColor: colors.card },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
-  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  cardName: { fontWeight: '600', fontSize: 14, color: colors.text },
+  cardSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
   badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   badgeTxt: { fontSize: 11, fontWeight: '600' },
 
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
-  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: colors.textSecondary, marginTop: 12 },
+  emptySub: { fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 4 },
 });

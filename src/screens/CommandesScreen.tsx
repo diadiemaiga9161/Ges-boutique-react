@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput, FlatList, Share, RefreshControl } from 'react-native';
+import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, TextInput, FlatList, Share, RefreshControl, Linking } from 'react-native';
 import { Text, Button, ActivityIndicator, Modal, Portal, Divider, Checkbox, Card, FAB, Searchbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,6 +14,7 @@ import {
 import { partagerFactureRN, DesignFacture } from '../services/invoice.service';
 import { sauvegarderCache, lireCache, creerCommandeOffline, executerOuMettreEnFile } from '../services/offline.service';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 type StatutCommande = 'BROUILLON' | 'VALIDEE' | 'ANNULEE';
 
@@ -46,6 +47,11 @@ interface Commande {
   dateValidation?: string;
   venteId?: number;
   notes?: string;
+  origine?: 'MAGASIN' | 'VITRINE';
+  adresseLivraison?: string;
+  fraisLivraison?: number;
+  chauffeurNom?: string;
+  chauffeurTelephone?: string;
 }
 
 interface LigneForm {
@@ -63,6 +69,21 @@ const MODES_LABELS: Record<string, string> = {
   WAVE_MONEY: 'Wave', CARTE_BANCAIRE: 'Carte Bancaire', VIREMENT: 'Virement', CHEQUE: 'Chèque'
 };
 
+// Indicatifs pays pour le téléphone du chauffeur (livraison commandes vitrine).
+const INDICATIFS = [
+  { code: '+223', label: 'Mali' },
+  { code: '+225', label: "Côte d'Ivoire" },
+  { code: '+226', label: 'Burkina Faso' },
+  { code: '+221', label: 'Sénégal' },
+  { code: '+227', label: 'Niger' },
+  { code: '+228', label: 'Togo' },
+  { code: '+229', label: 'Bénin' },
+  { code: '+224', label: 'Guinée' },
+  { code: '+233', label: 'Ghana' },
+  { code: '+234', label: 'Nigeria' },
+  { code: '+33', label: 'France' },
+];
+
 function formatMontant(v: number) {
   return new Intl.NumberFormat('fr-FR').format(v || 0) + ' FCFA';
 }
@@ -74,6 +95,33 @@ function formatDate(d: string) {
 
 function getClientNom(c: Commande): string {
   return [c.clientNom, c.clientPrenom].filter(Boolean).join(' ') || c.client?.nom || 'N/A';
+}
+
+function ouvrirWhatsApp(numero: string, message: string) {
+  const clean = numero.replace(/[\s()\-+]/g, '');
+  Linking.openURL(`https://wa.me/${clean}?text=${encodeURIComponent(message)}`);
+}
+
+function buildMessageClientLivraison(c: Commande, fraisLivraison?: number): string {
+  const total = (c.montantTotal || 0) + (fraisLivraison || 0);
+  return [
+    `Bonjour, votre commande ${c.numeroCommande} a été validée.`,
+    `Total produits : ${formatMontant(c.montantTotal)}`,
+    fraisLivraison ? `Frais de livraison : ${formatMontant(fraisLivraison)}` : null,
+    `TOTAL à préparer : ${formatMontant(total)}`,
+    `(payable à la livraison)`,
+  ].filter(Boolean).join('\n');
+}
+
+function buildMessageChauffeurLivraison(c: Commande, fraisLivraison?: number): string {
+  const total = (c.montantTotal || 0) + (fraisLivraison || 0);
+  return [
+    `Nouvelle livraison — commande ${c.numeroCommande}`,
+    `Client : ${getClientNom(c)}`,
+    c.clientTelephone ? `Téléphone client : ${c.clientTelephone}` : null,
+    `Adresse : ${c.adresseLivraison || 'Non renseignée'}`,
+    `Montant à collecter : ${formatMontant(total)}`,
+  ].filter(Boolean).join('\n');
 }
 
 function buildBonCommande(c: Commande): string {
@@ -89,6 +137,8 @@ function buildBonCommande(c: Commande): string {
 
 export default function CommandesScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const styles = createStyles(colors);
   const [commandes, setCommandes] = useState<Commande[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -125,6 +175,14 @@ export default function CommandesScreen() {
     dateEcheance: '',
     notes: ''
   });
+
+  // Validation livraison (commandes VITRINE)
+  const [showLivraisonModal, setShowLivraisonModal] = useState(false);
+  const [commandeLivraison, setCommandeLivraison] = useState<Commande | null>(null);
+  const [livraisonFrais, setLivraisonFrais] = useState(0);
+  const [livraisonChauffeurNom, setLivraisonChauffeurNom] = useState('');
+  const [livraisonIndicatif, setLivraisonIndicatif] = useState(INDICATIFS[0].code);
+  const [livraisonTelephoneLocal, setLivraisonTelephoneLocal] = useState('');
 
   // Règlement individuel
   const [showReglModal, setShowReglModal] = useState(false);
@@ -312,6 +370,15 @@ export default function CommandesScreen() {
   // ─── Actions commande ───────────────────────────────────────────────────────
 
   const handleValider = (c: Commande) => {
+    if (c.origine === 'VITRINE') {
+      setCommandeLivraison(c);
+      setLivraisonFrais(0);
+      setLivraisonChauffeurNom('');
+      setLivraisonIndicatif(INDICATIFS[0].code);
+      setLivraisonTelephoneLocal('');
+      setShowLivraisonModal(true);
+      return;
+    }
     Alert.alert(tr('valider', lang) + ' ?', `${c.numeroCommande} → vente créée, stock décrémenté.`, [
       { text: tr('annuler', lang), style: 'cancel' },
       { text: tr('valider', lang), onPress: async () => {
@@ -331,6 +398,50 @@ export default function CommandesScreen() {
         catch (e: any) { Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang)); }
       }}
     ]);
+  };
+
+  // ─── Validation livraison (commandes VITRINE) ──────────────────────────────
+
+  const confirmerValidationLivraison = async () => {
+    const c = commandeLivraison;
+    if (!c) return;
+    const fraisLivraison = livraisonFrais > 0 ? livraisonFrais : undefined;
+    const chauffeurNom = livraisonChauffeurNom.trim() || undefined;
+    const telLocal = livraisonTelephoneLocal.trim().replace(/^0+/, '');
+    const chauffeurTelephone = telLocal ? `${livraisonIndicatif}${telLocal}` : undefined;
+    const infosLivraison = { fraisLivraison, chauffeurNom, chauffeurTelephone };
+
+    setShowLivraisonModal(false);
+    try {
+      const res = await executerOuMettreEnFile(
+        'commande_valider',
+        { id: c.id, body: infosLivraison },
+        () => validerCommande(c.id, infosLivraison)
+      );
+      if (res.offline) {
+        setCommandes(prev => prev.map(x => x.id === c.id ? { ...x, statut: 'VALIDEE' as StatutCommande } : x));
+        Alert.alert('Hors ligne', `Sauvegardé hors ligne — ${c.numeroCommande} sera validée à la reconnexion.`);
+      } else {
+        charger();
+        const boutons: any[] = [{ text: 'Fermer', style: 'cancel' }];
+        if (c.clientTelephone) {
+          boutons.push({
+            text: 'WhatsApp client',
+            onPress: () => ouvrirWhatsApp(c.clientTelephone as string, buildMessageClientLivraison(c, fraisLivraison))
+          });
+        }
+        if (chauffeurTelephone) {
+          boutons.push({
+            text: 'WhatsApp chauffeur',
+            onPress: () => ouvrirWhatsApp(chauffeurTelephone, buildMessageChauffeurLivraison(c, fraisLivraison))
+          });
+        }
+        Alert.alert('Commande validée', `${c.numeroCommande} → vente créée, stock décrémenté.`, boutons);
+      }
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('erreur', lang));
+    }
+    setCommandeLivraison(null);
   };
 
   const handleAnnuler = (c: Commande) => {
@@ -458,24 +569,24 @@ export default function CommandesScreen() {
 
   const chipColor = (filter: string) => ({
     backgroundColor: statutFilter === filter ? (
-      filter === 'CREDIT' ? '#f59e0b' : filter === 'ANNULEE' ? '#dc2626' : '#1a56db'
-    ) : '#e5e7eb'
+      filter === 'CREDIT' ? colors.warning : filter === 'ANNULEE' ? colors.danger : colors.primary
+    ) : colors.inputBg
   });
 
   const chipTextColor = (filter: string) => ({
-    color: statutFilter === filter ? '#fff' : '#374151'
+    color: statutFilter === filter ? '#fff' : colors.textSecondary
   });
 
   const badgeBg = (statut: string) => {
-    if (statut === 'VALIDEE') return '#dcfce7';
-    if (statut === 'ANNULEE') return '#fee2e2';
-    return '#fef3c7';
+    if (statut === 'VALIDEE') return colors.successBg;
+    if (statut === 'ANNULEE') return colors.dangerBg;
+    return colors.warningBg;
   };
 
   const badgeColor = (statut: string) => {
-    if (statut === 'VALIDEE') return '#16a34a';
-    if (statut === 'ANNULEE') return '#dc2626';
-    return '#f59e0b';
+    if (statut === 'VALIDEE') return colors.success;
+    if (statut === 'ANNULEE') return colors.danger;
+    return colors.warning;
   };
 
   return (
@@ -499,7 +610,7 @@ export default function CommandesScreen() {
 
       {/* ── Searchbar ── */}
       <Searchbar
-        style={styles.searchBar}
+        style={[styles.searchBar, { backgroundColor: colors.card }]}
         inputStyle={{ fontSize: 13 }}
         value={searchTerm}
         onChangeText={setSearchTerm}
@@ -524,22 +635,22 @@ export default function CommandesScreen() {
 
       {/* ── Liste ── */}
       {loading ? (
-        <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#1a56db" />
+        <ActivityIndicator style={{ marginTop: 40 }} size="large" color={colors.primary} />
       ) : (
         <FlatList
           data={commandesFiltrees}
           keyExtractor={item => String(item.id)}
           contentContainerStyle={{ paddingHorizontal: 0, paddingBottom: 80 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1a56db']} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <MaterialCommunityIcons name="clipboard-list-outline" size={64} color="#cbd5e1" />
+              <MaterialCommunityIcons name="clipboard-list-outline" size={64} color={colors.border} />
               <Text style={styles.emptyTitle}>{tr('aucune_commande', lang)}</Text>
               <Text style={styles.emptySub}>Appuyez sur + pour créer</Text>
             </View>
           }
           renderItem={({ item: c }) => (
-            <Card style={styles.card} onPress={() => {}}>
+            <Card style={[styles.card, { backgroundColor: colors.card }]} onPress={() => {}}>
               <Card.Content style={{ paddingVertical: 4 }}>
                 {/* En-tête */}
                 <View style={styles.cardRow}>
@@ -561,8 +672,13 @@ export default function CommandesScreen() {
                       </Text>
                     </View>
                     {c.estCredit && c.montantRestant > 0 && (
-                      <View style={[styles.badge, { backgroundColor: '#fef3c7', marginTop: 3 }]}>
-                        <Text style={[styles.badgeTxt, { color: '#92400e' }]}>{tr('credits', lang)}</Text>
+                      <View style={[styles.badge, { backgroundColor: colors.warningBg, marginTop: 3 }]}>
+                        <Text style={[styles.badgeTxt, { color: colors.warning }]}>{tr('credits', lang)}</Text>
+                      </View>
+                    )}
+                    {c.origine === 'VITRINE' && (
+                      <View style={[styles.badge, { backgroundColor: colors.infoBg, marginTop: 3 }]}>
+                        <Text style={[styles.badgeTxt, { color: colors.info }]}>En ligne</Text>
                       </View>
                     )}
                   </View>
@@ -573,7 +689,7 @@ export default function CommandesScreen() {
                   <View style={styles.creditInfo}>
                     <Text style={styles.creditText}>{tr('verse', lang)} : {formatMontant(c.montantVerse)}</Text>
                     {c.montantRestant > 0 && (
-                      <Text style={[styles.creditText, { color: '#dc2626', fontWeight: '600' }]}>
+                      <Text style={[styles.creditText, { color: colors.danger, fontWeight: '600' }]}>
                         {tr('reste', lang)} : {formatMontant(c.montantRestant)}
                       </Text>
                     )}
@@ -587,10 +703,10 @@ export default function CommandesScreen() {
                       <Text style={styles.lineChipText}>{l.produit?.nom || l.produitNom} ×{l.quantite}</Text>
                     </View>
                   ))}
-                  {c.lignes.length > 3 && <Text style={{ color: '#6b7280', fontSize: 11 }}>+{c.lignes.length - 3}</Text>}
+                  {c.lignes.length > 3 && <Text style={{ color: colors.textSecondary, fontSize: 11 }}>+{c.lignes.length - 3}</Text>}
                 </View>
 
-                <Divider style={{ marginVertical: 8 }} />
+                <Divider style={{ marginVertical: 8, backgroundColor: colors.border }} />
 
                 {/* Actions */}
                 <View style={styles.cardActions}>
@@ -600,25 +716,25 @@ export default function CommandesScreen() {
 
                   {c.statut === 'BROUILLON' && (
                     <TouchableOpacity style={[styles.actionBtn, styles.actionBtnBlue]} onPress={() => ouvrirModifier(c)}>
-                      <Text style={[styles.actionBtnText, { color: '#1d4ed8' }]}>{tr('modifier', lang)}</Text>
+                      <Text style={[styles.actionBtnText, { color: colors.info }]}>{tr('modifier', lang)}</Text>
                     </TouchableOpacity>
                   )}
 
                   {c.statut === 'BROUILLON' && (
                     <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGreen]} onPress={() => handleValider(c)}>
-                      <Text style={[styles.actionBtnText, { color: '#16a34a' }]}>{tr('valider', lang)}</Text>
+                      <Text style={[styles.actionBtnText, { color: colors.success }]}>{tr('valider', lang)}</Text>
                     </TouchableOpacity>
                   )}
 
                   {c.estCredit && c.montantRestant > 0 && (
                     <TouchableOpacity style={[styles.actionBtn, styles.actionBtnOrange]} onPress={() => ouvrirReglementIndividuel(c)}>
-                      <Text style={[styles.actionBtnText, { color: '#b45309' }]}>{tr('regler', lang)}</Text>
+                      <Text style={[styles.actionBtnText, { color: colors.warning }]}>{tr('regler', lang)}</Text>
                     </TouchableOpacity>
                   )}
 
                   {c.statut !== 'ANNULEE' && (
                     <TouchableOpacity style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleAnnuler(c)}>
-                      <Text style={[styles.actionBtnText, { color: '#dc2626' }]}>{tr('annuler', lang)}</Text>
+                      <Text style={[styles.actionBtnText, { color: colors.danger }]}>{tr('annuler', lang)}</Text>
                     </TouchableOpacity>
                   )}
 
@@ -635,20 +751,20 @@ export default function CommandesScreen() {
       )}
 
       {/* ── FAB ── */}
-      <FAB icon="plus" style={styles.fab} onPress={ouvrirCreer} />
+      <FAB icon="plus" style={[styles.fab, { backgroundColor: colors.primary }]} onPress={ouvrirCreer} />
 
       {/* ─── MODAL CRÉER / MODIFIER ─────────────────────────────────────────── */}
       <Portal>
-        <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={styles.modal}>
+        <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={styles.modalTitle}>{editingId ? tr('modifier', lang) + ' ' + tr('commandes', lang).toLowerCase() : tr('nouvelle_commande', lang)}</Text>
 
             <Text style={styles.sectionTitle}>{tr('clients', lang)}</Text>
             {form.clientId ? (
               <View style={styles.selectedClient}>
-                <Text style={{ flex: 1, fontSize: 13 }}>{form.clientNom} {form.clientPrenom} · {form.clientTelephone}</Text>
+                <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>{form.clientNom} {form.clientPrenom} · {form.clientTelephone}</Text>
                 <TouchableOpacity onPress={() => setForm(f => ({ ...f, clientId: null, clientNom: '', clientPrenom: '', clientTelephone: '' }))}>
-                  <Text style={{ color: '#dc2626', fontSize: 18 }}>×</Text>
+                  <Text style={{ color: colors.danger, fontSize: 18 }}>×</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -658,20 +774,20 @@ export default function CommandesScreen() {
                   value={searchClient}
                   onChangeText={v => { setSearchClient(v); setShowClientDrop(true); }}
                   placeholder={tr('recherche_client', lang)}
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={colors.placeholder}
                 />
                 {showClientDrop && clientsFiltres.length > 0 && (
                   <View style={styles.dropdown}>
                     {clientsFiltres.map((cl: any) => (
                       <TouchableOpacity key={cl.id} style={styles.dropItem} onPress={() => selectionnerClient(cl)}>
-                        <Text style={{ fontSize: 13 }}>{cl.nom} {cl.prenom} — {cl.numeroTelephone}</Text>
+                        <Text style={{ fontSize: 13, color: colors.text }}>{cl.nom} {cl.prenom} — {cl.numeroTelephone}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 )}
-                <TextInput style={styles.input} value={form.clientNom} onChangeText={v => setForm(f => ({ ...f, clientNom: v }))} placeholder={tr('nom', lang)} placeholderTextColor="#9ca3af" />
-                <TextInput style={styles.input} value={form.clientPrenom} onChangeText={v => setForm(f => ({ ...f, clientPrenom: v }))} placeholder={tr('prenom', lang)} placeholderTextColor="#9ca3af" />
-                <TextInput style={styles.input} value={form.clientTelephone} onChangeText={v => setForm(f => ({ ...f, clientTelephone: v }))} placeholder={tr('telephone', lang)} placeholderTextColor="#9ca3af" keyboardType="phone-pad" />
+                <TextInput style={styles.input} value={form.clientNom} onChangeText={v => setForm(f => ({ ...f, clientNom: v }))} placeholder={tr('nom', lang)} placeholderTextColor={colors.placeholder} />
+                <TextInput style={styles.input} value={form.clientPrenom} onChangeText={v => setForm(f => ({ ...f, clientPrenom: v }))} placeholder={tr('prenom', lang)} placeholderTextColor={colors.placeholder} />
+                <TextInput style={styles.input} value={form.clientTelephone} onChangeText={v => setForm(f => ({ ...f, clientTelephone: v }))} placeholder={tr('telephone', lang)} placeholderTextColor={colors.placeholder} keyboardType="phone-pad" />
               </View>
             )}
 
@@ -681,13 +797,13 @@ export default function CommandesScreen() {
               value={searchProduit}
               onChangeText={v => { setSearchProduit(v); setShowProduitDrop(true); }}
               placeholder={tr('recherche_produit', lang)}
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.placeholder}
             />
             {showProduitDrop && produitsFiltres.length > 0 && (
               <View style={styles.dropdown}>
                 {produitsFiltres.map((p: any) => (
                   <TouchableOpacity key={p.id} style={styles.dropItem} onPress={() => selectionnerProduit(p)}>
-                    <Text style={{ fontSize: 13 }}>{p.nom} — {formatMontant(p.prixVente)}</Text>
+                    <Text style={{ fontSize: 13, color: colors.text }}>{p.nom} — {formatMontant(p.prixVente)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -697,9 +813,9 @@ export default function CommandesScreen() {
               <View key={i} style={styles.ligneRow}>
                 {/* Nom + supprimer */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                  <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#1e293b' }}>{l.produitNom}</Text>
+                  <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: colors.text }}>{l.produitNom}</Text>
                   <TouchableOpacity onPress={() => supprimerLigne(i)} style={{ padding: 4 }}>
-                    <Text style={{ color: '#dc2626', fontSize: 16, fontWeight: '700' }}>×</Text>
+                    <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>×</Text>
                   </TouchableOpacity>
                 </View>
                 {/* Qté + Prix + Remise */}
@@ -710,7 +826,7 @@ export default function CommandesScreen() {
                     <TouchableOpacity style={styles.qtyBtn} onPress={() => changerQty(i, 1)}><Text style={styles.qtyBtnText}>+</Text></TouchableOpacity>
                   </View>
                   <View style={{ alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>Prix unit.</Text>
+                    <Text style={{ fontSize: 9, color: colors.textSecondary, marginBottom: 2 }}>Prix unit.</Text>
                     <MontantInput
                       style={styles.prixInput}
                       value={l.prixUnitaire}
@@ -718,17 +834,17 @@ export default function CommandesScreen() {
                     />
                   </View>
                   <View style={{ alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>Remise %</Text>
+                    <Text style={{ fontSize: 9, color: colors.textSecondary, marginBottom: 2 }}>Remise %</Text>
                     <TextInput
                       style={[styles.prixInput, { width: 60 }]}
                       value={l.remise}
                       onChangeText={v => setLignesForm(prev => prev.map((x, idx) => idx === i ? { ...x, remise: v } : x))}
                       keyboardType="numeric"
                       placeholder="0"
-                      placeholderTextColor="#9ca3af"
+                      placeholderTextColor={colors.placeholder}
                     />
                   </View>
-                  <Text style={{ fontSize: 11, color: '#1a56db', fontWeight: '700' }}>
+                  <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700' }}>
                     = {formatMontant(prixLigne(l))}
                   </Text>
                 </View>
@@ -737,8 +853,8 @@ export default function CommandesScreen() {
 
             {lignesForm.length > 0 && (
               <View style={styles.totalBar}>
-                <Text>{tr('total', lang)}</Text>
-                <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{formatMontant(totalCommande)}</Text>
+                <Text style={{ color: colors.text }}>{tr('total', lang)}</Text>
+                <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>{formatMontant(totalCommande)}</Text>
               </View>
             )}
 
@@ -760,12 +876,12 @@ export default function CommandesScreen() {
                 value={form.referencePaiement}
                 onChangeText={v => setForm(f => ({ ...f, referencePaiement: v }))}
                 placeholder={`Référence ${MODES_LABELS[form.modePaiement] || ''} *`}
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={colors.placeholder}
               />
             )}
 
             <View style={styles.creditToggleRow}>
-              <Text style={{ fontSize: 14 }}>{tr('paiement_credit', lang)}</Text>
+              <Text style={{ fontSize: 14, color: colors.text }}>{tr('paiement_credit', lang)}</Text>
               <TouchableOpacity
                 style={[styles.toggleBtn, form.estCredit && styles.toggleBtnActive]}
                 onPress={() => setForm(f => ({ ...f, estCredit: !f.estCredit }))}>
@@ -775,19 +891,19 @@ export default function CommandesScreen() {
 
             {form.estCredit && (
               <>
-                <MontantInput style={styles.input} value={form.montantVerse} onChangeValue={v => setForm(f => ({ ...f, montantVerse: v }))} placeholder={tr('montant_verse', lang)} placeholderTextColor="#9ca3af" />
+                <MontantInput style={styles.input} value={form.montantVerse} onChangeValue={v => setForm(f => ({ ...f, montantVerse: v }))} placeholder={tr('montant_verse', lang)} placeholderTextColor={colors.placeholder} />
                 {totalCommande > 0 && (
                   <Text style={styles.resteInfo}>{tr('reste_a_payer', lang)} : {formatMontant(resteAPayer)}</Text>
                 )}
-                <TextInput style={styles.input} value={form.dateEcheance} onChangeText={v => setForm(f => ({ ...f, dateEcheance: v }))} placeholder={tr('date_echeance', lang)} placeholderTextColor="#9ca3af" />
+                <TextInput style={styles.input} value={form.dateEcheance} onChangeText={v => setForm(f => ({ ...f, dateEcheance: v }))} placeholder={tr('date_echeance', lang)} placeholderTextColor={colors.placeholder} />
               </>
             )}
 
-            <TextInput style={[styles.input, { height: 60 }]} value={form.notes} onChangeText={v => setForm(f => ({ ...f, notes: v }))} placeholder={tr('notes', lang)} placeholderTextColor="#9ca3af" multiline />
+            <TextInput style={[styles.input, { height: 60 }]} value={form.notes} onChangeText={v => setForm(f => ({ ...f, notes: v }))} placeholder={tr('notes', lang)} placeholderTextColor={colors.placeholder} multiline />
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, marginBottom: 8 }}>
               <Button mode="outlined" onPress={() => setShowModal(false)} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
-              <Button mode="contained" onPress={enregistrer} loading={submitting} style={{ flex: 1 }} buttonColor="#1a56db">
+              <Button mode="contained" onPress={enregistrer} loading={submitting} style={{ flex: 1 }} buttonColor={colors.primary}>
                 {editingId ? tr('modifier', lang) : tr('enregistrer', lang)}
               </Button>
             </View>
@@ -797,15 +913,15 @@ export default function CommandesScreen() {
 
       {/* ─── MODAL RÈGLEMENT INDIVIDUEL ─────────────────────────────────────── */}
       <Portal>
-        <Modal visible={showReglModal} onDismiss={() => setShowReglModal(false)} contentContainerStyle={styles.modal}>
+        <Modal visible={showReglModal} onDismiss={() => setShowReglModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}>
           <Text style={styles.modalTitle}>{tr('reglement_credit', lang)}</Text>
           {commandeRegl && (
             <>
               <View style={styles.reglInfoBox}>
-                <Text style={{ fontSize: 13 }}>N° <Text style={{ fontWeight: '700' }}>{commandeRegl.numeroCommande}</Text></Text>
-                <Text style={{ fontSize: 13 }}>{tr('total', lang)} : {formatMontant(commandeRegl.montantTotal)}</Text>
-                <Text style={{ fontSize: 13 }}>{tr('verse', lang)} : {formatMontant(commandeRegl.montantVerse)}</Text>
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#dc2626', marginTop: 4 }}>
+                <Text style={{ fontSize: 13, color: colors.text }}>N° <Text style={{ fontWeight: '700' }}>{commandeRegl.numeroCommande}</Text></Text>
+                <Text style={{ fontSize: 13, color: colors.text }}>{tr('total', lang)} : {formatMontant(commandeRegl.montantTotal)}</Text>
+                <Text style={{ fontSize: 13, color: colors.text }}>{tr('verse', lang)} : {formatMontant(commandeRegl.montantVerse)}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: colors.danger, marginTop: 4 }}>
                   {tr('reste_du', lang)} : {formatMontant(commandeRegl.montantRestant)}
                 </Text>
               </View>
@@ -814,7 +930,7 @@ export default function CommandesScreen() {
                 value={montantRegl}
                 onChangeValue={setMontantRegl}
                 placeholder={tr('montant_payer', lang)}
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={colors.placeholder}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                 <TouchableOpacity style={styles.shortcutBtn} onPress={() => setMontantRegl(commandeRegl.montantRestant / 2)}>
@@ -828,16 +944,82 @@ export default function CommandesScreen() {
           )}
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Button mode="outlined" onPress={() => setShowReglModal(false)} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
-            <Button mode="contained" onPress={confirmerReglementIndividuel} style={{ flex: 1 }} buttonColor="#f59e0b">
+            <Button mode="contained" onPress={confirmerReglementIndividuel} style={{ flex: 1 }} buttonColor={colors.warning}>
               {tr('confirmer', lang)}
             </Button>
           </View>
         </Modal>
       </Portal>
 
+      {/* ─── MODAL VALIDATION LIVRAISON (commandes VITRINE) ─────────────────── */}
+      <Portal>
+        <Modal visible={showLivraisonModal} onDismiss={() => setShowLivraisonModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalTitle}>Valider la livraison</Text>
+            {commandeLivraison && (
+              <View style={styles.reglInfoBox}>
+                <Text style={{ fontSize: 13, color: colors.text }}>N° <Text style={{ fontWeight: '700' }}>{commandeLivraison.numeroCommande}</Text></Text>
+                <Text style={{ fontSize: 13, color: colors.text }}>{tr('total', lang)} : {formatMontant(commandeLivraison.montantTotal)}</Text>
+                {commandeLivraison.adresseLivraison ? (
+                  <Text style={{ fontSize: 13, color: colors.text }}>Adresse : {commandeLivraison.adresseLivraison}</Text>
+                ) : null}
+              </View>
+            )}
+
+            <Text style={styles.sectionTitle}>Frais de livraison (optionnel)</Text>
+            <MontantInput
+              style={styles.input}
+              value={livraisonFrais}
+              onChangeValue={setLivraisonFrais}
+              placeholder="Frais de livraison"
+              placeholderTextColor={colors.placeholder}
+            />
+
+            <Text style={styles.sectionTitle}>Chauffeur (optionnel)</Text>
+            <TextInput
+              style={styles.input}
+              value={livraisonChauffeurNom}
+              onChangeText={setLivraisonChauffeurNom}
+              placeholder="Nom du chauffeur"
+              placeholderTextColor={colors.placeholder}
+            />
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {INDICATIFS.map(ind => (
+                  <TouchableOpacity
+                    key={ind.code}
+                    style={[styles.modePaiChip, livraisonIndicatif === ind.code && styles.modePaiChipActive]}
+                    onPress={() => setLivraisonIndicatif(ind.code)}>
+                    <Text style={[styles.modePaiText, livraisonIndicatif === ind.code && { color: '#fff' }]}>
+                      {ind.code} {ind.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+            <TextInput
+              style={styles.input}
+              value={livraisonTelephoneLocal}
+              onChangeText={setLivraisonTelephoneLocal}
+              placeholder="Téléphone du chauffeur"
+              placeholderTextColor={colors.placeholder}
+              keyboardType="phone-pad"
+            />
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8, marginBottom: 8 }}>
+              <Button mode="outlined" onPress={() => { setShowLivraisonModal(false); setCommandeLivraison(null); }} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
+              <Button mode="contained" onPress={confirmerValidationLivraison} style={{ flex: 1 }} buttonColor={colors.success}>
+                {tr('valider', lang)}
+              </Button>
+            </View>
+          </ScrollView>
+        </Modal>
+      </Portal>
+
       {/* ─── MODAL RÈGLEMENT GROUPÉ ──────────────────────────────────────────── */}
       <Portal>
-        <Modal visible={showReglGroupeModal} onDismiss={() => setShowReglGroupeModal(false)} contentContainerStyle={styles.modal}>
+        <Modal visible={showReglGroupeModal} onDismiss={() => setShowReglGroupeModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}>
           <Text style={styles.modalTitle}>{tr('reglement_groupe', lang)}</Text>
           <ScrollView style={{ maxHeight: 300 }}>
             <TouchableOpacity
@@ -846,14 +1028,14 @@ export default function CommandesScreen() {
                 idsSelectionnes.length === commandesCredit.length ? [] : commandesCredit.map(c => c.id)
               )}>
               <Checkbox status={idsSelectionnes.length === commandesCredit.length ? 'checked' : 'unchecked'} />
-              <Text style={{ fontSize: 13, fontWeight: '600' }}>{tr('tout_selectionner', lang)} ({commandesCredit.length})</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{tr('tout_selectionner', lang)} ({commandesCredit.length})</Text>
             </TouchableOpacity>
             {commandesCredit.map(c => (
               <TouchableOpacity key={c.id} style={styles.checkRow} onPress={() => toggleSelection(c.id)}>
                 <Checkbox status={idsSelectionnes.includes(c.id) ? 'checked' : 'unchecked'} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13 }}>{c.numeroCommande} — {getClientNom(c)}</Text>
-                  <Text style={{ fontSize: 11, color: '#dc2626' }}>{tr('reste', lang)} : {formatMontant(c.montantRestant)}</Text>
+                  <Text style={{ fontSize: 13, color: colors.text }}>{c.numeroCommande} — {getClientNom(c)}</Text>
+                  <Text style={{ fontSize: 11, color: colors.danger }}>{tr('reste', lang)} : {formatMontant(c.montantRestant)}</Text>
                 </View>
               </TouchableOpacity>
             ))}
@@ -863,7 +1045,7 @@ export default function CommandesScreen() {
             value={montantReglGroupe}
             onChangeValue={setMontantReglGroupe}
             placeholder={tr('montant_payer', lang)}
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.placeholder}
           />
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
             <Button mode="outlined" onPress={() => setShowReglGroupeModal(false)} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
@@ -871,7 +1053,7 @@ export default function CommandesScreen() {
               mode="contained"
               onPress={confirmerReglementGroupe}
               style={{ flex: 1 }}
-              buttonColor="#f59e0b"
+              buttonColor={colors.warning}
               disabled={idsSelectionnes.length === 0 || !montantReglGroupe || montantReglGroupe <= 0}>
               {tr('regler', lang)} {idsSelectionnes.length}
             </Button>
@@ -882,21 +1064,21 @@ export default function CommandesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
 
   // Hero banner
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  hero: { backgroundColor: colors.hero, flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
   heroStat: { flex: 1, alignItems: 'center' },
   heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
 
   // Offline banner
-  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
-  offlineTxt: { color: '#92400e', fontSize: 12 },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: colors.warningBg, paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: colors.warning, fontSize: 12 },
 
   // Searchbar
-  searchBar: { marginHorizontal: 12, marginTop: 10, marginBottom: 4, borderRadius: 10, backgroundColor: '#fff', elevation: 1 },
+  searchBar: { marginHorizontal: 12, marginTop: 10, marginBottom: 4, borderRadius: 10, backgroundColor: colors.card, elevation: 1 },
 
   // Chips
   chipsRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
@@ -907,69 +1089,69 @@ const styles = StyleSheet.create({
   card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
-  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+  cardName: { fontWeight: '600', fontSize: 14, color: colors.text },
+  cardSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', color: colors.text, fontSize: 13 },
   badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 },
   badgeTxt: { fontSize: 11, fontWeight: '600' },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
-  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: colors.textSecondary, marginTop: 12 },
+  emptySub: { fontSize: 13, color: colors.placeholder, textAlign: 'center', marginTop: 4 },
 
   // FAB
-  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
+  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: colors.primary },
 
-  creditInfo: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 6, marginBottom: 6, marginTop: 6, gap: 2 },
-  creditText: { fontSize: 12, color: '#16a34a' },
+  creditInfo: { backgroundColor: colors.inputBg, borderRadius: 8, padding: 6, marginBottom: 6, marginTop: 6, gap: 2 },
+  creditText: { fontSize: 12, color: colors.success },
 
   linesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 4, marginTop: 4 },
-  lineChip: { backgroundColor: '#eff6ff', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
-  lineChipText: { fontSize: 11, color: '#1e40af', fontWeight: '500' },
+  lineChip: { backgroundColor: colors.infoBg, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  lineChipText: { fontSize: 11, color: colors.info, fontWeight: '500' },
 
   cardActions: { flexDirection: 'row', gap: 5, flexWrap: 'wrap' },
-  actionBtn: { flex: 1, minWidth: 60, padding: 6, borderRadius: 8, backgroundColor: '#f8fafc', alignItems: 'center', borderWidth: 1, borderColor: '#e5e7eb' },
-  actionBtnBlue: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
-  actionBtnGreen: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-  actionBtnOrange: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
-  actionBtnRed: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  actionBtnText: { fontSize: 11, fontWeight: '600', color: '#374151' },
+  actionBtn: { flex: 1, minWidth: 60, padding: 6, borderRadius: 8, backgroundColor: colors.inputBg, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
+  actionBtnBlue: { backgroundColor: colors.infoBg, borderColor: colors.info },
+  actionBtnGreen: { backgroundColor: colors.successBg, borderColor: colors.success },
+  actionBtnOrange: { backgroundColor: colors.warningBg, borderColor: colors.warning },
+  actionBtnRed: { backgroundColor: colors.dangerBg, borderColor: colors.danger },
+  actionBtnText: { fontSize: 11, fontWeight: '600', color: colors.textSecondary },
 
   // Modal
-  modal: { backgroundColor: '#fff', margin: 12, borderRadius: 20, padding: 16, maxHeight: '90%' },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#1e3a8a', marginBottom: 14 },
-  sectionTitle: { fontSize: 12, fontWeight: '700', color: '#1e3a8a', marginTop: 12, marginBottom: 6, textTransform: 'uppercase' },
-  input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 10, fontSize: 13, color: '#1f2937', marginBottom: 8 },
+  modal: { backgroundColor: colors.card, margin: 12, borderRadius: 20, padding: 16, maxHeight: '90%' },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: colors.primary, marginBottom: 14 },
+  sectionTitle: { fontSize: 12, fontWeight: '700', color: colors.primary, marginTop: 12, marginBottom: 6, textTransform: 'uppercase' },
+  input: { backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 10, fontSize: 13, color: colors.text, marginBottom: 8 },
 
-  dropdown: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, elevation: 4, maxHeight: 140, overflow: 'hidden', marginBottom: 8 },
-  dropItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
-  selectedClient: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0fdf4', borderRadius: 8, padding: 10, marginBottom: 8 },
+  dropdown: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 8, elevation: 4, maxHeight: 140, overflow: 'hidden', marginBottom: 8 },
+  dropItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: colors.border },
+  selectedClient: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.successBg, borderRadius: 8, padding: 10, marginBottom: 8 },
 
-  ligneRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#f8fafc', borderRadius: 8, padding: 8, marginBottom: 6, flexWrap: 'wrap' },
+  ligneRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.inputBg, borderRadius: 8, padding: 8, marginBottom: 6, flexWrap: 'wrap' },
   qtyCtrl: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  qtyBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#1a56db', justifyContent: 'center', alignItems: 'center' },
+  qtyBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center' },
   qtyBtnText: { color: '#fff', fontSize: 16, lineHeight: 20 },
-  qtyVal: { minWidth: 24, textAlign: 'center', fontWeight: '600' },
-  prixInput: { width: 80, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, padding: 5, fontSize: 12, textAlign: 'right' },
+  qtyVal: { minWidth: 24, textAlign: 'center', fontWeight: '600', color: colors.text },
+  prixInput: { width: 80, borderWidth: 1, borderColor: colors.border, borderRadius: 6, padding: 5, fontSize: 12, textAlign: 'right', color: colors.text, backgroundColor: colors.card },
 
-  totalBar: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 4, marginBottom: 8 },
+  totalBar: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 4, marginBottom: 8 },
 
   modePaiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
-  modePaiChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, backgroundColor: '#e5e7eb' },
-  modePaiChipActive: { backgroundColor: '#1a56db' },
-  modePaiText: { fontSize: 11, fontWeight: '500', color: '#374151' },
+  modePaiChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, backgroundColor: colors.inputBg },
+  modePaiChipActive: { backgroundColor: colors.primary },
+  modePaiText: { fontSize: 11, fontWeight: '500', color: colors.textSecondary },
 
   creditToggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
-  toggleBtn: { width: 46, height: 26, borderRadius: 13, backgroundColor: '#d1d5db', justifyContent: 'center', paddingHorizontal: 2 },
-  toggleBtnActive: { backgroundColor: '#1a56db' },
+  toggleBtn: { width: 46, height: 26, borderRadius: 13, backgroundColor: colors.border, justifyContent: 'center', paddingHorizontal: 2 },
+  toggleBtnActive: { backgroundColor: colors.primary },
   toggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff', elevation: 2 },
   toggleThumbActive: { marginLeft: 20 },
 
-  resteInfo: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 8, fontSize: 13, color: '#dc2626', marginBottom: 8 },
+  resteInfo: { backgroundColor: colors.dangerBg, borderRadius: 8, padding: 8, fontSize: 13, color: colors.danger, marginBottom: 8 },
 
-  reglInfoBox: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 12, marginBottom: 12, gap: 4 },
-  shortcutBtn: { flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', alignItems: 'center' },
-  shortcutText: { fontSize: 12, color: '#1d4ed8', fontWeight: '600' },
-  checkRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', gap: 8 },
+  reglInfoBox: { backgroundColor: colors.inputBg, borderRadius: 10, padding: 12, marginBottom: 12, gap: 4 },
+  shortcutBtn: { flex: 1, padding: 8, borderRadius: 8, backgroundColor: colors.infoBg, borderWidth: 1, borderColor: colors.info, alignItems: 'center' },
+  shortcutText: { fontSize: 12, color: colors.info, fontWeight: '600' },
+  checkRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 8 },
 });

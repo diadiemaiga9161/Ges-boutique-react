@@ -24,6 +24,7 @@ import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useMontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 // Modèle réel (ObjectifFournisseurController/Dto) : un objectif est un
 // QUANTITATIF d'achat (objectifQuantite unités, sur un fournisseur+mois/année,
@@ -90,6 +91,7 @@ const FORM_INITIAL = {
 
 export default function ObjectifsFournisseurScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [objectifs, setObjectifs] = useState<ObjectifFournisseur[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -225,13 +227,25 @@ export default function ObjectifsFournisseurScreen() {
       observation: form.observation.trim() || undefined,
     };
     try {
-      if (editing) {
-        await executerOuMettreEnFile('objectif_update', { id: editing.id, data: payload }, () => api.put(`/objectifs-fournisseur/${editing.id}`, payload));
-      } else {
-        await executerOuMettreEnFile('objectif_create', payload, () => api.post('/objectifs-fournisseur', payload));
-      }
+      const res = editing
+        ? await executerOuMettreEnFile('objectif_update', { id: editing.id, data: payload }, () => api.put(`/objectifs-fournisseur/${editing.id}`, payload))
+        : await executerOuMettreEnFile('objectif_create', payload, () => api.post('/objectifs-fournisseur', payload));
       setShowModal(false);
       charger();
+      // Comme Ionic (alertObjectifAtteint) : si l'objectif vient de passer ATTEINT
+      // suite à cet enregistrement, on propose immédiatement de valider le bonus
+      // (ajout au stock) plutôt que de laisser l'utilisateur le découvrir plus tard.
+      const objectifSauvegarde = (res as any)?.result?.data;
+      if (!res.offline && objectifSauvegarde?.statut === 'ATTEINT') {
+        Alert.alert(
+          '🎯 Objectif atteint !',
+          `${objectifSauvegarde.fournisseurNom} — ${MOIS_LABELS[objectifSauvegarde.mois]} ${objectifSauvegarde.annee}\n\nVous pouvez valider pour ajouter les bonus au stock.`,
+          [
+            { text: 'Plus tard', style: 'cancel' },
+            { text: 'Valider maintenant', onPress: () => confirmerValider(objectifSauvegarde) },
+          ],
+        );
+      }
     } catch (err: any) {
       Alert.alert(tr('erreur', lang), err.response?.data?.message || "Impossible d'enregistrer l'objectif");
     }
@@ -280,10 +294,10 @@ export default function ObjectifsFournisseurScreen() {
     ? produits.filter(p => p.nom.toLowerCase().includes(produitSearch.toLowerCase())).slice(0, 15)
     : [];
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Bannière stats */}
       <View style={styles.banner}>
         <View style={styles.bannerItem}>
@@ -309,11 +323,12 @@ export default function ObjectifsFournisseurScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); charger(); }}
+            colors={[colors.primary]}
           />
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>Aucun objectif enregistré</Text>
+          <Text style={[styles.empty, { color: colors.textSecondary }]}>Aucun objectif enregistré</Text>
         }
         renderItem={({ item }) => {
           const pct = item.objectifQuantite > 0
@@ -327,10 +342,10 @@ export default function ObjectifsFournisseurScreen() {
                   {/* Ligne titre + statut + supprimer */}
                   <View style={styles.row}>
                     <View style={{ flex: 1 }}>
-                      <Text variant="titleMedium" style={styles.fournisseurNom}>
+                      <Text variant="titleMedium" style={[styles.fournisseurNom, { color: colors.text }]}>
                         {item.fournisseurNom}
                       </Text>
-                      <Text style={styles.sub}>{MOIS_LABELS[item.mois]} {item.annee}{item.produitNom ? ` · ${item.produitNom}` : ''}</Text>
+                      <Text style={[styles.sub, { color: colors.textSecondary }]}>{MOIS_LABELS[item.mois]} {item.annee}{item.produitNom ? ` · ${item.produitNom}` : ''}</Text>
                     </View>
                     <View style={styles.rowEnd}>
                       <View style={[styles.badge, { backgroundColor: STATUT_COLOR[item.statut] + '22' }]}>
@@ -338,25 +353,35 @@ export default function ObjectifsFournisseurScreen() {
                           {STATUT_LABEL[item.statut] || item.statut}
                         </Text>
                       </View>
+                      {item.statut === 'ATTEINT' && !item.stockAjoute && (
+                        <IconButton
+                          icon="check-circle-outline"
+                          size={18}
+                          iconColor={colors.success}
+                          onPress={() => confirmerValider(item)}
+                        />
+                      )}
                       {!item.stockAjoute && (
                         <IconButton
                           icon="pencil-outline"
                           size={18}
-                          iconColor="#1a56db"
+                          iconColor={colors.primary}
                           onPress={() => ouvrirModif(item)}
                         />
                       )}
-                      <IconButton
-                        icon="delete-outline"
-                        size={18}
-                        iconColor="#e53935"
-                        onPress={() => supprimer(item)}
-                      />
+                      {!item.stockAjoute && (
+                        <IconButton
+                          icon="delete-outline"
+                          size={18}
+                          iconColor={colors.danger}
+                          onPress={() => supprimer(item)}
+                        />
+                      )}
                     </View>
                   </View>
 
                   {/* Barre de progression */}
-                  <View style={styles.progressBg}>
+                  <View style={[styles.progressBg, { backgroundColor: colors.border }]}>
                     <View
                       style={[
                         styles.progressFill,
@@ -365,7 +390,7 @@ export default function ObjectifsFournisseurScreen() {
                     />
                   </View>
                   <View style={styles.row}>
-                    <Text style={styles.progLabel}>
+                    <Text style={[styles.progLabel, { color: colors.textSecondary }]}>
                       {item.quantiteAtteinte?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} / {item.objectifQuantite?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} unités
                     </Text>
                     <Text style={[styles.progPct, { color: couleur }]}>{pct}%</Text>
@@ -374,13 +399,13 @@ export default function ObjectifsFournisseurScreen() {
                   <Divider style={{ marginVertical: 6 }} />
 
                   <View style={styles.row}>
-                    <Text style={styles.date}>Bonus/unité : {money(item.bonusParUnite)}</Text>
+                    <Text style={[styles.date, { color: colors.textSecondary }]}>Bonus/unité : {money(item.bonusParUnite)}</Text>
                     {item.stockAjoute ? (
-                      <Text style={styles.bonusOk}>
+                      <Text style={[styles.bonusOk, { color: colors.success }]}>
                         Stock ajouté : {item.quantiteBonusRecue} u.
                       </Text>
                     ) : item.quantiteBonusRecue ? (
-                      <Text style={styles.bonusPrevu}>
+                      <Text style={[styles.bonusPrevu, { color: colors.warning }]}>
                         Bonus reçu : {item.quantiteBonusRecue} u.
                       </Text>
                     ) : null}
@@ -392,20 +417,20 @@ export default function ObjectifsFournisseurScreen() {
         }}
       />
 
-      <FAB icon="plus" style={styles.fab} onPress={ouvrirCreation} />
+      <FAB icon="plus" style={[styles.fab, { backgroundColor: colors.primary }]} color="#fff" onPress={ouvrirCreation} />
 
       <Portal>
         {/* Modal ajout / modification */}
         <Modal
           visible={showModal}
           onDismiss={() => setShowModal(false)}
-          contentContainerStyle={styles.modal}
+          contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}
         >
-          <Text variant="titleLarge" style={styles.modalTitle}>
+          <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.primary }]}>
             {editing ? 'Modifier l\'objectif' : 'Nouvel objectif'}
           </Text>
 
-          <Text style={styles.fieldLabel}>Fournisseur *</Text>
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Fournisseur *</Text>
           <TextInput
             value={fournisseurSearch}
             onChangeText={t => { setFournisseurSearch(t); setForm({ ...form, fournisseurId: 0 }); }}
@@ -414,20 +439,20 @@ export default function ObjectifsFournisseurScreen() {
             style={styles.input}
           />
           {fournisseursFiltres.length > 0 && !form.fournisseurId && (
-            <View style={styles.pickerList}>
+            <View style={[styles.pickerList, { borderColor: colors.border }]}>
               {fournisseursFiltres.map(f => (
                 <TouchableOpacity
                   key={f.id}
-                  style={styles.pickerItem}
+                  style={[styles.pickerItem, { borderBottomColor: colors.border }]}
                   onPress={() => { setForm({ ...form, fournisseurId: f.id }); setFournisseurSearch(f.nom); }}
                 >
-                  <Text style={styles.pickerItemText}>{f.nom}</Text>
+                  <Text style={[styles.pickerItemText, { color: colors.text }]}>{f.nom}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           )}
 
-          <Text style={styles.fieldLabel}>Produit concerné (pour le bonus stock)</Text>
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Produit concerné (pour le bonus stock)</Text>
           <TextInput
             value={produitSearch}
             onChangeText={t => { setProduitSearch(t); setForm({ ...form, produitId: undefined }); }}
@@ -436,14 +461,14 @@ export default function ObjectifsFournisseurScreen() {
             style={styles.input}
           />
           {produitsFiltres.length > 0 && !form.produitId && (
-            <View style={styles.pickerList}>
+            <View style={[styles.pickerList, { borderColor: colors.border }]}>
               {produitsFiltres.map(p => (
                 <TouchableOpacity
                   key={p.id}
-                  style={styles.pickerItem}
+                  style={[styles.pickerItem, { borderBottomColor: colors.border }]}
                   onPress={() => { setForm({ ...form, produitId: p.id }); setProduitSearch(p.nom); }}
                 >
-                  <Text style={styles.pickerItemText}>{p.nom}</Text>
+                  <Text style={[styles.pickerItemText, { color: colors.text }]}>{p.nom}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -451,15 +476,15 @@ export default function ObjectifsFournisseurScreen() {
 
           <View style={styles.rowFields}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Mois *</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Mois *</Text>
               <View style={styles.moisRow}>
                 {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
                   <TouchableOpacity
                     key={m}
-                    style={[styles.moisChip, form.mois === m && styles.moisChipActive]}
+                    style={[styles.moisChip, { borderColor: colors.border }, form.mois === m && [styles.moisChipActive, { backgroundColor: colors.primary, borderColor: colors.primary }]]}
                     onPress={() => setForm({ ...form, mois: m })}
                   >
-                    <Text style={[styles.moisChipText, form.mois === m && { color: '#fff' }]}>{MOIS_LABELS[m].slice(0, 3)}</Text>
+                    <Text style={[styles.moisChipText, { color: colors.textSecondary }, form.mois === m && { color: '#fff' }]}>{MOIS_LABELS[m].slice(0, 3)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -521,7 +546,7 @@ export default function ObjectifsFournisseurScreen() {
             <Button mode="outlined" onPress={() => setShowModal(false)} style={{ flex: 1, marginRight: 8 }}>
               {tr('annuler', lang)}
             </Button>
-            <Button mode="contained" onPress={enregistrer} loading={saving} disabled={saving} style={{ flex: 1 }}>
+            <Button mode="contained" onPress={enregistrer} loading={saving} disabled={saving} style={{ flex: 1 }} buttonColor={colors.primary}>
               {tr('enregistrer', lang)}
             </Button>
           </View>
@@ -531,14 +556,14 @@ export default function ObjectifsFournisseurScreen() {
         <Modal
           visible={showDetails}
           onDismiss={() => { setShowDetails(false); setSelected(null); }}
-          contentContainerStyle={styles.modal}
+          contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}
         >
           {selected && (
             <>
-              <Text variant="titleLarge" style={styles.modalTitle}>
+              <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.primary }]}>
                 {selected.fournisseurNom}
               </Text>
-              <Text style={styles.sub}>{MOIS_LABELS[selected.mois]} {selected.annee}{selected.produitNom ? ` · ${selected.produitNom}` : ' · Aucun produit lié'}</Text>
+              <Text style={[styles.sub, { color: colors.textSecondary }]}>{MOIS_LABELS[selected.mois]} {selected.annee}{selected.produitNom ? ` · ${selected.produitNom}` : ' · Aucun produit lié'}</Text>
 
               <View style={[styles.badge, { alignSelf: 'flex-start', marginTop: 10, marginBottom: 10, backgroundColor: STATUT_COLOR[selected.statut] + '22' }]}>
                 <Text style={[styles.badgeText, { color: STATUT_COLOR[selected.statut] }]}>
@@ -546,7 +571,7 @@ export default function ObjectifsFournisseurScreen() {
                 </Text>
               </View>
 
-              <View style={styles.progressBg}>
+              <View style={[styles.progressBg, { backgroundColor: colors.border }]}>
                 <View
                   style={[
                     styles.progressFill,
@@ -557,19 +582,19 @@ export default function ObjectifsFournisseurScreen() {
                   ]}
                 />
               </View>
-              <Text style={[styles.progPct, { marginBottom: 12 }]}>
+              <Text style={[styles.progPct, { marginBottom: 12, color: colors.text }]}>
                 {selected.quantiteAtteinte?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} / {selected.objectifQuantite?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} unités
               </Text>
 
               <Divider style={{ marginBottom: 10 }} />
 
-              <Text style={styles.detailLine}>Bonus par unité : {money(selected.bonusParUnite)}</Text>
-              <Text style={styles.detailLine}>Bonus calculé : {money(selected.bonusCalcule)}</Text>
-              <Text style={styles.detailLine}>Quantité bonus reçue : {selected.quantiteBonusRecue || 0}</Text>
-              {!!selected.observation && <Text style={[styles.sub, { marginTop: 6 }]}>{selected.observation}</Text>}
+              <Text style={[styles.detailLine, { color: colors.text }]}>Bonus par unité : {money(selected.bonusParUnite)}</Text>
+              <Text style={[styles.detailLine, { color: colors.text }]}>Bonus calculé : {money(selected.bonusCalcule)}</Text>
+              <Text style={[styles.detailLine, { color: colors.text }]}>Quantité bonus reçue : {selected.quantiteBonusRecue || 0}</Text>
+              {!!selected.observation && <Text style={[styles.sub, { marginTop: 6, color: colors.textSecondary }]}>{selected.observation}</Text>}
 
               {selected.stockAjoute ? (
-                <Text style={[styles.bonusOk, { marginTop: 8 }]}>
+                <Text style={[styles.bonusOk, { marginTop: 8, color: colors.success }]}>
                   ✅ Stock déjà ajouté{selected.dateValidation ? ` le ${new Date(selected.dateValidation).toLocaleDateString('fr-FR')}` : ''}
                 </Text>
               ) : (

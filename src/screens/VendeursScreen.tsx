@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   View,
   FlatList,
+  ScrollView,
   StyleSheet,
   Alert,
   RefreshControl,
@@ -20,10 +21,12 @@ import {
   IconButton,
   RadioButton,
 } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
 
 // L'entité backend est `Utilisateur` sous /api/utilisateurs (PAS /api/users) —
 // un seul champ `nomComplet` (pas nom+prenom séparés), voir user.service.ts
@@ -57,6 +60,7 @@ function initiales(nomComplet: string): string {
 
 export default function VendeursScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [vendeurs, setVendeurs] = useState<Vendeur[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -91,9 +95,15 @@ export default function VendeursScreen() {
     try {
       const res = await api.get('/utilisateurs');
       const liste = Array.isArray(res.data) ? res.data : (res.data?.data || []);
-      setVendeurs(liste);
+      // "Supprimer" un utilisateur (DELETE) est un soft-delete côté backend
+      // (actif=false, la ligne reste en base) — findAll() la renvoie donc
+      // toujours. Même filtre que resources.page.ts (type 'vendeurs') côté
+      // Ionic : sans lui, un utilisateur "supprimé" réapparaît dans la liste,
+      // juste marqué Inactif, ce qui donne l'impression qu'il est revenu.
+      const actifs = liste.filter((u: Vendeur) => u.actif);
+      setVendeurs(actifs);
       setFromCache(false);
-      sauvegarderCache('vendeurs', liste).catch(() => {});
+      sauvegarderCache('vendeurs', actifs).catch(() => {});
     } catch {
       const cached = await lireCache<Vendeur>('vendeurs');
       if (cached.length > 0) { setVendeurs(cached); setFromCache(true); }
@@ -195,12 +205,12 @@ export default function VendeursScreen() {
     );
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Bannière stats */}
-      <View style={styles.banner}>
+      <View style={[styles.banner, { backgroundColor: colors.primary }]}>
         <View style={styles.bannerItem}>
           <Text style={styles.bannerVal}>{totalUtilisateurs}</Text>
           <Text style={styles.bannerLabel}>Utilisateurs</Text>
@@ -228,7 +238,10 @@ export default function VendeursScreen() {
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>Aucun utilisateur trouvé</Text>
+          <View style={styles.emptyWrap}>
+            <MaterialCommunityIcons name="account-multiple-outline" size={48} color={colors.placeholder} />
+            <Text style={[styles.empty, { color: colors.textSecondary }]}>Aucun utilisateur trouvé</Text>
+          </View>
         }
         renderItem={({ item }) => (
           <Card style={styles.card}>
@@ -243,9 +256,9 @@ export default function VendeursScreen() {
                   <Text variant="titleMedium" style={styles.nom}>
                     {item.nomComplet}
                   </Text>
-                  <Text style={styles.username}>@{item.username}</Text>
-                  {item.email ? <Text style={styles.sub}>{item.email}</Text> : null}
-                  {item.telephone ? <Text style={styles.sub}>{item.telephone}</Text> : null}
+                  <Text style={[styles.username, { color: colors.textSecondary }]}>@{item.username}</Text>
+                  {item.email ? <Text style={[styles.sub, { color: colors.textSecondary }]}>{item.email}</Text> : null}
+                  {item.telephone ? <Text style={[styles.sub, { color: colors.textSecondary }]}>{item.telephone}</Text> : null}
                 </View>
 
                 <View style={styles.badgeCol}>
@@ -254,8 +267,8 @@ export default function VendeursScreen() {
                       {item.role}
                     </Text>
                   </View>
-                  <View style={[styles.badge, { backgroundColor: item.actif ? '#4caf5022' : '#9e9e9e22', marginTop: 4 }]}>
-                    <Text style={[styles.badgeText, { color: item.actif ? '#4caf50' : '#9e9e9e' }]}>
+                  <View style={[styles.badge, { backgroundColor: item.actif ? colors.successBg : colors.border, marginTop: 4 }]}>
+                    <Text style={[styles.badgeText, { color: item.actif ? colors.success : colors.textSecondary }]}>
                       {item.actif ? 'Actif' : 'Inactif'}
                     </Text>
                   </View>
@@ -266,12 +279,12 @@ export default function VendeursScreen() {
 
               <View style={styles.actions}>
                 <TouchableOpacity style={styles.actionBtn} onPress={() => ouvrirModif(item)}>
-                  <IconButton icon="pencil-outline" size={18} iconColor="#1a56db" style={styles.iconBtn} />
-                  <Text style={styles.actionLabel}>Modifier</Text>
+                  <IconButton icon="pencil-outline" size={18} iconColor={colors.primary} style={styles.iconBtn} />
+                  <Text style={[styles.actionLabel, { color: colors.textSecondary }]}>Modifier</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionBtn} onPress={() => confirmerSupprimer(item)}>
-                  <IconButton icon="account-off-outline" size={18} iconColor="#e53935" style={styles.iconBtn} />
-                  <Text style={[styles.actionLabel, { color: '#e53935' }]}>{tr('supprimer', lang)}</Text>
+                  <IconButton icon="account-off-outline" size={18} iconColor={colors.danger} style={styles.iconBtn} />
+                  <Text style={[styles.actionLabel, { color: colors.danger }]}>{tr('supprimer', lang)}</Text>
                 </TouchableOpacity>
               </View>
             </Card.Content>
@@ -286,62 +299,66 @@ export default function VendeursScreen() {
         <Modal
           visible={showAdd}
           onDismiss={() => setShowAdd(false)}
-          contentContainerStyle={styles.modal}
+          contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}
         >
-          <Text variant="titleLarge" style={styles.modalTitle}>Nouveau vendeur</Text>
-          <TextInput label="Nom complet *" value={formAdd.nomComplet} onChangeText={t => setFormAdd({ ...formAdd, nomComplet: t })} mode="outlined" style={styles.input} />
-          <TextInput label="Username *" value={formAdd.username} onChangeText={t => setFormAdd({ ...formAdd, username: t })} mode="outlined" style={styles.input} autoCapitalize="none" />
-          <TextInput label={tr('email', lang)} value={formAdd.email} onChangeText={t => setFormAdd({ ...formAdd, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" autoCapitalize="none" />
-          <TextInput label={tr('telephone', lang)} value={formAdd.telephone} onChangeText={t => setFormAdd({ ...formAdd, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
-          <TextInput label="Mot de passe initial *" value={formAdd.motDePasse} onChangeText={t => setFormAdd({ ...formAdd, motDePasse: t })} mode="outlined" style={styles.input} secureTextEntry />
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.primary }]}>Nouveau vendeur</Text>
+            <TextInput label="Nom complet *" value={formAdd.nomComplet} onChangeText={t => setFormAdd({ ...formAdd, nomComplet: t })} mode="outlined" style={styles.input} />
+            <TextInput label="Username *" value={formAdd.username} onChangeText={t => setFormAdd({ ...formAdd, username: t })} mode="outlined" style={styles.input} autoCapitalize="none" />
+            <TextInput label={tr('email', lang)} value={formAdd.email} onChangeText={t => setFormAdd({ ...formAdd, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" autoCapitalize="none" />
+            <TextInput label={tr('telephone', lang)} value={formAdd.telephone} onChangeText={t => setFormAdd({ ...formAdd, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
+            <TextInput label="Mot de passe initial *" value={formAdd.motDePasse} onChangeText={t => setFormAdd({ ...formAdd, motDePasse: t })} mode="outlined" style={styles.input} secureTextEntry />
 
-          <Text style={styles.roleLabel}>Rôle</Text>
-          <RadioButton.Group onValueChange={v => setFormAdd({ ...formAdd, role: v as any })} value={formAdd.role}>
-            {ROLES.map(r => (
-              <RadioButton.Item key={r} label={r} value={r} />
-            ))}
-          </RadioButton.Group>
+            <Text style={[styles.roleLabel, { color: colors.textSecondary }]}>Rôle</Text>
+            <RadioButton.Group onValueChange={v => setFormAdd({ ...formAdd, role: v as any })} value={formAdd.role}>
+              {ROLES.map(r => (
+                <RadioButton.Item key={r} label={r} value={r} />
+              ))}
+            </RadioButton.Group>
 
-          <View style={styles.modalBtns}>
-            <Button mode="outlined" onPress={() => setShowAdd(false)} style={{ flex: 1, marginRight: 8 }}>
-              {tr('annuler', lang)}
-            </Button>
-            <Button mode="contained" onPress={creerVendeur} loading={savingAdd} disabled={savingAdd} style={{ flex: 1 }}>
-              {tr('enregistrer', lang)}
-            </Button>
-          </View>
+            <View style={styles.modalBtns}>
+              <Button mode="outlined" onPress={() => setShowAdd(false)} style={{ flex: 1, marginRight: 8 }}>
+                {tr('annuler', lang)}
+              </Button>
+              <Button mode="contained" onPress={creerVendeur} loading={savingAdd} disabled={savingAdd} style={{ flex: 1 }}>
+                {tr('enregistrer', lang)}
+              </Button>
+            </View>
+          </ScrollView>
         </Modal>
 
         {/* Modal modification (mot de passe optionnel = réinitialisation) */}
         <Modal
           visible={showEdit}
           onDismiss={() => { setShowEdit(false); setSelected(null); }}
-          contentContainerStyle={styles.modal}
+          contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}
         >
-          <Text variant="titleLarge" style={styles.modalTitle}>Modifier l'utilisateur</Text>
-          {selected && (
-            <Text style={styles.sub}>@{selected.username}</Text>
-          )}
-          <TextInput label="Nom complet *" value={formEdit.nomComplet} onChangeText={t => setFormEdit({ ...formEdit, nomComplet: t })} mode="outlined" style={[styles.input, { marginTop: 10 }]} />
-          <TextInput label={tr('email', lang)} value={formEdit.email} onChangeText={t => setFormEdit({ ...formEdit, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" autoCapitalize="none" />
-          <TextInput label={tr('telephone', lang)} value={formEdit.telephone} onChangeText={t => setFormEdit({ ...formEdit, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
-          <TextInput label="Nouveau mot de passe (optionnel)" value={formEdit.motDePasse} onChangeText={t => setFormEdit({ ...formEdit, motDePasse: t })} mode="outlined" style={styles.input} secureTextEntry />
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.primary }]}>Modifier l'utilisateur</Text>
+            {selected && (
+              <Text style={[styles.sub, { color: colors.textSecondary }]}>@{selected.username}</Text>
+            )}
+            <TextInput label="Nom complet *" value={formEdit.nomComplet} onChangeText={t => setFormEdit({ ...formEdit, nomComplet: t })} mode="outlined" style={[styles.input, { marginTop: 10 }]} />
+            <TextInput label={tr('email', lang)} value={formEdit.email} onChangeText={t => setFormEdit({ ...formEdit, email: t })} mode="outlined" style={styles.input} keyboardType="email-address" autoCapitalize="none" />
+            <TextInput label={tr('telephone', lang)} value={formEdit.telephone} onChangeText={t => setFormEdit({ ...formEdit, telephone: t })} mode="outlined" style={styles.input} keyboardType="phone-pad" />
+            <TextInput label="Nouveau mot de passe (optionnel)" value={formEdit.motDePasse} onChangeText={t => setFormEdit({ ...formEdit, motDePasse: t })} mode="outlined" style={styles.input} secureTextEntry />
 
-          <Text style={styles.roleLabel}>Rôle</Text>
-          <RadioButton.Group onValueChange={v => setFormEdit({ ...formEdit, role: v as any })} value={formEdit.role}>
-            {ROLES.map(r => (
-              <RadioButton.Item key={r} label={r} value={r} />
-            ))}
-          </RadioButton.Group>
+            <Text style={[styles.roleLabel, { color: colors.textSecondary }]}>Rôle</Text>
+            <RadioButton.Group onValueChange={v => setFormEdit({ ...formEdit, role: v as any })} value={formEdit.role}>
+              {ROLES.map(r => (
+                <RadioButton.Item key={r} label={r} value={r} />
+              ))}
+            </RadioButton.Group>
 
-          <View style={styles.modalBtns}>
-            <Button mode="outlined" onPress={() => { setShowEdit(false); setSelected(null); }} style={{ flex: 1, marginRight: 8 }}>
-              {tr('annuler', lang)}
-            </Button>
-            <Button mode="contained" onPress={modifierVendeur} loading={savingEdit} disabled={savingEdit} style={{ flex: 1 }}>
-              {tr('enregistrer', lang)}
-            </Button>
-          </View>
+            <View style={styles.modalBtns}>
+              <Button mode="outlined" onPress={() => { setShowEdit(false); setSelected(null); }} style={{ flex: 1, marginRight: 8 }}>
+                {tr('annuler', lang)}
+              </Button>
+              <Button mode="contained" onPress={modifierVendeur} loading={savingEdit} disabled={savingEdit} style={{ flex: 1 }}>
+                {tr('enregistrer', lang)}
+              </Button>
+            </View>
+          </ScrollView>
         </Modal>
       </Portal>
     </View>
@@ -349,12 +366,11 @@ export default function VendeursScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  container: { flex: 1 },
 
   // Bannière
   banner: {
     flexDirection: 'row',
-    backgroundColor: '#1a56db',
     paddingVertical: 14,
     paddingHorizontal: 8,
     alignItems: 'center',
@@ -383,8 +399,8 @@ const styles = StyleSheet.create({
   // Info
   infoCol: { flex: 1 },
   nom: { fontWeight: 'bold' },
-  username: { color: '#666', fontSize: 12 },
-  sub: { color: '#888', fontSize: 12, marginTop: 1 },
+  username: { fontSize: 12 },
+  sub: { fontSize: 12, marginTop: 1 },
 
   // Badges
   badgeCol: { alignItems: 'flex-end', marginLeft: 8 },
@@ -395,22 +411,22 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', justifyContent: 'space-around' },
   actionBtn: { alignItems: 'center' },
   iconBtn: { margin: 0 },
-  actionLabel: { fontSize: 10, color: '#555', marginTop: -4 },
+  actionLabel: { fontSize: 10, marginTop: -4 },
 
   // Divers
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  emptyWrap: { alignItems: 'center', justifyContent: 'center', marginTop: 60, gap: 10 },
+  empty: { textAlign: 'center', fontSize: 14 },
   fab: { position: 'absolute', bottom: 20, right: 20 },
 
   // Modals
   modal: {
-    backgroundColor: '#fff',
     margin: 20,
     borderRadius: 20,
     padding: 20,
     maxHeight: '92%',
   },
-  modalTitle: { fontWeight: 'bold', marginBottom: 14, color: '#1a56db' },
+  modalTitle: { fontWeight: 'bold', marginBottom: 14 },
   modalBtns: { flexDirection: 'row', marginTop: 8 },
   input: { marginBottom: 10 },
-  roleLabel: { fontSize: 13, color: '#666', marginBottom: 4, marginTop: 4 },
+  roleLabel: { fontSize: 13, marginBottom: 4, marginTop: 4 },
 });

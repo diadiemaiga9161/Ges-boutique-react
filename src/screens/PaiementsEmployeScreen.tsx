@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, ScrollView, TouchableOpacity, TextInput,
   Modal, StyleSheet, Alert, ActivityIndicator, RefreshControl, Linking,
@@ -9,6 +9,7 @@ import api from '../services/api.service';
 import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
 
 const AVATAR_COLORS = ['#1e88e5', '#43a047', '#e53935', '#8e24aa', '#fb8c00', '#00acc1', '#d81b60'];
 
@@ -34,6 +35,7 @@ const FORM_INITIAL = {
 
 export default function PaiementsEmployeScreen({ navigation, route }: any) {
   const { lang } = useLang();
+  const colors = useColors();
   const employe = route?.params?.employe || {};
 
   const nomComplet = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Employe';
@@ -161,12 +163,12 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
     Linking.openURL(`https://wa.me/${telPropre}?text=${encodeURIComponent(lignes.join('\n'))}`);
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#081648" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* ── Header ── */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.hero }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backArrow}>←</Text>
         </TouchableOpacity>
@@ -180,35 +182,35 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
       </View>
 
       {/* ── Fiche employé ── */}
-      <View style={styles.ficheCard}>
+      <View style={[styles.ficheCard, { backgroundColor: colors.card }]}>
         <View style={styles.ficheTop}>
           <View style={[styles.avatar, { backgroundColor: avatarColor(employe.nom || 'E') }]}>
             <Text style={styles.avatarText}>{initiale}</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.ficheNom}>{nomComplet}</Text>
-            {employe.poste ? <Text style={styles.fichePoste}>{employe.poste}</Text> : null}
+            <Text style={[styles.ficheNom, { color: colors.text }]}>{nomComplet}</Text>
+            {employe.poste ? <Text style={[styles.fichePoste, { color: colors.textSecondary }]}>{employe.poste}</Text> : null}
           </View>
         </View>
 
-        <View style={styles.kpisRow}>
+        <View style={[styles.kpisRow, { borderTopColor: colors.border }]}>
           <View style={styles.kpi}>
-            <Text style={styles.kpiLabel}>Salaire mensuel</Text>
-            <Text style={styles.kpiVal}>{money(employe.salaireMensuel || 0)}</Text>
+            <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Salaire mensuel</Text>
+            <Text style={[styles.kpiVal, { color: colors.text }]}>{money(employe.salaireMensuel || 0)}</Text>
           </View>
-          <View style={[styles.kpi, styles.kpiMid]}>
-            <Text style={styles.kpiLabel}>Verse {ANNEE_COURANTE}</Text>
-            <Text style={[styles.kpiVal, { color: '#16a34a' }]}>{money(totalAnnee)}</Text>
+          <View style={[styles.kpi, styles.kpiMid, { borderLeftColor: colors.border, borderRightColor: colors.border }]}>
+            <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Verse {ANNEE_COURANTE}</Text>
+            <Text style={[styles.kpiVal, { color: colors.success }]}>{money(totalAnnee)}</Text>
           </View>
           <View style={styles.kpi}>
-            <Text style={styles.kpiLabel}>Mois en cours</Text>
+            <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Mois en cours</Text>
             <View style={[
               styles.moisBadge,
-              { backgroundColor: moisPayé ? '#dcfce7' : '#fef9c3' },
+              { backgroundColor: moisPayé ? colors.successBg : colors.warningBg },
             ]}>
               <Text style={[
                 styles.moisBadgeText,
-                { color: moisPayé ? '#16a34a' : '#b45309' },
+                { color: moisPayé ? colors.success : colors.warning },
               ]}>
                 {moisPayé ? 'Paye' : 'En attente'}
               </Text>
@@ -229,30 +231,30 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>Aucun paiement enregistre</Text>
+          <Text style={[styles.empty, { color: colors.textSecondary }]}>Aucun paiement enregistre</Text>
         }
         renderItem={({ item: p }) => (
-          <View style={[styles.paiCard, p.statut === 'ANNULE' && { opacity: 0.55 }]}>
+          <View style={[styles.paiCard, { backgroundColor: colors.card }, p.statut === 'ANNULE' && { opacity: 0.55 }]}>
             <View style={styles.paiTop}>
-              <Text style={styles.paiDate}>{fdate(p.datePaiement)}</Text>
-              <Text style={styles.paiMontant}>{money(p.montant)}</Text>
+              <Text style={[styles.paiDate, { color: colors.textSecondary }]}>{fdate(p.datePaiement)}</Text>
+              <Text style={[styles.paiMontant, { color: colors.success }]}>{money(p.montant)}</Text>
             </View>
 
             <View style={styles.paiMoisRow}>
-              <Text style={styles.paiMoisLabel}>Période : </Text>
-              <Text style={styles.paiMoisVal}>
+              <Text style={[styles.paiMoisLabel, { color: colors.textSecondary }]}>Période : </Text>
+              <Text style={[styles.paiMoisVal, { color: colors.text }]}>
                 {p.periodeDebut}{p.periodeFin && p.periodeFin !== p.periodeDebut ? ` → ${p.periodeFin}` : ''}
               </Text>
             </View>
 
-            <View style={styles.modeBadge}>
-              <Text style={styles.modeBadgeText}>{p.nombreMois} mois</Text>
+            <View style={[styles.modeBadge, { backgroundColor: colors.infoBg }]}>
+              <Text style={[styles.modeBadgeText, { color: colors.info }]}>{p.nombreMois} mois</Text>
             </View>
 
             {p.statut === 'ANNULE' && (
-              <Text style={[styles.paiRef, { color: '#dc2626' }]}>Annulé{p.motifAnnulation ? ` : ${p.motifAnnulation}` : ''}</Text>
+              <Text style={[styles.paiRef, { color: colors.danger }]}>Annulé{p.motifAnnulation ? ` : ${p.motifAnnulation}` : ''}</Text>
             )}
-            {p.observation ? <Text style={styles.paiNote}>{p.observation}</Text> : null}
+            {p.observation ? <Text style={[styles.paiNote, { color: colors.textSecondary }]}>{p.observation}</Text> : null}
 
             {p.statut !== 'ANNULE' && (
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 6, gap: 16 }}>
@@ -261,7 +263,7 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
                   <Text style={{ color: '#25D366', fontSize: 12, fontWeight: '600' }}>WhatsApp</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => annulerPaiement(p)}>
-                  <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{tr('annuler', lang)}</Text>
+                  <Text style={{ color: colors.danger, fontSize: 12, fontWeight: '600' }}>{tr('annuler', lang)}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -270,7 +272,7 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
       />
 
       {/* ── FAB ── */}
-      <TouchableOpacity style={styles.fab} onPress={ouvrirModal}>
+      <TouchableOpacity style={[styles.fab, { backgroundColor: colors.hero }]} onPress={ouvrirModal}>
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
 
@@ -281,74 +283,78 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
         transparent
         onRequestClose={() => setShowModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Nouveau paiement</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Nouveau paiement</Text>
               <TouchableOpacity onPress={() => setShowModal(false)} style={styles.modalCloseBtn}>
-                <Text style={styles.modalCloseText}>✕</Text>
+                <Text style={[styles.modalCloseText, { color: colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {/* Nombre de mois */}
-              <Text style={styles.fieldLabel}>Nombre de mois *</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Nombre de mois *</Text>
               <View style={styles.modeRow}>
                 {[1, 2, 3].map(n => (
                   <TouchableOpacity
                     key={n}
-                    style={[styles.modeBtn, form.nombreMois === n && styles.modeBtnActive]}
+                    style={[
+                      styles.modeBtn,
+                      { borderColor: colors.border },
+                      form.nombreMois === n && { backgroundColor: colors.hero, borderColor: colors.hero },
+                    ]}
                     onPress={() => setForm({ ...form, nombreMois: n })}
                   >
-                    <Text style={[styles.modeBtnText, form.nombreMois === n && { color: '#fff' }]}>{n} mois</Text>
+                    <Text style={[styles.modeBtnText, { color: colors.textSecondary }, form.nombreMois === n && { color: '#fff' }]}>{n} mois</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
               {/* Montant calculé */}
-              <View style={styles.montantPreview}>
-                <Text style={styles.montantPreviewLabel}>Montant à verser</Text>
-                <Text style={styles.montantPreviewVal}>{money((employe.salaireMensuel || 0) * form.nombreMois)}</Text>
+              <View style={[styles.montantPreview, { backgroundColor: colors.successBg }]}>
+                <Text style={[styles.montantPreviewLabel, { color: colors.success }]}>Montant à verser</Text>
+                <Text style={[styles.montantPreviewVal, { color: colors.success }]}>{money((employe.salaireMensuel || 0) * form.nombreMois)}</Text>
               </View>
 
               {/* Période début */}
-              <Text style={styles.fieldLabel}>Période de début (AAAA-MM-JJ) *</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Période de début (AAAA-MM-JJ) *</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBg }]}
                 value={form.periodeDebut}
                 onChangeText={t => setForm({ ...form, periodeDebut: t })}
                 placeholder="2026-08-01"
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={colors.placeholder}
               />
 
               {/* Période fin (si plusieurs mois) */}
               {form.nombreMois > 1 && (
                 <>
-                  <Text style={styles.fieldLabel}>Période de fin (AAAA-MM-JJ)</Text>
+                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Période de fin (AAAA-MM-JJ)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBg }]}
                     value={form.periodeFin}
                     onChangeText={t => setForm({ ...form, periodeFin: t })}
                     placeholder={form.periodeDebut}
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={colors.placeholder}
                   />
                 </>
               )}
 
               {/* Observation */}
-              <Text style={styles.fieldLabel}>Observation</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Observation</Text>
               <TextInput
-                style={[styles.input, styles.inputMultiline]}
+                style={[styles.input, styles.inputMultiline, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBg }]}
                 value={form.observation}
                 onChangeText={t => setForm({ ...form, observation: t })}
                 placeholder="Commentaire..."
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor={colors.placeholder}
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"
               />
 
-              <TouchableOpacity style={styles.saveBtn} onPress={enregistrerPaiement}>
+              <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.hero }]} onPress={enregistrerPaiement}>
                 <Text style={styles.saveBtnText}>{tr('enregistrer', lang)}</Text>
               </TouchableOpacity>
             </ScrollView>
@@ -360,11 +366,10 @@ export default function PaiementsEmployeScreen({ navigation, route }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  container: { flex: 1 },
 
   // Header
   header: {
-    backgroundColor: '#081648',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
@@ -384,7 +389,6 @@ const styles = StyleSheet.create({
 
   // Fiche employé
   ficheCard: {
-    backgroundColor: '#fff',
     margin: 12,
     borderRadius: 18,
     padding: 16,
@@ -397,29 +401,26 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginRight: 12,
   },
   avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
-  ficheNom: { fontWeight: '700', fontSize: 16, color: '#1e293b' },
-  fichePoste: { color: '#64748b', fontSize: 13, marginTop: 2 },
+  ficheNom: { fontWeight: '700', fontSize: 16 },
+  fichePoste: { fontSize: 13, marginTop: 2 },
 
   // KPIs
   kpisRow: {
     flexDirection: 'row',
     borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
     paddingTop: 12,
   },
   kpi: { flex: 1, alignItems: 'center' },
   kpiMid: {
     borderLeftWidth: 1, borderRightWidth: 1,
-    borderLeftColor: '#f1f5f9', borderRightColor: '#f1f5f9',
   },
-  kpiLabel: { color: '#94a3b8', fontSize: 10, marginBottom: 4, textAlign: 'center', textTransform: 'uppercase' },
-  kpiVal: { fontWeight: '700', fontSize: 12, color: '#1e293b', textAlign: 'center' },
+  kpiLabel: { fontSize: 10, marginBottom: 4, textAlign: 'center', textTransform: 'uppercase' },
+  kpiVal: { fontWeight: '700', fontSize: 12, textAlign: 'center' },
   moisBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   moisBadgeText: { fontSize: 11, fontWeight: '700' },
 
   // Paiement card
   paiCard: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     marginBottom: 10,
     padding: 14,
@@ -432,31 +433,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
-  paiDate: { color: '#475569', fontSize: 13, fontWeight: '500' },
-  paiMontant: { fontWeight: '800', fontSize: 17, color: '#16a34a' },
+  paiDate: { fontSize: 13, fontWeight: '500' },
+  paiMontant: { fontWeight: '800', fontSize: 17 },
   paiMoisRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  paiMoisLabel: { color: '#94a3b8', fontSize: 12 },
-  paiMoisVal: { color: '#475569', fontSize: 12, fontWeight: '600' },
+  paiMoisLabel: { fontSize: 12 },
+  paiMoisVal: { fontSize: 12, fontWeight: '600' },
   modeBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#eff6ff',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
     marginBottom: 4,
   },
-  modeBadgeText: { color: '#1e40af', fontSize: 11 },
-  paiNote: { color: '#64748b', fontSize: 12, marginTop: 4 },
-  paiRef: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
+  modeBadgeText: { fontSize: 11 },
+  paiNote: { fontSize: 12, marginTop: 4 },
+  paiRef: { fontSize: 11, marginTop: 2 },
 
   // States
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  empty: { textAlign: 'center', marginTop: 40 },
 
   // FAB
   fab: {
     position: 'absolute', bottom: 20, right: 20,
     width: 56, height: 56, borderRadius: 28,
-    backgroundColor: '#081648',
     alignItems: 'center', justifyContent: 'center',
     elevation: 6,
     shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6,
@@ -464,9 +463,8 @@ const styles = StyleSheet.create({
   fabText: { color: '#fff', fontSize: 30, fontWeight: 'bold', lineHeight: 36 },
 
   // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
   modalSheet: {
-    backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '90%' as any,
@@ -478,35 +476,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1e293b' },
+  modalTitle: { fontSize: 18, fontWeight: '700' },
   modalCloseBtn: { padding: 4 },
-  modalCloseText: { fontSize: 18, color: '#94a3b8' },
+  modalCloseText: { fontSize: 18 },
 
   // Form
-  fieldLabel: { color: '#475569', fontSize: 13, fontWeight: '500', marginBottom: 4 },
+  fieldLabel: { fontSize: 13, fontWeight: '500', marginBottom: 4 },
   input: {
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 12,
     fontSize: 14,
-    color: '#1e293b',
-    backgroundColor: '#fafafa',
   },
   inputMultiline: { minHeight: 70 },
 
   // Aperçu du montant calculé
   montantPreview: {
-    backgroundColor: '#f0fdf4',
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
     alignItems: 'center',
   },
-  montantPreviewLabel: { color: '#166534', fontSize: 11, textTransform: 'uppercase' },
-  montantPreviewVal: { color: '#16a34a', fontSize: 20, fontWeight: '800', marginTop: 2 },
+  montantPreviewLabel: { fontSize: 11, textTransform: 'uppercase' },
+  montantPreviewVal: { fontSize: 20, fontWeight: '800', marginTop: 2 },
 
   // Mode paiement
   modeRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
@@ -514,15 +508,12 @@ const styles = StyleSheet.create({
     flex: 1, paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#d1d5db',
     alignItems: 'center',
   },
-  modeBtnActive: { backgroundColor: '#081648', borderColor: '#081648' },
-  modeBtnText: { color: '#374151', fontSize: 10, fontWeight: '600', textAlign: 'center' },
+  modeBtnText: { fontSize: 10, fontWeight: '600', textAlign: 'center' },
 
   // Save
   saveBtn: {
-    backgroundColor: '#081648',
     borderRadius: 10,
     paddingVertical: 14,
     alignItems: 'center',

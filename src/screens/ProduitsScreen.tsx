@@ -1,15 +1,16 @@
-﻿import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
+import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert, Modal,
   ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity,
+  TextInput as RNTextInput, Text, ActivityIndicator, Switch,
 } from 'react-native';
 import {
-  Text, Card, Searchbar, Chip, ActivityIndicator,
-  TextInput, Button, IconButton, Divider, Switch,
+  TextInput, Button, IconButton, Divider,
 } from 'react-native-paper';
 import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
   getProduits, deleteProduit, getCategories, createCategorie, updateCategorie, deleteCategorie,
@@ -19,6 +20,7 @@ import { cacheProduits, getProduitsCache } from '../db/database';
 import { creerProduitOffline, modifierProduitOffline, getNombreProduitsPending } from '../services/offline.service';
 import { Produit, Categorie } from '../types';
 import { getNiveaux, creerNiveau, modifierNiveau, supprimerNiveau, decomposer, ProduitNiveau } from '../services/produit-niveau.service';
+import { getUnitesVente, creerUniteVente, modifierUniteVente, supprimerUniteVente, UniteVente } from '../services/unite-vente.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import { SkeletonCard } from '../components/SkeletonLoader';
 import { StockBadge } from '../components/StockBadge';
@@ -26,6 +28,7 @@ import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
 import { useMontantInput } from '../components/MontantInput';
+import { GL, colorCard, mobileCard, filterZone, sectionLabel as slabel } from '../theme/styles';
 
 type Segment = 'all' | 'low' | 'expired' | 'bio';
 const TYPES_VENTE = ['UNITE', 'KG', 'LITRE', 'COMPTANT_UNIQUEMENT'] as const;
@@ -46,12 +49,13 @@ interface FormProduit {
   datePeremption: string;
   bio: boolean;
   typeVente: string;
+  uniteBase: string;
 }
 
 const emptyForm = (): FormProduit => ({
   nom: '', prixAchat: 0, prixVente: 0, quantite: '0',
   seuilAlerte: '5', categorieId: '', fournisseurId: '', description: '', codeBarre: '',
-  datePeremption: '', bio: false, typeVente: 'UNITE',
+  datePeremption: '', bio: false, typeVente: 'UNITE', uniteBase: 'Unité',
 });
 
 export default function ProduitsScreen() {
@@ -91,6 +95,14 @@ export default function ProduitsScreen() {
   useEffect(() => {
     getCategories().then(res => setCategories(res.data?.data || res.data || [])).catch(() => {});
     getFournisseurs().then(res => setFournisseurs(res.data?.data || res.data || [])).catch(() => {});
+    // Unités de vente (CleFonctionnalite.VENTE_GROS_DETAIL) — masquée/désactivée
+    // exactement comme Dépôt garde / Comptes bancaires / Fidélité, via le même
+    // cache 'fonctionnalites_avancees_desactivees' (voir LoginScreen.tsx).
+    AsyncStorage.getItem('fonctionnalites_avancees_desactivees').then(raw => {
+      let desactivees: string[] = [];
+      if (raw) { try { desactivees = JSON.parse(raw); } catch { /* ignore */ } }
+      setVenteGrosDetailActif(!desactivees.includes('VENTE_GROS_DETAIL'));
+    });
     AsyncStorage.getItem('user').then(raw => {
       if (!raw) return;
       try {
@@ -154,6 +166,30 @@ export default function ProduitsScreen() {
   const [afficherFormNiveau, setAfficherFormNiveau] = useState(true); // Cas B : formulaire du prochain sous-conditionnement visible ?
   const [avanceAjoutOuvert, setAvanceAjoutOuvert] = useState(false); // section "Avancé" (prix d'achat) repliée par défaut — ajout
   const [avanceEditOuvert, setAvanceEditOuvert] = useState(false); // idem en édition
+
+  // Drapeau local "Gestion par conditionnement" (feat_conditionnement,
+  // AsyncStorage — réglé dans BoutiqueSettingsScreen.toggleConditionnement) :
+  // conditionne l'affichage du bouton Niveaux, exactement comme *ngIf
+  // "conditionnementActif" sur products.page.html côté Ionic. Relu à chaque
+  // focus de l'écran (comme ionViewWillEnter), pas seulement au montage.
+  const [conditionnementActif, setConditionnementActif] = useState(false);
+  useFocusEffect(useCallback(() => {
+    AsyncStorage.getItem('feat_conditionnement').then(v => setConditionnementActif(v === 'true'));
+  }, []));
+
+  // ==================== UNITÉS DE VENTE (CleFonctionnalite.VENTE_GROS_DETAIL) ====================
+  // Système simple et indépendant de ProduitNiveau ci-dessus : un seul stock
+  // produit, pas de cascade — voir unite-vente.service.ts.
+  const [venteGrosDetailActif, setVenteGrosDetailActif] = useState(false);
+  const [showUnitesVenteModal, setShowUnitesVenteModal] = useState(false);
+  const [produitUnitesCourant, setProduitUnitesCourant] = useState<Produit | null>(null);
+  const [unitesVente, setUnitesVente] = useState<UniteVente[]>([]);
+  const [loadingUnitesVente, setLoadingUnitesVente] = useState(false);
+  const [savingUniteVente, setSavingUniteVente] = useState(false);
+  const [editingUniteVenteId, setEditingUniteVenteId] = useState<number | null>(null);
+  const [formUniteVente, setFormUniteVente] = useState({ nom: '', referenceId: '' as string, facteurRelatif: '', prixAchat: 0, prixVente: 0 });
+  const prixAchatUniteInput = useMontantInput(formUniteVente.prixAchat, v => setFormUniteVente(f => ({ ...f, prixAchat: v })));
+  const prixVenteUniteInput = useMontantInput(formUniteVente.prixVente, v => setFormUniteVente(f => ({ ...f, prixVente: v })));
 
   const charger = useCallback(async () => {
     // On tente toujours l'appel réel en premier — NetInfo.fetch() peut renvoyer
@@ -228,6 +264,7 @@ export default function ProduitsScreen() {
       datePeremption: p.datePeremption || '',
       bio: !!p.bio,
       typeVente: p.typeVente || 'UNITE',
+      uniteBase: p.uniteBase || 'Unité',
     });
     setShowModal(true);
   };
@@ -255,6 +292,11 @@ export default function ProduitsScreen() {
       datePeremption: form.datePeremption.trim() || undefined,
       bio: form.bio,
       typeVente: form.typeVente,
+      // Unité de base (système simple gros/détail) — envoyée via le même
+      // endpoint générique PUT/POST /produits déjà utilisé pour tous les
+      // autres champs produit (aucun endpoint dédié). Toujours "Unité" par
+      // défaut si le champ n'a pas été affiché (fonctionnalité désactivée).
+      uniteBase: form.uniteBase.trim() || 'Unité',
     };
     try {
       if (editing) {
@@ -464,6 +506,108 @@ export default function ProduitsScreen() {
     ]);
   };
 
+  // ==================== UNITÉS DE VENTE ====================
+
+  const ouvrirUnitesVente = async (p: Produit) => {
+    setProduitUnitesCourant(p);
+    setShowUnitesVenteModal(true);
+    setEditingUniteVenteId(null);
+    setFormUniteVente({ nom: '', referenceId: '', facteurRelatif: '', prixAchat: 0, prixVente: 0 });
+    setLoadingUnitesVente(true);
+    try {
+      const data = await getUnitesVente(p.id);
+      setUnitesVente(data);
+    } catch {
+      Alert.alert('Erreur', 'Chargement des unités de vente impossible');
+    } finally {
+      setLoadingUnitesVente(false);
+    }
+  };
+
+  const rechargerUnitesVente = async (produitId: number) => {
+    const data = await getUnitesVente(produitId);
+    setUnitesVente(data);
+  };
+
+  // Nom de l'unité choisie comme référence (chaîne vide = unité de base du
+  // produit) — sert uniquement à afficher le libellé de la question du
+  // facteur relatif, jamais envoyé tel quel au serveur.
+  const nomReferenceUnite = (referenceId: string): string => {
+    if (!referenceId) return produitUnitesCourant?.uniteBase || tr('unite_base_mot', lang);
+    return unitesVente.find(u => String(u.id) === referenceId)?.nom || '';
+  };
+
+  const ajouterOuModifierUniteVente = async () => {
+    if (!produitUnitesCourant || !formUniteVente.nom.trim()) {
+      Alert.alert('Erreur', "Le nom de l'unité est obligatoire");
+      return;
+    }
+    const facteurNum = parseFloat(formUniteVente.facteurRelatif);
+    if (isNaN(facteurNum) || facteurNum <= 0) {
+      Alert.alert('Erreur', 'Le facteur doit être un nombre supérieur à 0');
+      return;
+    }
+    if (!formUniteVente.prixVente || formUniteVente.prixVente <= 0) {
+      Alert.alert('Erreur', 'Le prix de vente est obligatoire');
+      return;
+    }
+    setSavingUniteVente(true);
+    try {
+      // uniteReferenceId omis (undefined) quand la référence choisie est
+      // l'unité de base elle-même — jamais de facteur total calculé côté
+      // client (facteurBase), c'est le serveur qui le déduit de
+      // uniteReferenceId + facteurRelatif.
+      const payload = {
+        nom: formUniteVente.nom.trim(),
+        prixVente: formUniteVente.prixVente,
+        prixAchat: formUniteVente.prixAchat || 0,
+        uniteReferenceId: formUniteVente.referenceId ? Number(formUniteVente.referenceId) : undefined,
+        facteurRelatif: facteurNum,
+      };
+      if (editingUniteVenteId) {
+        await modifierUniteVente(editingUniteVenteId, payload);
+      } else {
+        await creerUniteVente(produitUnitesCourant.id, payload);
+      }
+      await rechargerUnitesVente(produitUnitesCourant.id);
+      setEditingUniteVenteId(null);
+      setFormUniteVente({ nom: '', referenceId: '', facteurRelatif: '', prixAchat: 0, prixVente: 0 });
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || "Erreur lors de l'enregistrement de l'unité";
+      Alert.alert('Erreur', msg);
+    } finally {
+      setSavingUniteVente(false);
+    }
+  };
+
+  // Le sélecteur "par rapport à" repart sur l'unité de base par défaut (on ne
+  // connaît pas la référence d'origine — l'API GET ne renvoie que le facteur
+  // total déjà résolu, facteurBase) : l'admin peut re-choisir une référence
+  // et un nouveau facteur relatif librement.
+  const ouvrirEditUniteVente = (u: UniteVente) => {
+    setEditingUniteVenteId(u.id);
+    setFormUniteVente({ nom: u.nom, referenceId: '', facteurRelatif: String(u.facteurBase), prixAchat: u.prixAchat || 0, prixVente: u.prixVente || 0 });
+  };
+
+  const annulerEditUniteVente = () => {
+    setEditingUniteVenteId(null);
+    setFormUniteVente({ nom: '', referenceId: '', facteurRelatif: '', prixAchat: 0, prixVente: 0 });
+  };
+
+  const supprimerUniteVenteFn = (u: UniteVente) => {
+    Alert.alert(tr('supprimer', lang), `Supprimer "${u.nom}" ?`, [
+      { text: tr('annuler', lang), style: 'cancel' },
+      { text: tr('supprimer', lang), style: 'destructive', onPress: async () => {
+        try {
+          await supprimerUniteVente(u.id);
+          if (produitUnitesCourant) await rechargerUnitesVente(produitUnitesCourant.id);
+        } catch (e: any) {
+          Alert.alert('Erreur', e.response?.data?.message || 'Suppression impossible');
+        }
+      }},
+    ]);
+  };
+
   const genererPdfStock = async () => {
     const liste = filtered.length > 0 ? filtered : produits;
     const totalArticles = liste.reduce((s, p) => s + (p.quantite || 0), 0);
@@ -600,74 +744,98 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         </View>
       )}
 
-      {/* Cartes KPI (admin), comme .color-cards Ionic */}
+      {/* ── Color Cards KPI (≡ .color-cards .cc-blue/green/orange/red Ionic) ── */}
       {stats && (
-        <View style={styles.colorCards}>
-          <View style={[styles.colorCard, { backgroundColor: '#dbeafe' }]}>
-            <MaterialCommunityIcons name="cube-outline" size={16} color="#1d4ed8" />
-            <Text style={[styles.ccLabel, { color: '#1d4ed8' }]}>Produits</Text>
-            <Text style={[styles.ccValue, { color: '#1d4ed8' }]}>{stats.totalProduits}</Text>
+        <View style={styles.colorCardsRow}>
+          {/* Produits — cc-blue */}
+          <View style={[colorCard.base, colorCard.blue]}>
+            <Ionicons name="cube-outline" size={18} color="#fff" style={{ opacity: 0.9 }} />
+            <Text style={colorCard.label}>Produits</Text>
+            <Text style={colorCard.value}>{stats.totalProduits}</Text>
           </View>
-          <View style={[styles.colorCard, { backgroundColor: '#dcfce7' }]}>
-            <MaterialCommunityIcons name="trending-up" size={16} color="#15803d" />
-            <Text style={[styles.ccLabel, { color: '#15803d' }]}>Valeur stock</Text>
-            <Text style={[styles.ccValue, { color: '#15803d' }]} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
+          {/* Valeur stock — cc-green */}
+          <View style={[colorCard.base, colorCard.green]}>
+            <Ionicons name="trending-up-outline" size={18} color="#fff" style={{ opacity: 0.9 }} />
+            <Text style={colorCard.label}>Valeur stock</Text>
+            <Text style={colorCard.value} numberOfLines={1}>{(stats.valeurTotale || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
           </View>
-          <View style={[styles.colorCard, { backgroundColor: '#fef3c7' }]}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#b45309" />
-            <Text style={[styles.ccLabel, { color: '#b45309' }]}>Stock faible</Text>
-            <Text style={[styles.ccValue, { color: '#b45309' }]}>{stats.produitsStockFaible}</Text>
+          {/* Stock faible — cc-orange */}
+          <View style={[colorCard.base, colorCard.orange]}>
+            <Ionicons name="alert-circle-outline" size={18} color="#fff" style={{ opacity: 0.9 }} />
+            <Text style={colorCard.label}>Faible</Text>
+            <Text style={colorCard.value}>{stats.produitsStockFaible}</Text>
           </View>
-          <View style={[styles.colorCard, { backgroundColor: '#fee2e2' }]}>
-            <MaterialCommunityIcons name="close-circle-outline" size={16} color="#b91c1c" />
-            <Text style={[styles.ccLabel, { color: '#b91c1c' }]}>Rupture</Text>
-            <Text style={[styles.ccValue, { color: '#b91c1c' }]}>{stats.produitsRupture}</Text>
+          {/* Rupture — cc-red */}
+          <View style={[colorCard.base, colorCard.red]}>
+            <Ionicons name="close-circle-outline" size={18} color="#fff" style={{ opacity: 0.9 }} />
+            <Text style={colorCard.label}>Rupture</Text>
+            <Text style={colorCard.value}>{stats.produitsRupture}</Text>
           </View>
         </View>
       )}
 
+      {/* ── Filter Zone (≡ .filter-zone Ionic) ── */}
       <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-        <Searchbar
-          placeholder={tr('recherche_produit', lang)}
-          value={search}
-          onChangeText={setSearch}
-          style={[styles.search, { margin: 0 }]}
-        />
+        {/* Barre de recherche (≡ .fz-search) */}
+        <View style={filterZone.searchRow}>
+          <Ionicons name="search-outline" size={18} color={GL.slate400} />
+          <RNTextInput
+            style={filterZone.searchInput}
+            placeholder={tr('recherche_produit', lang)}
+            placeholderTextColor={GL.slate400}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle-outline" size={18} color={GL.slate400} />
+            </TouchableOpacity>
+          )}
+        </View>
 
+        {/* Chips catégories (≡ .fz-chips) */}
         {categories.length > 0 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <Chip compact selected={selectedCategorieId === null} onPress={() => setSelectedCategorieId(null)}>
-                Toutes catégories
-              </Chip>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <TouchableOpacity
+                style={[filterZone.chip, selectedCategorieId === null && filterZone.chipActive]}
+                onPress={() => setSelectedCategorieId(null)}
+              >
+                <Text style={[filterZone.chipText, selectedCategorieId === null && filterZone.chipTextActive]}>Toutes</Text>
+              </TouchableOpacity>
               {categories.map(c => (
-                <Chip key={c.id} compact selected={selectedCategorieId === c.id} onPress={() => setSelectedCategorieId(c.id)}>
-                  {c.nom}
-                </Chip>
+                <TouchableOpacity
+                  key={c.id}
+                  style={[filterZone.chip, selectedCategorieId === c.id && filterZone.chipActive]}
+                  onPress={() => setSelectedCategorieId(c.id)}
+                >
+                  <Text style={[filterZone.chipText, selectedCategorieId === c.id && filterZone.chipTextActive]}>{c.nom}</Text>
+                </TouchableOpacity>
               ))}
             </View>
           </ScrollView>
         )}
 
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        {/* Chips filtre segment */}
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           {([
             ['all', 'cube-outline', 'Tous'],
-            ['low', 'alert-outline', 'Stock faible'],
+            ['low', 'warning-outline', 'Stock faible'],
             ['expired', 'calendar-outline', 'Péremption'],
-            ['bio', 'leaf', 'Bio'],
+            ['bio', 'leaf-outline', 'Bio'],
           ] as [Segment, string, string][]).map(([seg, icon, label]) => (
             <TouchableOpacity
               key={seg}
-              style={[styles.segChip, segment === seg && styles.segChipActive]}
+              style={[filterZone.chip, segment === seg && filterZone.chipActive]}
               onPress={() => setSegment(seg)}
             >
-              <MaterialCommunityIcons name={icon as any} size={13} color={segment === seg ? '#fff' : '#555'} />
-              <Text style={[styles.segChipText, segment === seg && styles.segChipTextActive]}>{label}</Text>
+              <Ionicons name={icon as any} size={13} color={segment === seg ? '#fff' : GL.blue600} />
+              <Text style={[filterZone.chipText, segment === seg && filterZone.chipTextActive]}>{label}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        <Text style={styles.sectionLabel}>{filtered.length} article(s)</Text>
+        <Text style={slabel.text}>{filtered.length} article(s)</Text>
       </View>
 
       <FlatList
@@ -678,11 +846,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         renderItem={({ item }) => {
           const alerte = getProduitAlerteMessage(item);
           return (
-            <Card style={[styles.card, item.id < 0 && styles.cardPending]}>
-              <Card.Content>
+            <View style={[mobileCard.base, item.id < 0 && styles.cardPending]}>
+              <View>
                 <View style={styles.row}>
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text variant="titleMedium" style={{ color: colors.text }} numberOfLines={1}>{item.nom}</Text>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: GL.slate900 }} numberOfLines={1}>{item.nom}</Text>
                     {item.bio && (
                       <View style={styles.bioBadge}><Text style={styles.bioBadgeText}>Bio</Text></View>
                     )}
@@ -715,28 +883,51 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                 )}
 
                 {item.id < 0 && <Text style={styles.pendingLabel}>⏳ En attente de sync</Text>}
-              </Card.Content>
-              <Card.Actions style={styles.actions}>
-                <IconButton icon="pencil" size={20} iconColor="#1a56db" onPress={() => ouvrirEdition(item)} />
-                <IconButton icon="delete" size={20} iconColor="#f44336" onPress={() => confirmerSuppression(item)} />
-                <IconButton icon="layers" size={20} iconColor="#7c3aed" onPress={() => ouvrirNiveaux(item)} />
-              </Card.Actions>
-            </Card>
+              </View>
+              <View style={[styles.actions]}>
+                <TouchableOpacity onPress={() => ouvrirEdition(item)} style={styles.actionBtn}>
+                  <Ionicons name="pencil-outline" size={20} color={GL.blue600} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => confirmerSuppression(item)} style={styles.actionBtn}>
+                  <Ionicons name="trash-outline" size={20} color={GL.red500} />
+                </TouchableOpacity>
+                {conditionnementActif && (
+                  <TouchableOpacity onPress={() => ouvrirNiveaux(item)} style={styles.actionBtn}>
+                    <Ionicons name="layers-outline" size={20} color="#7c3aed" />
+                  </TouchableOpacity>
+                )}
+                {venteGrosDetailActif && (
+                  <TouchableOpacity onPress={() => ouvrirUnitesVente(item)} style={styles.actionBtn}>
+                    <Ionicons name="scale-outline" size={20} color="#0d9488" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
           );
         }}
-        ListEmptyComponent={<Text style={styles.empty}>Aucun produit trouvé</Text>}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <MaterialCommunityIcons name="package-variant-closed" size={64} color={colors.border} />
+            <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>Aucun produit trouvé</Text>
+            <Text style={[styles.emptySub, { color: colors.textSecondary }]}>
+              {search.trim() || selectedCategorieId || segment !== 'all'
+                ? 'Aucun produit ne correspond à ces filtres'
+                : 'Ajoutez votre premier produit avec le bouton +'}
+            </Text>
+          </View>
+        }
       />
 
       {/* Modal créer / modifier */}
       <Modal visible={showModal} animationType="slide" onRequestClose={fermerModal}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalHeader}>
-            <Text variant="titleLarge" style={styles.modalTitle}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.text }]}>
               {editing ? tr('modifier', lang) : tr('nouveau_produit', lang)}
             </Text>
-            <IconButton icon="close" onPress={fermerModal} />
+            <IconButton icon="close" iconColor={colors.text} onPress={fermerModal} />
           </View>
-          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={[styles.modalBody, { backgroundColor: colors.background }]} keyboardShouldPersistTaps="handled">
             <TextInput label={tr('nom_produit', lang)} value={form.nom}
               onChangeText={v => setForm(f => ({ ...f, nom: v }))}
               style={styles.input} mode="outlined" />
@@ -816,6 +1007,13 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               ))}
             </View>
 
+            {venteGrosDetailActif && (
+              <TextInput label={tr('unite_base_label', lang)} value={form.uniteBase}
+                onChangeText={v => setForm(f => ({ ...f, uniteBase: v }))}
+                placeholder="Unité, Pièce, Kg..."
+                style={styles.input} mode="outlined" />
+            )}
+
             <TextInput label="Date de péremption (AAAA-MM-JJ)" value={form.datePeremption}
               onChangeText={v => setForm(f => ({ ...f, datePeremption: v }))}
               style={styles.input} mode="outlined" placeholder="2026-12-31" />
@@ -858,11 +1056,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
       {/* Modal gestion catégories */}
       <Modal visible={showCategoriesModal} animationType="slide" onRequestClose={() => setShowCategoriesModal(false)}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalHeader}>
-            <Text variant="titleLarge" style={styles.modalTitle}>Catégories</Text>
-            <IconButton icon="close" onPress={() => setShowCategoriesModal(false)} />
+          <View style={[styles.modalHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.text }]}>Catégories</Text>
+            <IconButton icon="close" iconColor={colors.text} onPress={() => setShowCategoriesModal(false)} />
           </View>
-          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={[styles.modalBody, { backgroundColor: colors.background }]} keyboardShouldPersistTaps="handled">
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <TextInput label="Nom de la catégorie" value={categoryName} onChangeText={setCategoryName}
                 style={[styles.input, { flex: 1, marginBottom: 0 }]} mode="outlined" />
@@ -874,7 +1072,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
             </Text>
 
             {categories.map(cat => (
-              <View key={cat.id} style={styles.catRow}>
+              <View key={cat.id} style={[styles.catRow, { borderBottomColor: colors.border }]}>
                 {editingCategoryId === cat.id ? (
                   <>
                     <TextInput value={editingCategoryName} onChangeText={setEditingCategoryName}
@@ -904,12 +1102,13 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
       {/* Modal statistiques */}
       <Modal visible={showStatsModal} animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
-        <View style={styles.modalHeader}>
-          <Text variant="titleLarge" style={styles.modalTitle}>Statistiques stock</Text>
-          <IconButton icon="close" onPress={() => setShowStatsModal(false)} />
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <View style={[styles.modalHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+          <Text variant="titleLarge" style={[styles.modalTitle, { color: colors.text }]}>Statistiques stock</Text>
+          <IconButton icon="close" iconColor={colors.text} onPress={() => setShowStatsModal(false)} />
         </View>
         {stats && (
-          <ScrollView contentContainerStyle={styles.modalBody}>
+          <ScrollView contentContainerStyle={[styles.modalBody, { backgroundColor: colors.background }]}>
             <View style={styles.colorCards}>
               <View style={[styles.colorCard, { backgroundColor: '#dbeafe' }]}>
                 <MaterialCommunityIcons name="cube-outline" size={16} color="#1d4ed8" />
@@ -933,47 +1132,50 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               </View>
             </View>
             {stats.produitsPerimes !== undefined && (
-              <View style={styles.statRow}>
+              <View style={[styles.statRow, { borderBottomColor: colors.border }]}>
                 <Text style={{ color: colors.text }}>Produits périmés</Text>
                 <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>{stats.produitsPerimes}</Text>
               </View>
             )}
             {stats.totalFournisseurs !== undefined && (
-              <View style={styles.statRow}>
+              <View style={[styles.statRow, { borderBottomColor: colors.border }]}>
                 <Text style={{ color: colors.text }}>Fournisseurs</Text>
                 <Text style={{ color: colors.text, fontWeight: 'bold' }}>{stats.totalFournisseurs}</Text>
               </View>
             )}
           </ScrollView>
         )}
+        </View>
       </Modal>
 
       {/* Modal Niveaux */}
       <Modal visible={showNiveauxModal} animationType="slide" onRequestClose={() => setShowNiveauxModal(false)}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalHeader}>
+        <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
             <View style={{ flex: 1 }}>
-              <Text variant="titleMedium" style={styles.modalTitle}>Niveaux — {produitCourant?.nom}</Text>
-              <Text style={{ fontSize: 12, color: '#64748b' }}>Conditionnement multi-niveaux</Text>
+              <Text variant="titleMedium" style={[styles.modalTitle, { color: colors.text }]}>Niveaux — {produitCourant?.nom}</Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>Conditionnement multi-niveaux</Text>
             </View>
-            <IconButton icon="close" onPress={() => setShowNiveauxModal(false)} />
+            <IconButton icon="close" iconColor={colors.text} onPress={() => setShowNiveauxModal(false)} />
           </View>
 
           {loadingNiveaux ? (
-            <ActivityIndicator style={{ flex: 1 }} size="large" color="#7c3aed" />
+            <View style={{ flex: 1, backgroundColor: colors.background, padding: 20 }}>
+              <SkeletonCard count={3} />
+            </View>
           ) : (
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, backgroundColor: colors.background }} keyboardShouldPersistTaps="handled">
 
               {/* Chaine visuelle des niveaux */}
               {niveaux.length > 0 && (
-                <View style={nStyles.chaineContainer}>
+                <View style={[nStyles.chaineContainer, { backgroundColor: colors.inputBg }]}>
                   {buildNiveauxChaine(niveaux).map((n, i, arr) => (
                     <View key={n.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View style={nStyles.chaineBadge}>
+                      <View style={[nStyles.chaineBadge, { backgroundColor: colors.primary }]}>
                         <Text style={nStyles.chaineNom}>{n.nom}</Text>
                       </View>
                       {i < arr.length - 1 && (
-                        <Text style={nStyles.chaineArrow}> → </Text>
+                        <Text style={[nStyles.chaineArrow, { color: colors.textSecondary }]}> → </Text>
                       )}
                     </View>
                   ))}
@@ -982,7 +1184,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
               {/* Liste des niveaux existants */}
               {niveaux.length === 0 && (
-                <Text style={{ textAlign: 'center', color: '#94a3b8', marginBottom: 20, marginTop: 10 }}>
+                <Text style={{ textAlign: 'center', color: colors.textSecondary, marginBottom: 20, marginTop: 10 }}>
                   Aucun niveau defini pour ce produit
                 </Text>
               )}
@@ -990,7 +1192,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               {buildNiveauxChaine(niveaux).map(n => {
                 const parentNom = nomParentNiveau(n, niveaux);
                 return (
-                  <View key={n.id} style={nStyles.niveauCard}>
+                  <View key={n.id} style={[nStyles.niveauCard, { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 }]}>
                     {editingNiveauId === n.id ? (
                       /* Mode edition — dialogue convivial, sans sélecteur technique de parent
                          (le parent reste celui déjà associé à ce niveau, non modifiable ici) */
@@ -1044,11 +1246,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                             const valeurEquivalente = facteurN * prixVenteN;
                             const ecart = valeurEquivalente - prixParent;
                             return (
-                              <View style={nStyles.comparaisonBox}>
-                                <Text style={nStyles.comparaisonText}>
+                              <View style={[nStyles.comparaisonBox, { backgroundColor: colors.infoBg, borderColor: colors.info }]}>
+                                <Text style={[nStyles.comparaisonText, { color: colors.info }]}>
                                   1 {parentNom} = {facteurN} {nomAffiche} à {prixVenteN.toLocaleString('de-DE')} F l'unité = {valeurEquivalente.toLocaleString('de-DE')} F si vendus séparément.
                                 </Text>
-                                <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? '#15803d' : '#b91c1c' }]}>
+                                <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? colors.success : colors.danger }]}>
                                   {ecart >= 0
                                     ? `Le prix actuel d'1 ${parentNom} (${prixParent.toLocaleString('de-DE')} F) fait économiser ${ecart.toLocaleString('de-DE')} F au client qui achète en ${parentNom}.`
                                     : `Le prix actuel d'1 ${parentNom} (${prixParent.toLocaleString('de-DE')} F) coûte ${Math.abs(ecart).toLocaleString('de-DE')} F de plus — vérifie le prix de ${parentNom} ou de ${nomAffiche}.`}
@@ -1060,11 +1262,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                           const valeurDetail = facteurN * prixUnite;
                           const ecart = valeurDetail - prixVenteN;
                           return (
-                            <View style={nStyles.comparaisonBox}>
-                              <Text style={nStyles.comparaisonText}>
+                            <View style={[nStyles.comparaisonBox, { backgroundColor: colors.infoBg, borderColor: colors.info }]}>
+                              <Text style={[nStyles.comparaisonText, { color: colors.info }]}>
                                 1 {nomAffiche} = {facteurN} {produitCourant?.nom} à {prixUnite.toLocaleString('de-DE')} F l'unité = {valeurDetail.toLocaleString('de-DE')} F si vendu(s) à l'unité.
                               </Text>
-                              <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? '#15803d' : '#b91c1c' }]}>
+                              <Text style={[nStyles.comparaisonText, { fontWeight: '700', marginTop: 4, color: ecart >= 0 ? colors.success : colors.danger }]}>
                                 {ecart >= 0
                                   ? `Ton prix ${nomAffiche} (${prixVenteN.toLocaleString('de-DE')} F) fait économiser ${ecart.toLocaleString('de-DE')} F au client qui achète en gros.`
                                   : `Ton prix ${nomAffiche} (${prixVenteN.toLocaleString('de-DE')} F) coûte ${Math.abs(ecart).toLocaleString('de-DE')} F de plus que l'achat à l'unité — vérifie ce prix.`}
@@ -1084,7 +1286,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                       /* Mode affichage */
                       <View>
                         <View style={nStyles.niveauHeader}>
-                          <Text style={nStyles.niveauNom}>{n.nom}</Text>
+                          <Text style={[nStyles.niveauNom, { color: colors.text }]}>{n.nom}</Text>
                           <View style={nStyles.niveauActions}>
                             <IconButton icon="pencil" size={18} iconColor="#1a56db" onPress={() => ouvrirEditNiveau(n)} />
                             <IconButton icon="delete" size={18} iconColor="#f44336" onPress={() => supprimerNiveauFn(n)} />
@@ -1093,8 +1295,8 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
                         {/* Relation parent → enfant */}
                         {parentNom ? (
-                          <View style={nStyles.contientBadge}>
-                            <Text style={nStyles.contientText}>
+                          <View style={[nStyles.contientBadge, { backgroundColor: colors.infoBg }]}>
+                            <Text style={[nStyles.contientText, { color: colors.info }]}>
                               1 {parentNom} = {n.facteur} {n.nom}
                             </Text>
                           </View>
@@ -1108,28 +1310,26 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 
                         {/* Prix achat et vente — exigence client */}
                         <View style={nStyles.prixRow}>
-                          <View style={nStyles.prixBox}>
-                            <Text style={nStyles.prixLabel}>Achat</Text>
-                            <Text style={nStyles.prixAchatVal}>{n.prixAchat.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
+                          <View style={[nStyles.prixBox, { backgroundColor: colors.dangerBg }]}>
+                            <Text style={[nStyles.prixLabel, { color: colors.danger }]}>Achat</Text>
+                            <Text style={[nStyles.prixAchatVal, { color: colors.danger }]}>{n.prixAchat.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
                           </View>
-                          <View style={[nStyles.prixBox, { backgroundColor: '#f0fdf4' }]}>
-                            <Text style={[nStyles.prixLabel, { color: '#15803d' }]}>Vente</Text>
-                            <Text style={nStyles.prixVenteVal}>{n.prixVente.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
+                          <View style={[nStyles.prixBox, { backgroundColor: colors.successBg }]}>
+                            <Text style={[nStyles.prixLabel, { color: colors.success }]}>Vente</Text>
+                            <Text style={[nStyles.prixVenteVal, { color: colors.success }]}>{n.prixVente.toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
                           </View>
                         </View>
 
                         <View style={nStyles.stockRow}>
-                          <Text style={nStyles.stockLabel}>Stock :</Text>
-                          <View style={nStyles.stockBadge}>
-                            <Text style={nStyles.stockVal}>{n.stock ?? 0}</Text>
-                          </View>
-                          <Text style={{ color: '#94a3b8', fontSize: 11 }}>(modifiable via crayon)</Text>
+                          <Text style={[nStyles.stockLabel, { color: colors.textSecondary }]}>Stock {n.nom} :</Text>
+                          <StockBadge quantite={n.stock ?? 0} seuilAlerte={5} />
+                          <Text style={{ color: colors.textSecondary, fontSize: 11, marginLeft: 6 }}>(modifiable via crayon)</Text>
                         </View>
 
                         {/* Bouton decomposer si ce niveau a un enfant */}
                         {niveaux.some(c => c.parentId === n.id) && (
                           <TouchableOpacity
-                            style={nStyles.decomposerBtn}
+                            style={[nStyles.decomposerBtn, { backgroundColor: colors.warningBg, borderColor: colors.warning }]}
                             onPress={async () => {
                               const enfants = niveaux.filter(c => c.parentId === n.id);
                               const enfant = enfants[0];
@@ -1153,7 +1353,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                               );
                             }}
                           >
-                            <Text style={nStyles.decomposerText}>
+                            <Text style={[nStyles.decomposerText, { color: colors.warning }]}>
                               Ouvrir 1 {n.nom} → {n.facteur} {niveaux.find(c => c.parentId === n.id)?.nom || 'unites'}
                             </Text>
                           </TouchableOpacity>
@@ -1171,11 +1371,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   manuellement. Cas A : aucun niveau n'existe encore.
                   Cas B : au moins un niveau existe déjà. */}
               {niveaux.length === 0 ? (
-                <View style={nStyles.addSection}>
+                <View style={[nStyles.addSection, { backgroundColor: colors.successBg }]}>
                   {niveauVeutGros === null ? (
                     <View>
-                      <Text style={nStyles.addTitle}>Vente en gros</Text>
-                      <Text style={nStyles.addHint}>
+                      <Text style={[nStyles.addTitle, { color: colors.success }]}>Vente en gros</Text>
+                      <Text style={[nStyles.addHint, { color: colors.textSecondary }]}>
                         Ce produit se vend-il aussi en plus grand conditionnement (en gros) ?
                       </Text>
                       <View style={nStyles.row2}>
@@ -1328,6 +1528,161 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Modal Unités de vente (CleFonctionnalite.VENTE_GROS_DETAIL) — système
+          simple, indépendant du modal Niveaux ci-dessus */}
+      <Modal visible={showUnitesVenteModal} animationType="slide" onRequestClose={() => setShowUnitesVenteModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text variant="titleMedium" style={styles.modalTitle}>
+                {tr('unites_vente_titre', lang)} — {produitUnitesCourant?.nom}
+              </Text>
+              <Text style={{ fontSize: 12, color: '#64748b' }}>{tr('unites_vente_sous_titre', lang)}</Text>
+            </View>
+            <IconButton icon="close" onPress={() => setShowUnitesVenteModal(false)} />
+          </View>
+
+          {loadingUnitesVente ? (
+            <ActivityIndicator style={{ flex: 1 }} size="large" color="#0d9488" />
+          ) : (
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+
+              {unitesVente.length === 0 && (
+                <Text style={{ textAlign: 'center', color: '#94a3b8', marginBottom: 20, marginTop: 10 }}>
+                  {tr('aucune_unite_vente', lang)}
+                </Text>
+              )}
+
+              {unitesVente.map(u => (
+                <View key={u.id} style={uStyles.uniteCard}>
+                  {editingUniteVenteId === u.id ? (
+                    <View>
+                      <Text style={uStyles.uniteEditTitle}>{tr('modifier_unite_vente', lang)} — {u.nom}</Text>
+                      <TextInput label={tr('nom_unite_vente', lang)} value={formUniteVente.nom}
+                        onChangeText={v => setFormUniteVente(f => ({ ...f, nom: v }))}
+                        style={uStyles.inp} mode="outlined" />
+
+                      <Text style={uStyles.miniLabel}>{tr('par_rapport_a', lang)}</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Chip compact selected={!formUniteVente.referenceId}
+                            onPress={() => setFormUniteVente(f => ({ ...f, referenceId: '' }))}>
+                            {produitUnitesCourant?.uniteBase || tr('unite_base_mot', lang)}
+                          </Chip>
+                          {unitesVente.filter(x => x.id !== editingUniteVenteId).map(x => (
+                            <Chip key={x.id} compact selected={formUniteVente.referenceId === String(x.id)}
+                              onPress={() => setFormUniteVente(f => ({ ...f, referenceId: String(x.id) }))}>
+                              {x.nom}
+                            </Chip>
+                          ))}
+                        </View>
+                      </ScrollView>
+
+                      <TextInput
+                        label={`${tr('facteur_relatif', lang)} (1 ${formUniteVente.nom || '...'} = ? ${nomReferenceUnite(formUniteVente.referenceId) || '...'})`}
+                        value={formUniteVente.facteurRelatif}
+                        onChangeText={v => setFormUniteVente(f => ({ ...f, facteurRelatif: v }))}
+                        keyboardType="numeric" style={uStyles.inp} mode="outlined" />
+
+                      <View style={uStyles.row2}>
+                        <TextInput label={`${tr('prix_achat', lang)} (FCFA)`} value={prixAchatUniteInput.texte}
+                          onChangeText={prixAchatUniteInput.onChangeText}
+                          keyboardType="numeric" style={[uStyles.inp, { flex: 1, marginRight: 8 }]} mode="outlined" />
+                        <TextInput label={`${tr('prix_vente', lang)} (FCFA) *`} value={prixVenteUniteInput.texte}
+                          onChangeText={prixVenteUniteInput.onChangeText}
+                          keyboardType="numeric" style={[uStyles.inp, { flex: 1 }]} mode="outlined" />
+                      </View>
+
+                      <View style={uStyles.row2}>
+                        <Button mode="contained" onPress={ajouterOuModifierUniteVente} loading={savingUniteVente}
+                          style={{ flex: 1, marginRight: 6 }} buttonColor="#0d9488">{tr('enregistrer', lang)}</Button>
+                        <Button mode="outlined" onPress={annulerEditUniteVente} style={{ flex: 1 }}>{tr('annuler', lang)}</Button>
+                      </View>
+                    </View>
+                  ) : (
+                    <View>
+                      <View style={uStyles.uniteHeader}>
+                        <Text style={uStyles.uniteNom}>{u.nom}</Text>
+                        {isAdmin && (
+                          <View style={{ flexDirection: 'row' }}>
+                            <IconButton icon="pencil" size={18} iconColor="#1a56db" onPress={() => ouvrirEditUniteVente(u)} />
+                            <IconButton icon="delete" size={18} iconColor="#f44336" onPress={() => supprimerUniteVenteFn(u)} />
+                          </View>
+                        )}
+                      </View>
+                      <View style={uStyles.contientBadge}>
+                        <Text style={uStyles.contientText}>
+                          1 {u.nom} = {u.facteurBase} {produitUnitesCourant?.uniteBase || tr('unite_base_mot', lang)}
+                        </Text>
+                      </View>
+                      <View style={uStyles.prixRow}>
+                        <View style={uStyles.prixBox}>
+                          <Text style={uStyles.prixLabel}>{tr('prix_achat', lang)}</Text>
+                          <Text style={uStyles.prixAchatVal}>{(u.prixAchat || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
+                        </View>
+                        <View style={[uStyles.prixBox, { backgroundColor: '#f0fdf4' }]}>
+                          <Text style={[uStyles.prixLabel, { color: '#15803d' }]}>{tr('prix_vente', lang)}</Text>
+                          <Text style={uStyles.prixVenteVal}>{(u.prixVente || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} F</Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ))}
+
+              {isAdmin && editingUniteVenteId === null && (
+                <View style={uStyles.addSection}>
+                  <Text style={uStyles.addTitle}>{tr('ajouter_unite_vente', lang)}</Text>
+
+                  <TextInput label={tr('nom_unite_vente', lang)} placeholder="Ex : Carton, Cartouche"
+                    value={formUniteVente.nom}
+                    onChangeText={v => setFormUniteVente(f => ({ ...f, nom: v }))}
+                    style={uStyles.inp} mode="outlined" />
+
+                  <Text style={uStyles.miniLabel}>{tr('par_rapport_a', lang)}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <Chip compact selected={!formUniteVente.referenceId}
+                        onPress={() => setFormUniteVente(f => ({ ...f, referenceId: '' }))}>
+                        {produitUnitesCourant?.uniteBase || tr('unite_base_mot', lang)}
+                      </Chip>
+                      {unitesVente.map(x => (
+                        <Chip key={x.id} compact selected={formUniteVente.referenceId === String(x.id)}
+                          onPress={() => setFormUniteVente(f => ({ ...f, referenceId: String(x.id) }))}>
+                          {x.nom}
+                        </Chip>
+                      ))}
+                    </View>
+                  </ScrollView>
+
+                  <TextInput
+                    label={`${tr('facteur_relatif', lang)} (1 ${formUniteVente.nom || '...'} = ? ${nomReferenceUnite(formUniteVente.referenceId) || '...'})`}
+                    value={formUniteVente.facteurRelatif}
+                    onChangeText={v => setFormUniteVente(f => ({ ...f, facteurRelatif: v }))}
+                    keyboardType="numeric" style={uStyles.inp} mode="outlined" />
+
+                  <View style={uStyles.row2}>
+                    <TextInput label={`${tr('prix_achat', lang)} (FCFA)`} value={prixAchatUniteInput.texte}
+                      onChangeText={prixAchatUniteInput.onChangeText}
+                      keyboardType="numeric" style={[uStyles.inp, { flex: 1, marginRight: 8 }]} mode="outlined" />
+                    <TextInput label={`${tr('prix_vente', lang)} (FCFA) *`} value={prixVenteUniteInput.texte}
+                      onChangeText={prixVenteUniteInput.onChangeText}
+                      keyboardType="numeric" style={[uStyles.inp, { flex: 1 }]} mode="outlined" />
+                  </View>
+
+                  <Button mode="contained" onPress={ajouterOuModifierUniteVente} loading={savingUniteVente}
+                    style={{ marginTop: 4, borderRadius: 10 }} contentStyle={{ height: 48 }}
+                    buttonColor="#0d9488" icon="check">
+                    {tr('enregistrer', lang)}
+                  </Button>
+                </View>
+              )}
+
+            </ScrollView>
+          )}
+        </KeyboardAvoidingView>
+      </Modal>
+
     </View>
   );
 }
@@ -1379,6 +1734,25 @@ const nStyles = StyleSheet.create({
   reouvrirText: { color: '#15803d', fontWeight: '700', fontSize: 13 },
 });
 
+const uStyles = StyleSheet.create({
+  uniteCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, elevation: 2 },
+  uniteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  uniteNom: { fontSize: 16, fontWeight: '700', color: '#0f172a', flex: 1 },
+  uniteEditTitle: { fontWeight: '700', color: '#0d9488', marginBottom: 10 },
+  contientBadge: { backgroundColor: '#eff6ff', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, alignSelf: 'flex-start', marginTop: 6, marginBottom: 10 },
+  contientText: { color: '#1e40af', fontSize: 13, fontWeight: '600' },
+  prixRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  prixBox: { flex: 1, backgroundColor: '#fef2f2', borderRadius: 8, padding: 8, alignItems: 'center' },
+  prixLabel: { fontSize: 10, color: '#ef4444', fontWeight: '700', textTransform: 'uppercase', marginBottom: 2 },
+  prixAchatVal: { fontSize: 15, fontWeight: '800', color: '#b91c1c' },
+  prixVenteVal: { fontSize: 15, fontWeight: '800', color: '#15803d' },
+  addSection: { backgroundColor: '#f0fdfa', borderRadius: 12, padding: 14 },
+  addTitle: { fontSize: 15, fontWeight: '700', color: '#0f766e', marginBottom: 10 },
+  miniLabel: { fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 6 },
+  inp: { marginBottom: 10, backgroundColor: '#fff' },
+  row2: { flexDirection: 'row', marginBottom: 0 },
+});
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4ff' },
   search: { margin: 12, borderRadius: 12, backgroundColor: '#fff' },
@@ -1394,6 +1768,9 @@ const styles = StyleSheet.create({
   pendingLabel: { color: '#ff9800', fontSize: 11, marginTop: 4 },
   actions: { justifyContent: 'flex-end', paddingTop: 0 },
   empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', marginTop: 12 },
+  emptySub: { fontSize: 13, textAlign: 'center', marginTop: 4, paddingHorizontal: 30 },
   offlineBanner: { backgroundColor: '#ff9800', padding: 10, alignItems: 'center' },
   offlineText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   syncBanner: { backgroundColor: '#1a56db', padding: 8, alignItems: 'center' },
@@ -1430,6 +1807,6 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontWeight: '800', color: '#0f172a' },
   modalBody: { padding: 16, backgroundColor: '#f0f4ff', paddingBottom: 40 },
-  input: { marginBottom: 12, backgroundColor: '#fff' },
+  input: { marginBottom: 12 },
   btnSave: { borderRadius: 10, marginTop: 4 },
 });

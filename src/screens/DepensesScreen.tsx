@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, FlatList, StyleSheet, Alert, RefreshControl,
-  ScrollView, TouchableOpacity, Pressable,
+  ScrollView, TouchableOpacity, Pressable, Linking,
   Modal as RNModal, TextInput as RNTextInput,
 } from 'react-native';
 import {
@@ -14,11 +15,13 @@ import * as Print from 'expo-print';
 import {
   getDepenses, createDepense, updateDepense, deleteDepense, getPaiementsEmploye,
   getTypesDepense, createTypeDepense, updateTypeDepense, deleteTypeDepense,
+  getDepensesParPeriode, getEmployes,
 } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { sauvegarderCache, lireCache, creerDepenseOffline } from '../services/offline.service';
 import { useMontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 interface TypeDepense { id: number; nom: string; }
 
@@ -110,9 +113,25 @@ td{padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:11px}
 
 export default function DepensesScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+
+  // Créer/modifier/supprimer une dépense déduit ou ajuste directement le solde
+  // de la caisse côté backend (@PreAuthorize hasRole('ADMIN')) — cet écran doit
+  // masquer ces actions pour VENDEUR, qui ne doit avoir qu'un accès lecture.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (!raw) return;
+      try {
+        const role: string = JSON.parse(raw)?.role || '';
+        setIsAdmin(role === 'ROLE_ADMIN' || role === 'ADMIN');
+      } catch {}
+    });
+  }, []);
 
   const [depenses, setDepenses] = useState<any[]>([]);
   const [paiementsEmploye, setPaiementsEmploye] = useState<any[]>([]);
+  const [employes, setEmployes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fromCache, setFromCache] = useState(false);
@@ -144,6 +163,12 @@ export default function DepensesScreen() {
   const [filtreType, setFiltreType] = useState('');
   const [filtreMois, setFiltreMois] = useState('');
   const [showTypePicker2, setShowTypePicker2] = useState(false);
+  // Filtre période (Du/Au) — GET /depenses/periode, comme filtrerPeriode() côté
+  // Ionic. Ne remplace que `depenses` (les paiements employés affichés restent
+  // ceux du chargement initial, à l'identique de depenses.page.ts).
+  const [dateDebutFiltre, setDateDebutFiltre] = useState('');
+  const [dateFinFiltre, setDateFinFiltre] = useState('');
+  const [periodeLoading, setPeriodeLoading] = useState(false);
 
   // ── Pagination ──
   const [pageDepenses, setPageDepenses] = useState(1);
@@ -159,12 +184,17 @@ export default function DepensesScreen() {
 
   const charger = async () => {
     try {
-      const [resD, resP] = await Promise.all([getDepenses(), getPaiementsEmploye().catch(() => ({ data: [] }))]);
+      const [resD, resP, resE] = await Promise.all([
+        getDepenses(),
+        getPaiementsEmploye().catch(() => ({ data: [] })),
+        getEmployes().catch(() => ({ data: [] })),
+      ]);
       const liste: any[] = resD.data?.depenses || resD.data?.data || [];
       const salaires: any[] = (Array.isArray(resP.data) ? resP.data : [])
         .filter((p: any) => p.statut === 'PAYE')
         .map((p: any) => ({
           id: 'emp_' + p.id,
+          employeId: p.employeId,
           nom: p.employeNomComplet,
           motif: p.employePoste || 'Salaire',
           date: (p.datePaiement || '').split('T')[0],
@@ -172,10 +202,14 @@ export default function DepensesScreen() {
           typeDepense: 'Salaire',
           periodeDebut: p.periodeDebut,
           periodeFin: p.periodeFin,
+          salaireMensuel: p.salaireMensuel,
+          nombreMois: p.nombreMois,
+          employePoste: p.employePoste,
           sourceExterne: true,
         }));
       setDepenses(liste);
       setPaiementsEmploye(salaires);
+      setEmployes(Array.isArray(resE.data) ? resE.data : (resE.data?.data || resE.data?.employes || []));
       const toutes = [...liste, ...salaires];
       sauvegarderCache('depenses', toutes).catch(() => {});
       setFromCache(false);
@@ -278,7 +312,9 @@ export default function DepensesScreen() {
   };
 
   const sauvegarder = async () => {
-    if (!form.nom || !form.montant) return;
+    if (!form.nom?.trim()) { Alert.alert(tr('erreur', lang), 'Le nom est obligatoire'); return; }
+    if (!form.montant || form.montant <= 0) { Alert.alert(tr('erreur', lang), 'Le montant doit être supérieur à 0'); return; }
+    if (!form.date) { Alert.alert(tr('erreur', lang), 'La date est obligatoire'); return; }
     try {
       const payload = {
         nom: form.nom,
@@ -315,6 +351,63 @@ export default function DepensesScreen() {
     );
   };
 
+  // ── Filtre période (Du/Au), comme filtrerPeriode() côté Ionic : ne
+  //     remplace que la liste `depenses`, les paiements employés restent
+  //     ceux déjà chargés (comportement identique à depenses.page.ts). ──
+  const filtrerPeriode = async () => {
+    if (!dateDebutFiltre || !dateFinFiltre) {
+      Alert.alert(tr('erreur', lang), 'Veuillez saisir les deux dates');
+      return;
+    }
+    setPeriodeLoading(true);
+    try {
+      const res = await getDepensesParPeriode(dateDebutFiltre, dateFinFiltre);
+      const liste: any[] = res.data?.depenses || res.data?.data || (Array.isArray(res.data) ? res.data : []);
+      setDepenses(liste);
+      setPageDepenses(1);
+    } catch {
+      Alert.alert(tr('erreur', lang), 'Erreur filtre période');
+    }
+    setPeriodeLoading(false);
+  };
+
+  const reinitialiserFiltres = () => {
+    setFiltreType('');
+    setFiltreMois('');
+    setDateDebutFiltre('');
+    setDateFinFiltre('');
+    setShowTypePicker2(false);
+    charger();
+  };
+
+  /** Envoi du reçu de paiement par WhatsApp au numéro enregistré sur la fiche
+   *  employé — équivalent de envoyerRecuWhatsApp() côté Ionic. */
+  const envoyerRecuWhatsApp = (dep: any) => {
+    const employe = employes.find((e: any) => e.id === dep.employeId);
+    const telephone = (employe?.telephone || '').replace(/\D/g, '');
+    if (!telephone) {
+      Alert.alert(tr('erreur', lang), `Ajoutez un numéro de téléphone à la fiche de ${dep.nom} pour activer l'envoi WhatsApp.`);
+      return;
+    }
+    const montantFmt = (dep.montant || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 });
+    const periodeLabel = dep.periodeFin && dep.periodeFin !== dep.periodeDebut ? `${dep.periodeDebut} à ${dep.periodeFin}` : dep.periodeDebut;
+    const lignes = [
+      `*Ges Boutique*`,
+      `Reçu de paiement de salaire`,
+      `Employé : ${dep.nom}`,
+      `Date : ${dep.date || new Date().toLocaleDateString('fr-FR')}`,
+      ``,
+      `Poste : ${dep.employePoste || '—'}`,
+      `Période : ${periodeLabel || '—'}`,
+      `Nombre de mois : ${dep.nombreMois || 1}`,
+      ``,
+      `Montant payé : ${montantFmt} FCFA`,
+      ``,
+      `Merci de votre confiance.`,
+    ];
+    Linking.openURL(`https://wa.me/${telephone}?text=${encodeURIComponent(lignes.join('\n'))}`);
+  };
+
   // ── Données filtrées (dépenses DB + salaires) ──
   const toutesDepenses = [...depenses, ...paiementsEmploye];
 
@@ -339,7 +432,7 @@ export default function DepensesScreen() {
       .sort((a, b) => b.total - a.total);
   })();
 
-  const filtreActif = filtreType !== '' || filtreMois !== '';
+  const filtreActif = filtreType !== '' || filtreMois !== '' || dateDebutFiltre !== '';
 
   // ── Pagination dépenses ──
   const depensesPaginees = useMemo(
@@ -447,11 +540,11 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
     }
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.background }}><ActivityIndicator style={{ flex: 1 }} size="large" color={colors.danger} /></View>;
 
   return (
-    <View style={styles.container}>
-      <View style={styles.totalBanner}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.totalBanner, { backgroundColor: colors.danger }]}>
         <Text style={styles.totalLabel}>
           {filtreActif ? `${tr('depenses', lang)} — ${filtreTitre}` : `Total ${tr('depenses', lang).toLowerCase()}`}
         </Text>
@@ -468,52 +561,53 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); charger(); }}
+            colors={[colors.danger]}
           />
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
         ListHeaderComponent={
           <>
             {/* ── Section filtres ── */}
-            <View style={styles.filtresSection}>
+            <View style={[styles.filtresSection, { backgroundColor: colors.card }]}>
               <View style={styles.filtresHeader}>
-                <Text style={styles.filtresTitle}>Filtres</Text>
+                <Text style={[styles.filtresTitle, { color: colors.text }]}>Filtres</Text>
                 {filtreActif && (
-                  <TouchableOpacity onPress={() => { setFiltreType(''); setFiltreMois(''); setShowTypePicker2(false); }}>
-                    <Text style={styles.resetFiltres}>Réinitialiser</Text>
+                  <TouchableOpacity onPress={reinitialiserFiltres}>
+                    <Text style={[styles.resetFiltres, { color: colors.danger }]}>Réinitialiser</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
               {/* Filtre type */}
               <Pressable
-                style={styles.filtreTypeTrigger}
+                style={[styles.filtreTypeTrigger, { backgroundColor: colors.inputBg, borderColor: colors.border }]}
                 onPress={() => setShowTypePicker2(v => !v)}
               >
-                <Text style={filtreType ? styles.filtreTypeValue : styles.filtreTypePh}>
+                <Text style={filtreType ? [styles.filtreTypeValue, { color: colors.text }] : [styles.filtreTypePh, { color: colors.placeholder }]}>
                   {filtreType || 'Filtrer par type'}
                 </Text>
-                <Text style={{ color: '#94a3b8', fontSize: 12 }}>{showTypePicker2 ? '▲' : '▼'}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{showTypePicker2 ? '▲' : '▼'}</Text>
               </Pressable>
 
               {showTypePicker2 && (
-                <View style={styles.filtreTypePicker}>
+                <View style={[styles.filtreTypePicker, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                   <TouchableOpacity
-                    style={styles.filtreTypeItem}
+                    style={[styles.filtreTypeItem, { borderBottomColor: colors.border }]}
                     onPress={() => { setFiltreType(''); setShowTypePicker2(false); }}
                   >
-                    <Text style={[styles.filtreTypeText, !filtreType && { color: '#f44336', fontWeight: 'bold' }]}>
+                    <Text style={[styles.filtreTypeText, { color: colors.text }, !filtreType && { color: colors.danger, fontWeight: 'bold' }]}>
                       Tous les types
                     </Text>
                   </TouchableOpacity>
                   {typesDepense.map(t => (
                     <TouchableOpacity
                       key={t.id}
-                      style={styles.filtreTypeItem}
+                      style={[styles.filtreTypeItem, { borderBottomColor: colors.border }]}
                       onPress={() => { setFiltreType(t.nom); setShowTypePicker2(false); }}
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Ionicons name={getIconeType(t.nom) as any} size={14} color={filtreType === t.nom ? '#f44336' : '#64748b'} style={{ marginRight: 6 }} />
-                        <Text style={[styles.filtreTypeText, filtreType === t.nom && { color: '#f44336', fontWeight: 'bold' }]}>
+                        <Ionicons name={getIconeType(t.nom) as any} size={14} color={filtreType === t.nom ? colors.danger : colors.textSecondary} style={{ marginRight: 6 }} />
+                        <Text style={[styles.filtreTypeText, { color: colors.text }, filtreType === t.nom && { color: colors.danger, fontWeight: 'bold' }]}>
                           {t.nom}
                         </Text>
                       </View>
@@ -532,23 +626,54 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                 dense
               />
 
+              {/* Filtre période Du/Au — GET /depenses/periode, comme depenses.page.html */}
+              <View style={styles.periodeRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.filtreTypePh, { color: colors.textSecondary, marginBottom: 4 }]}>Du</Text>
+                  <RNTextInput
+                    style={[styles.periodeInput, { borderColor: colors.border, color: colors.text }]}
+                    value={dateDebutFiltre}
+                    onChangeText={setDateDebutFiltre}
+                    placeholder="AAAA-MM-JJ"
+                    placeholderTextColor={colors.placeholder}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.filtreTypePh, { color: colors.textSecondary, marginBottom: 4 }]}>Au</Text>
+                  <RNTextInput
+                    style={[styles.periodeInput, { borderColor: colors.border, color: colors.text }]}
+                    value={dateFinFiltre}
+                    onChangeText={setDateFinFiltre}
+                    placeholder="AAAA-MM-JJ"
+                    placeholderTextColor={colors.placeholder}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[styles.periodeBtn, { backgroundColor: colors.danger }, periodeLoading && { opacity: 0.6 }]}
+                  onPress={filtrerPeriode}
+                  disabled={periodeLoading}
+                >
+                  <Ionicons name="funnel-outline" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
               {/* Bouton PDF */}
-              <TouchableOpacity style={styles.pdfBtn} onPress={genererPdf}>
+              <TouchableOpacity style={[styles.pdfBtn, { backgroundColor: colors.danger }]} onPress={genererPdf}>
                 <Text style={styles.pdfBtnText}>Télécharger PDF</Text>
               </TouchableOpacity>
             </View>
 
             {/* ── Répartition par type (sur données filtrées) ── */}
             {totauxFiltres.length > 0 && (
-              <View style={styles.typeSummary}>
-                <Text style={styles.typeSummaryTitle}>Répartition par type</Text>
+              <View style={[styles.typeSummary, { backgroundColor: colors.card }]}>
+                <Text style={[styles.typeSummaryTitle, { color: colors.text }]}>Répartition par type</Text>
                 {totauxFiltres.map(t => (
-                  <View key={t.type} style={styles.typeRow}>
+                  <View key={t.type} style={[styles.typeRow, { borderBottomColor: colors.border }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                      <Ionicons name={getIconeType(t.type) as any} size={14} color="#475569" style={{ marginRight: 6 }} />
-                      <Text style={styles.typeLabel}>{t.type}</Text>
+                      <Ionicons name={getIconeType(t.type) as any} size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                      <Text style={[styles.typeLabel, { color: colors.textSecondary }]}>{t.type}</Text>
                     </View>
-                    <Text style={styles.typeTotal}>{t.total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+                    <Text style={[styles.typeTotal, { color: colors.danger }]}>{t.total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
                   </View>
                 ))}
               </View>
@@ -556,41 +681,45 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
           </>
         }
         renderItem={({ item: d }) => (
-          <Card style={[styles.card, d.sourceExterne && { backgroundColor: '#fffbeb' }]}>
+          <Card style={[styles.card, { backgroundColor: colors.card }, d.sourceExterne && { backgroundColor: colors.warningBg }]}>
             <Card.Content>
               <View style={styles.row}>
-                <Text variant="titleMedium" style={{ flex: 1 }}>{d.nom}</Text>
-                <Text style={styles.montant}>{d.montant?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+                <Text variant="titleMedium" style={{ flex: 1, color: colors.text }}>{d.nom}</Text>
+                <Text style={[styles.montant, { color: colors.danger }]}>{d.montant?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
               </View>
               <View style={styles.badgeWrap}>
                 {d.typeDepense ? (
-                  <View style={styles.badgeContainer}>
-                    <Ionicons name={getIconeType(d.typeDepense) as any} size={11} color="#f44336" style={{ marginRight: 3 }} />
-                    <Text style={styles.badge}>{d.typeDepense}</Text>
+                  <View style={[styles.badgeContainer, { backgroundColor: colors.dangerBg }]}>
+                    <Ionicons name={getIconeType(d.typeDepense) as any} size={11} color={colors.danger} style={{ marginRight: 3 }} />
+                    <Text style={[styles.badge, { color: colors.danger }]}>{d.typeDepense}</Text>
                   </View>
                 ) : null}
                 {d.sourceExterne ? (
-                  <Text style={[styles.badge, { backgroundColor: '#fef3c7', color: '#b45309', marginLeft: 4 }]}>Via Employés</Text>
+                  <Text style={[styles.badge, { backgroundColor: colors.warningBg, color: colors.warning, marginLeft: 4 }]}>Via Employés</Text>
                 ) : null}
               </View>
-              {d.motif ? <Text style={styles.sub}>{d.motif}{d.periodeDebut ? ` (${d.periodeDebut}${d.periodeFin ? '→' + d.periodeFin : ''})` : ''}</Text> : null}
-              <Text style={styles.date}>
+              {d.motif ? <Text style={[styles.sub, { color: colors.textSecondary }]}>{d.motif}{d.periodeDebut ? ` (${d.periodeDebut}${d.periodeFin ? '→' + d.periodeFin : ''})` : ''}</Text> : null}
+              <Text style={[styles.date, { color: colors.textSecondary }]}>
                 {d.date ? new Date(d.date).toLocaleDateString('fr-FR') : ''}
               </Text>
-              {!d.sourceExterne && (
+              {!d.sourceExterne && isAdmin && (
                 <View style={styles.cardActions}>
                   <TouchableOpacity style={styles.editBtn} onPress={() => ouvrirEdition(d)}>
-                    <Text style={{ color: '#1e88e5', fontSize: 13 }}>Modifier</Text>
+                    <Text style={{ color: colors.primary, fontSize: 13 }}>Modifier</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.deleteBtn} onPress={() => supprimer(d)}>
-                    <Text style={{ color: '#f44336', fontSize: 13 }}>Supprimer</Text>
+                    <Text style={{ color: colors.danger, fontSize: 13 }}>Supprimer</Text>
                   </TouchableOpacity>
                 </View>
               )}
               {d.sourceExterne && (
                 <View style={styles.cardActions}>
-                  <TouchableOpacity style={styles.recuBtn} onPress={() => genererRecuSalaire(d)}>
-                    <Text style={styles.recuBtnText}>Reçu PDF</Text>
+                  <TouchableOpacity style={[styles.recuBtn, { backgroundColor: colors.successBg, borderColor: colors.success }]} onPress={() => genererRecuSalaire(d)}>
+                    <Text style={[styles.recuBtnText, { color: colors.success }]}>Reçu PDF</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.recuBtn, { backgroundColor: '#25D366', borderColor: '#25D366', marginLeft: 8 }]} onPress={() => envoyerRecuWhatsApp(d)}>
+                    <Ionicons name="logo-whatsapp" size={13} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={[styles.recuBtnText, { color: '#fff' }]}>WhatsApp</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -604,26 +733,34 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                 onPress={() => setPageDepenses(p => Math.max(1, p - 1))}
                 disabled={pageDepenses === 1}
               >
-                <Text style={[styles.paginationBtn, pageDepenses === 1 && styles.paginationDisabled]}>
+                <Text style={[
+                  styles.paginationBtn,
+                  { color: colors.danger, borderColor: colors.danger, backgroundColor: colors.card },
+                  pageDepenses === 1 && { color: colors.textSecondary, borderColor: colors.border, backgroundColor: colors.inputBg },
+                ]}>
                   Precedent
                 </Text>
               </TouchableOpacity>
-              <Text style={styles.paginationInfo}>Page {pageDepenses}/{totalPagesDepenses}</Text>
+              <Text style={[styles.paginationInfo, { color: colors.textSecondary }]}>Page {pageDepenses}/{totalPagesDepenses}</Text>
               <TouchableOpacity
                 onPress={() => setPageDepenses(p => Math.min(totalPagesDepenses, p + 1))}
                 disabled={pageDepenses === totalPagesDepenses}
               >
-                <Text style={[styles.paginationBtn, pageDepenses === totalPagesDepenses && styles.paginationDisabled]}>
+                <Text style={[
+                  styles.paginationBtn,
+                  { color: colors.danger, borderColor: colors.danger, backgroundColor: colors.card },
+                  pageDepenses === totalPagesDepenses && { color: colors.textSecondary, borderColor: colors.border, backgroundColor: colors.inputBg },
+                ]}>
                   Suivant
                 </Text>
               </TouchableOpacity>
             </View>
           ) : null
         }
-        ListEmptyComponent={<Text style={styles.empty}>{tr('aucune_depense', lang)}{filtreActif ? ` (${tr('aucun_resultat', lang).toLowerCase()})` : ''}</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, { color: colors.textSecondary }]}>{tr('aucune_depense', lang)}{filtreActif ? ` (${tr('aucun_resultat', lang).toLowerCase()})` : ''}</Text>}
       />
 
-      <FAB icon="plus" style={styles.fab} onPress={() => ouvrirCreation()} />
+      {isAdmin && <FAB icon="plus" style={[styles.fab, { backgroundColor: colors.danger }]} color="#fff" onPress={() => ouvrirCreation()} />}
 
       {/* Modal Types Dépenses */}
       <RNModal
@@ -632,53 +769,54 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
         transparent
         onRequestClose={() => setShowTypesModal(false)}
       >
-        <View style={styles.typesModalOverlay}>
-          <View style={styles.typesModalSheet}>
+        <View style={[styles.typesModalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.typesModalSheet, { backgroundColor: colors.card }]}>
             {/* Header */}
             <View style={styles.typesModalHeader}>
-              <Text style={styles.typesModalTitle}>{tr('type_depense', lang)}</Text>
+              <Text style={[styles.typesModalTitle, { color: colors.text }]}>{tr('type_depense', lang)}</Text>
               <TouchableOpacity onPress={() => {
                 setShowTypesModal(false);
                 setNewTypeName('');
                 setEditingTypeId(null);
                 setTypesError('');
               }}>
-                <Ionicons name="close-circle" size={24} color="#666" />
+                <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
             {/* Erreur */}
             {typesError ? (
-              <Text style={styles.typesError}>{typesError}</Text>
+              <Text style={[styles.typesError, { color: colors.danger }]}>{typesError}</Text>
             ) : null}
 
             {/* Liste */}
             <ScrollView style={{ maxHeight: 300 }}>
               {typesDepense.map(t => (
-                <View key={t.id} style={styles.typesRow}>
+                <View key={t.id} style={[styles.typesRow, { borderBottomColor: colors.border }]}>
                   {editingTypeId === t.id ? (
                     <>
                       <RNTextInput
                         value={editingTypeName}
                         onChangeText={setEditingTypeName}
-                        style={styles.typesEditInput}
+                        style={[styles.typesEditInput, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBg }]}
+                        placeholderTextColor={colors.placeholder}
                       />
                       <TouchableOpacity onPress={saveEditType} style={{ marginLeft: 8 }}>
-                        <Ionicons name="checkmark-circle" size={24} color="green" />
+                        <Ionicons name="checkmark-circle" size={24} color={colors.success} />
                       </TouchableOpacity>
                       <TouchableOpacity onPress={() => { setEditingTypeId(null); setEditingTypeName(''); }} style={{ marginLeft: 4 }}>
-                        <Ionicons name="close-circle" size={24} color="#999" />
+                        <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
                       </TouchableOpacity>
                     </>
                   ) : (
                     <>
-                      <Ionicons name={getIconeType(t.nom) as any} size={18} color="#64748b" style={{ marginRight: 8 }} />
-                      <Text style={styles.typesItemText}>{t.nom}</Text>
+                      <Ionicons name={getIconeType(t.nom) as any} size={18} color={colors.textSecondary} style={{ marginRight: 8 }} />
+                      <Text style={[styles.typesItemText, { color: colors.text }]}>{t.nom}</Text>
                       <TouchableOpacity onPress={() => { setEditingTypeId(t.id); setEditingTypeName(t.nom); }} style={{ marginLeft: 8 }}>
-                        <Ionicons name="pencil-outline" size={20} color="#1A56DB" />
+                        <Ionicons name="pencil-outline" size={20} color={colors.primary} />
                       </TouchableOpacity>
                       <TouchableOpacity onPress={() => supprimerType(t)} style={{ marginLeft: 8 }}>
-                        <Ionicons name="trash-outline" size={20} color="#DC2626" />
+                        <Ionicons name="trash-outline" size={20} color={colors.danger} />
                       </TouchableOpacity>
                     </>
                   )}
@@ -692,12 +830,13 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
                 value={newTypeName}
                 onChangeText={setNewTypeName}
                 placeholder="Nouveau type..."
-                style={styles.typesAddInput}
+                style={[styles.typesAddInput, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBg }]}
+                placeholderTextColor={colors.placeholder}
               />
               <TouchableOpacity
                 onPress={ajouterType}
                 disabled={typesLoading || !newTypeName.trim()}
-                style={[styles.typesAddBtn, (!newTypeName.trim() || typesLoading) && { opacity: 0.5 }]}
+                style={[styles.typesAddBtn, { backgroundColor: colors.primary }, (!newTypeName.trim() || typesLoading) && { opacity: 0.5 }]}
               >
                 <Ionicons name="add" size={24} color="white" />
               </TouchableOpacity>
@@ -710,10 +849,10 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
         <Modal
           visible={showModal}
           onDismiss={() => { setShowModal(false); setShowTypePicker(false); }}
-          contentContainerStyle={styles.modal}
+          contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}
         >
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <Text variant="titleLarge" style={{ marginBottom: 16 }}>
+            <Text variant="titleLarge" style={{ marginBottom: 16, color: colors.text }}>
               {editing ? tr('modifier', lang) : tr('nouvelle_depense', lang)}
             </Text>
 
@@ -727,39 +866,40 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
 
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <Pressable
-                style={[styles.typePickerTrigger, { flex: 1, marginBottom: 0 }]}
+                style={[styles.typePickerTrigger, { flex: 1, marginBottom: 0, backgroundColor: colors.inputBg, borderColor: colors.border }]}
                 onPress={() => setShowTypePicker(v => !v)}
               >
-                <Text style={form.typeDepense ? styles.typePickerValue : styles.typePickerPlaceholder}>
+                <Text style={form.typeDepense ? [styles.typePickerValue, { color: colors.text }] : [styles.typePickerPlaceholder, { color: colors.placeholder }]}>
                   {form.typeDepense || 'Type de dépense'}
                 </Text>
-                <Text style={{ color: '#94a3b8', fontSize: 12 }}>{showTypePicker ? '▲' : '▼'}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{showTypePicker ? '▲' : '▼'}</Text>
               </Pressable>
               <TouchableOpacity
                 onPress={() => { setShowTypesModal(true); setTypesError(''); }}
                 style={{ padding: 8 }}
               >
-                <Ionicons name="settings-outline" size={20} color="#1A56DB" />
+                <Ionicons name="settings-outline" size={20} color={colors.primary} />
               </TouchableOpacity>
             </View>
 
             {showTypePicker && (
-              <View style={styles.typePicker}>
+              <View style={[styles.typePicker, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                 {typesDepense.map(t => (
                   <TouchableOpacity
                     key={t.id}
-                    style={styles.typePickerItem}
+                    style={[styles.typePickerItem, { borderBottomColor: colors.border }]}
                     onPress={() => {
                       setForm({ ...form, typeDepense: t.nom });
                       setShowTypePicker(false);
                     }}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name={getIconeType(t.nom) as any} size={14} color={form.typeDepense === t.nom ? '#f44336' : '#64748b'} style={{ marginRight: 6 }} />
+                      <Ionicons name={getIconeType(t.nom) as any} size={14} color={form.typeDepense === t.nom ? colors.danger : colors.textSecondary} style={{ marginRight: 6 }} />
                       <Text
                         style={[
                           styles.typePickerText,
-                          form.typeDepense === t.nom && { color: '#f44336', fontWeight: 'bold' },
+                          { color: colors.text },
+                          form.typeDepense === t.nom && { color: colors.danger, fontWeight: 'bold' },
                         ]}
                       >
                         {t.nom}
@@ -795,7 +935,7 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
               style={styles.input}
             />
 
-            <Button mode="contained" onPress={sauvegarder} style={{ marginTop: 4 }}>
+            <Button mode="contained" onPress={sauvegarder} style={{ marginTop: 4 }} buttonColor={colors.danger}>
               {editing ? tr('modifier', lang) : tr('ajouter', lang)}
             </Button>
           </ScrollView>
@@ -806,60 +946,58 @@ body{font-family:Arial,sans-serif;background:#f0f4f8;padding:20px;font-size:13px
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
-  totalBanner: { backgroundColor: '#f44336', padding: 16, alignItems: 'center' },
+  container: { flex: 1 },
+  totalBanner: { padding: 16, alignItems: 'center' },
   totalLabel: { color: '#fff', fontSize: 12 },
   totalVal: { color: '#fff', fontWeight: 'bold', fontSize: 22 },
   totalSub: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 2 },
   card: { marginBottom: 10, borderRadius: 16 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  montant: { fontWeight: 'bold', color: '#f44336' },
+  montant: { fontWeight: 'bold' },
   badgeWrap: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
   badgeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#fef2f2',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
     overflow: 'hidden',
   },
   badge: {
-    color: '#f44336',
     fontSize: 11,
   },
-  sub: { color: '#888', fontSize: 12, marginTop: 4 },
-  date: { color: '#aaa', fontSize: 11, marginTop: 2 },
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  sub: { fontSize: 12, marginTop: 4 },
+  date: { fontSize: 11, marginTop: 2 },
+  empty: { textAlign: 'center', marginTop: 40 },
   fab: { position: 'absolute', bottom: 20, right: 20 },
-  modal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
+  modal: { margin: 20, borderRadius: 20, padding: 20, maxHeight: '85%' },
   input: { marginBottom: 12 },
   // Filtres
-  filtresSection: { backgroundColor: '#fff', marginBottom: 12, borderRadius: 16, padding: 14, elevation: 2 },
+  filtresSection: { marginBottom: 12, borderRadius: 16, padding: 14, elevation: 2 },
   filtresHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  filtresTitle: { fontWeight: 'bold', fontSize: 13, color: '#1e293b' },
-  resetFiltres: { color: '#f44336', fontSize: 12, fontWeight: '600' },
+  filtresTitle: { fontWeight: 'bold', fontSize: 13 },
+  resetFiltres: { fontSize: 12, fontWeight: '600' },
   filtreTypeTrigger: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#d1d5db',
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 8,
-    backgroundColor: '#f8fafc',
   },
-  filtreTypeValue: { color: '#1e293b', fontSize: 13, fontWeight: '500' },
-  filtreTypePh: { color: '#94a3b8', fontSize: 13 },
-  filtreTypePicker: { backgroundColor: '#f8fafc', borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0', maxHeight: 200 },
-  filtreTypeItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  filtreTypeText: { color: '#334155', fontSize: 13 },
+  filtreTypeValue: { fontSize: 13, fontWeight: '500' },
+  filtreTypePh: { fontSize: 13 },
+  filtreTypePicker: { borderRadius: 8, marginBottom: 8, borderWidth: 1, maxHeight: 200 },
+  filtreTypeItem: { padding: 10, borderBottomWidth: 1 },
+  filtreTypeText: { fontSize: 13 },
   filtreMoisInput: { marginBottom: 10 },
+  periodeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 10 },
+  periodeInput: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
+  periodeBtn: { width: 38, height: 38, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   pdfBtn: {
-    backgroundColor: '#dc2626',
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -873,43 +1011,40 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#94a3b8',
     borderRadius: 4,
     paddingHorizontal: 12,
     paddingVertical: 14,
     marginBottom: 8,
-    backgroundColor: '#fff',
   },
-  typePickerValue: { color: '#1e293b', fontSize: 14 },
-  typePickerPlaceholder: { color: '#94a3b8', fontSize: 14 },
-  typeSummary: { backgroundColor: '#fff', marginBottom: 12, borderRadius: 16, padding: 14, elevation: 2 },
-  typeSummaryTitle: { fontWeight: 'bold', fontSize: 14, marginBottom: 8, color: '#1e293b' },
-  typeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  typeLabel: { color: '#475569', fontSize: 13 },
-  typeTotal: { fontWeight: '600', color: '#f44336', fontSize: 13 },
-  typePicker: { backgroundColor: '#f8fafc', borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' },
-  typePickerItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  typePickerText: { color: '#334155', fontSize: 13 },
+  typePickerValue: { fontSize: 14 },
+  typePickerPlaceholder: { fontSize: 14 },
+  typeSummary: { marginBottom: 12, borderRadius: 16, padding: 14, elevation: 2 },
+  typeSummaryTitle: { fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
+  typeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1 },
+  typeLabel: { fontSize: 13 },
+  typeTotal: { fontWeight: '600', fontSize: 13 },
+  typePicker: { borderRadius: 8, marginBottom: 8, borderWidth: 1 },
+  typePickerItem: { padding: 10, borderBottomWidth: 1 },
+  typePickerText: { fontSize: 13 },
   editBtn: { padding: 6 },
   deleteBtn: { padding: 6 },
   cardActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 4 },
-  recuBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
-  recuBtnText: { color: '#166534', fontSize: 12, fontWeight: '700' },
+  recuBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
+  recuBtnText: { fontSize: 12, fontWeight: '700' },
   // Pagination
   paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 8, marginTop: 4, marginBottom: 8 },
-  paginationBtn: { fontSize: 14, color: '#dc2626', fontWeight: '700', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#dc2626', backgroundColor: '#fff' },
-  paginationDisabled: { color: '#ccc', borderColor: '#eee', backgroundColor: '#fafafa' },
-  paginationInfo: { fontSize: 13, color: '#555', fontWeight: '600' },
+  paginationBtn: { fontSize: 14, fontWeight: '700', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
+  paginationInfo: { fontSize: 13, fontWeight: '600' },
   // Modal types dépenses
-  typesModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  typesModalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%' as any, padding: 20 },
+  typesModalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  typesModalSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%' as any, padding: 20 },
   typesModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   typesModalTitle: { fontSize: 18, fontWeight: '700' },
-  typesError: { color: 'red', fontSize: 13, marginBottom: 8 },
-  typesRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  typesError: { fontSize: 13, marginBottom: 8 },
+  typesRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1 },
   typesItemText: { flex: 1, fontSize: 15 },
-  typesEditInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  typesEditInput: { flex: 1, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   typesAddRow: { flexDirection: 'row', gap: 8, marginTop: 16 },
-  typesAddInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  typesAddBtn: { backgroundColor: '#1A56DB', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
+  typesAddInput: { flex: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  typesAddBtn: { borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
 });

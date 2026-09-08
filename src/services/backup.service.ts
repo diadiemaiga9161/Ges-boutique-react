@@ -1,6 +1,6 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { getListeSauvegardes, declencherSauvegarde, getBackendRootUrl, getStoredToken } from './api.service';
+import { getListeSauvegardes, declencherSauvegarde, restaurerSauvegarde, getBackendRootUrl, getStoredToken } from './api.service';
 
 /**
  * Service "Sauvegarde automatique programmée" (ADMIN uniquement) — liste les
@@ -54,6 +54,18 @@ export interface TelechargerSauvegardeResultat {
   success: boolean;
   message?: string;
 }
+
+export interface RestaurerSauvegardeSuccess {
+  success: true;
+  message: string;
+}
+
+export interface RestaurerSauvegardeEchec {
+  success: false;
+  message: string;
+}
+
+export type RestaurerSauvegardeResponse = RestaurerSauvegardeSuccess | RestaurerSauvegardeEchec;
 
 // ─── Liste des sauvegardes ──────────────────────────────────────────────────
 // Le tri (plus récent → plus ancien) est garanti côté backend — aucun tri
@@ -109,5 +121,24 @@ export async function telecharger(nomFichier: string): Promise<TelechargerSauveg
     // 404 (fichier disparu, ex: rotation) / 400 (nom invalide) remontent ici
     // sous forme de message contenant le code HTTP (voir File.downloadFileAsync).
     return { success: false, message: e?.message || 'Impossible de télécharger cette sauvegarde.' };
+  }
+}
+
+// ─── Restauration depuis une sauvegarde existante (réservé au super admin) ─
+// Le backend répond en HTTP 400 (pas 200) en cas d'échec — axios rejette alors
+// la promesse. On normalise ici pour TOUJOURS renvoyer un objet typé
+// { success, message }, jamais une exception à catcher côté écran.
+export async function restaurer(nomFichier: string): Promise<RestaurerSauvegardeResponse> {
+  try {
+    const res = await restaurerSauvegarde(nomFichier);
+    return res.data;
+  } catch (e: any) {
+    if (e?.response?.data && typeof e.response.data.success !== 'undefined') {
+      return e.response.data as RestaurerSauvegardeEchec;
+    }
+    return {
+      success: false,
+      message: e?.message || 'Erreur réseau : impossible de contacter le serveur.',
+    };
   }
 }

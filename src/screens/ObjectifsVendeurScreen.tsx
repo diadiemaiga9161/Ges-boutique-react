@@ -24,6 +24,7 @@ import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useMontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 // Modèle réel (ObjectifVendeurController/Dto) : une PRIME HEBDOMADAIRE pour un
 // vendeur — semaine ISO-8601 (1 à 53) + année, objectif de nombre de ventes,
@@ -88,6 +89,8 @@ const FORM_INITIAL = {
 
 export default function ObjectifsVendeurScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const styles = createStyles(colors);
   const [objectifs, setObjectifs] = useState<ObjectifVendeur[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -206,8 +209,10 @@ export default function ObjectifsVendeurScreen() {
       return;
     }
     const bonusMontant = form.bonusMontant;
-    if (bonusMontant === undefined || isNaN(bonusMontant) || bonusMontant < 0) {
-      Alert.alert(tr('erreur', lang), 'Le montant du bonus est invalide');
+    // Même règle que saveObjectifVendeur() côté Ionic : bonus strictement > 0,
+    // pas juste >= 0 (une prime à 0 F n'a pas de sens).
+    if (!bonusMontant || isNaN(bonusMontant) || bonusMontant <= 0) {
+      Alert.alert(tr('erreur', lang), 'Le bonus doit être supérieur à 0');
       return;
     }
     setSaving(true);
@@ -329,14 +334,14 @@ export default function ObjectifsVendeurScreen() {
                         <IconButton
                           icon="pencil-outline"
                           size={18}
-                          iconColor="#1a56db"
+                          iconColor={colors.primary}
                           onPress={() => ouvrirModif(item)}
                         />
                       )}
                       <IconButton
                         icon="delete-outline"
                         size={18}
-                        iconColor="#e53935"
+                        iconColor={colors.danger}
                         onPress={() => supprimer(item)}
                       />
                     </View>
@@ -531,13 +536,13 @@ export default function ObjectifsVendeurScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
 
   // Bannière stats
   banner: {
     flexDirection: 'row',
-    backgroundColor: '#1a56db',
+    backgroundColor: colors.primary,
     paddingVertical: 14,
     paddingHorizontal: 8,
     alignItems: 'center',
@@ -549,8 +554,8 @@ const styles = StyleSheet.create({
   bannerSep: { width: 1, height: 36, backgroundColor: 'rgba(255,255,255,0.3)' },
 
   // Cards
-  card: { marginBottom: 10, borderRadius: 16 },
-  vendeurNom: { fontWeight: 'bold' },
+  card: { marginBottom: 10, borderRadius: 16, backgroundColor: colors.card },
+  vendeurNom: { fontWeight: 'bold', color: colors.text },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowEnd: { flexDirection: 'row', alignItems: 'center' },
 
@@ -566,7 +571,7 @@ const styles = StyleSheet.create({
   progressBg: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: colors.border,
     marginTop: 10,
     marginBottom: 4,
     overflow: 'hidden',
@@ -576,34 +581,34 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     minWidth: 4,
   },
-  progLabel: { color: '#666', fontSize: 11 },
-  progPct: { fontWeight: 'bold', fontSize: 13 },
+  progLabel: { color: colors.textSecondary, fontSize: 11 },
+  progPct: { fontWeight: 'bold', fontSize: 13, color: colors.text },
 
   // Divers
-  sub: { color: '#666', fontSize: 12, marginTop: 2 },
-  date: { color: '#aaa', fontSize: 11 },
-  bonusOk: { color: '#4caf50', fontWeight: 'bold', fontSize: 12 },
-  detailLine: { fontSize: 14, marginBottom: 4 },
-  empty: { textAlign: 'center', marginTop: 40, color: '#999' },
+  sub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  date: { color: colors.textSecondary, fontSize: 11 },
+  bonusOk: { color: colors.success, fontWeight: 'bold', fontSize: 12 },
+  detailLine: { fontSize: 14, marginBottom: 4, color: colors.text },
+  empty: { textAlign: 'center', marginTop: 40, color: colors.textSecondary },
 
   // FAB
-  fab: { position: 'absolute', bottom: 20, right: 20 },
+  fab: { position: 'absolute', bottom: 20, right: 20, backgroundColor: colors.primary },
 
   // Modals
   modal: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     margin: 20,
     borderRadius: 20,
     padding: 20,
     maxHeight: '90%',
   },
-  modalTitle: { fontWeight: 'bold', marginBottom: 14, color: '#1a56db' },
+  modalTitle: { fontWeight: 'bold', marginBottom: 14, color: colors.primary },
   modalBtns: { flexDirection: 'row', marginTop: 8 },
   input: { marginBottom: 10 },
-  fieldLabel: { fontSize: 12, color: '#666', fontWeight: '600', marginBottom: 4, marginTop: 4 },
+  fieldLabel: { fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4, marginTop: 4 },
 
   // Picker vendeur
-  pickerList: { maxHeight: 150, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, marginBottom: 10 },
-  pickerItem: { paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  pickerItemText: { fontSize: 13, color: '#1e293b' },
+  pickerList: { maxHeight: 150, borderWidth: 1, borderColor: colors.border, borderRadius: 8, marginBottom: 10 },
+  pickerItem: { paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+  pickerItemText: { fontSize: 13, color: colors.text },
 });

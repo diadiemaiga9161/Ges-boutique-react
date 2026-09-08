@@ -10,6 +10,7 @@ import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 interface DepotClient {
   id: number;
@@ -68,6 +69,7 @@ const fmt = (d?: string) =>
 
 export default function DepotsScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [depots, setDepots] = useState<DepotGarde[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -324,12 +326,12 @@ export default function DepotsScreen() {
 
   const totalGarde = stats?.totalMontantGarde ?? depots.reduce((s, d) => s + (d.montantRestant || 0), 0);
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+  if (loading) return <View style={[s.container, { backgroundColor: colors.background }]}><ActivityIndicator style={{ flex: 1 }} size="large" color={colors.primary} /></View>;
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* ── Hero banner ── */}
-      <View style={s.hero}>
+      <View style={[s.hero, { backgroundColor: colors.hero }]}>
         <View style={s.heroStat}>
           <Text style={s.heroVal}>{stats?.totalDepots ?? depots.length}</Text>
           <Text style={s.heroLbl}>Dépôts</Text>
@@ -347,13 +349,17 @@ export default function DepotsScreen() {
 
       {/* ── Bascule vue liste / groupée par client ── */}
       <View style={s.vueRow}>
-        <TouchableOpacity style={[s.vueBtn, vueMode === 'liste' && s.vueBtnActive]} onPress={() => basculerVue('liste')}>
-          <MaterialCommunityIcons name="format-list-bulleted" size={14} color={vueMode === 'liste' ? '#fff' : '#64748b'} />
-          <Text style={[s.vueTxt, vueMode === 'liste' && s.vueTxtActive]}>Liste</Text>
+        <TouchableOpacity
+          style={[s.vueBtn, { backgroundColor: vueMode === 'liste' ? colors.primary : colors.surface, borderColor: vueMode === 'liste' ? colors.primary : colors.border }]}
+          onPress={() => basculerVue('liste')}>
+          <MaterialCommunityIcons name="format-list-bulleted" size={14} color={vueMode === 'liste' ? '#fff' : colors.textSecondary} />
+          <Text style={[s.vueTxt, { color: vueMode === 'liste' ? '#fff' : colors.textSecondary }]}>Liste</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.vueBtn, vueMode === 'groupes' && s.vueBtnActive]} onPress={() => basculerVue('groupes')}>
-          <MaterialCommunityIcons name="account-group-outline" size={14} color={vueMode === 'groupes' ? '#fff' : '#64748b'} />
-          <Text style={[s.vueTxt, vueMode === 'groupes' && s.vueTxtActive]}>Par client</Text>
+        <TouchableOpacity
+          style={[s.vueBtn, { backgroundColor: vueMode === 'groupes' ? colors.primary : colors.surface, borderColor: vueMode === 'groupes' ? colors.primary : colors.border }]}
+          onPress={() => basculerVue('groupes')}>
+          <MaterialCommunityIcons name="account-group-outline" size={14} color={vueMode === 'groupes' ? '#fff' : colors.textSecondary} />
+          <Text style={[s.vueTxt, { color: vueMode === 'groupes' ? '#fff' : colors.textSecondary }]}>Par client</Text>
         </TouchableOpacity>
       </View>
 
@@ -362,16 +368,21 @@ export default function DepotsScreen() {
           {/* ── Filtres ── */}
           <View style={s.filtreRow}>
             {(['TOUS', 'ACTIF', 'CLOTURE'] as const).map(f => (
-              <TouchableOpacity key={f} style={[s.filtreBtn, filtre === f && s.filtreBtnActive]} onPress={() => setFiltre(f)}>
-                <Text style={[s.filtreTxt, filtre === f && s.filtreTxtActive]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? tr('actifs', lang) : tr('clotures', lang)}</Text>
+              <TouchableOpacity
+                key={f}
+                style={[s.filtreBtn, { backgroundColor: filtre === f ? colors.primary : colors.inputBg }]}
+                onPress={() => setFiltre(f)}>
+                <Text style={[s.filtreTxt, { color: filtre === f ? '#fff' : colors.textSecondary }]}>{f === 'TOUS' ? 'Tous' : f === 'ACTIF' ? tr('actifs', lang) : tr('clotures', lang)}</Text>
               </TouchableOpacity>
             ))}
           </View>
 
           {/* ── Searchbar ── */}
           <Searchbar
-            style={s.searchBar}
-            inputStyle={{ fontSize: 13 }}
+            style={[s.searchBar, { backgroundColor: colors.surface }]}
+            inputStyle={{ fontSize: 13, color: colors.text }}
+            placeholderTextColor={colors.placeholder}
+            iconColor={colors.textSecondary}
             placeholder={tr('recherche_client', lang)}
             value={search}
             onChangeText={setSearch}
@@ -382,38 +393,38 @@ export default function DepotsScreen() {
             data={filtered}
             keyExtractor={d => String(d.id)}
             contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 80 }}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={['#1a56db']} />}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={[colors.primary]} />}
             ListEmptyComponent={
               <View style={s.empty}>
-                <MaterialCommunityIcons name="safe" size={64} color="#cbd5e1" />
-                <Text style={s.emptyTitle}>{tr('aucun_depot', lang)}</Text>
-                <Text style={s.emptySub}>Appuyez sur + pour créer</Text>
+                <MaterialCommunityIcons name="safe" size={64} color={colors.textSecondary} />
+                <Text style={[s.emptyTitle, { color: colors.text }]}>{tr('aucun_depot', lang)}</Text>
+                <Text style={[s.emptySub, { color: colors.textSecondary }]}>Appuyez sur + pour créer</Text>
               </View>
             }
             renderItem={({ item: d }) => {
               const pct = d.montantInitial > 0 ? (d.montantRetire / d.montantInitial) * 100 : 0;
               return (
-                <Card style={s.card} onPress={() => { setSelected(d); setShowDetail(true); }}>
+                <Card style={[s.card, { backgroundColor: colors.card }]} onPress={() => { setSelected(d); setShowDetail(true); }}>
                   <Card.Content style={s.cardRow}>
-                    <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
-                      <MaterialCommunityIcons name="safe" size={22} color="#1a56db" />
+                    <View style={[s.avatar, { backgroundColor: colors.infoBg }]}>
+                      <MaterialCommunityIcons name="safe" size={22} color={colors.primary} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.cardName} numberOfLines={1}>{d.nomComplet}</Text>
-                      <Text style={s.cardSub}>{d.numero} · {fmt(d.dateDepot)}</Text>
+                      <Text style={[s.cardName, { color: colors.text }]} numberOfLines={1}>{d.nomComplet}</Text>
+                      <Text style={[s.cardSub, { color: colors.textSecondary }]}>{d.numero} · {fmt(d.dateDepot)}</Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={s.cardAmt}>{money(d.montantRestant)}</Text>
-                      <View style={[s.badge, { backgroundColor: d.statut === 'ACTIF' ? '#d1fae5' : '#f1f5f9' }]}>
-                        <Text style={[s.badgeTxt, { color: d.statut === 'ACTIF' ? '#16a34a' : '#6b7280' }]}>{d.statut}</Text>
+                      <Text style={[s.cardAmt, { color: colors.text }]}>{money(d.montantRestant)}</Text>
+                      <View style={[s.badge, { backgroundColor: d.statut === 'ACTIF' ? colors.successBg : colors.inputBg }]}>
+                        <Text style={[s.badgeTxt, { color: d.statut === 'ACTIF' ? colors.success : colors.textSecondary }]}>{d.statut}</Text>
                       </View>
                     </View>
                   </Card.Content>
                   <Card.Content style={{ paddingTop: 0 }}>
-                    <View style={s.progressBg}>
-                      <View style={[s.progressFill, { width: `${Math.min(pct, 100)}%` as any }]} />
+                    <View style={[s.progressBg, { backgroundColor: colors.border }]}>
+                      <View style={[s.progressFill, { width: `${Math.min(pct, 100)}%` as any, backgroundColor: colors.danger }]} />
                     </View>
-                    <Text style={s.progressLbl}>{money(d.montantRetire)} retiré / {money(d.montantInitial)} initial</Text>
+                    <Text style={[s.progressLbl, { color: colors.textSecondary }]}>{money(d.montantRetire)} retiré / {money(d.montantInitial)} initial</Text>
                   </Card.Content>
                 </Card>
               );
@@ -423,33 +434,33 @@ export default function DepotsScreen() {
       ) : (
         /* ── Vue groupée par client ── */
         loadingGroupes ? (
-          <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />
+          <ActivityIndicator style={{ flex: 1 }} size="large" color={colors.primary} />
         ) : (
           <FlatList
             data={groupesClient}
             keyExtractor={g => g.numero}
             contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 80 }}
-            refreshControl={<RefreshControl refreshing={loadingGroupes} onRefresh={chargerGroupes} colors={['#1a56db']} />}
+            refreshControl={<RefreshControl refreshing={loadingGroupes} onRefresh={chargerGroupes} colors={[colors.primary]} />}
             ListEmptyComponent={
               <View style={s.empty}>
-                <MaterialCommunityIcons name="account-group-outline" size={64} color="#cbd5e1" />
-                <Text style={s.emptyTitle}>Aucun client</Text>
+                <MaterialCommunityIcons name="account-group-outline" size={64} color={colors.textSecondary} />
+                <Text style={[s.emptyTitle, { color: colors.text }]}>Aucun client</Text>
               </View>
             }
             renderItem={({ item: g }) => (
-              <Card style={s.card}>
+              <Card style={[s.card, { backgroundColor: colors.card }]}>
                 <Card.Content style={s.cardRow}>
-                  <View style={[s.avatar, { backgroundColor: '#1a56db22' }]}>
-                    <Text style={{ fontWeight: '700', color: '#1a56db' }}>{(g.nom || '?')[0].toUpperCase()}</Text>
+                  <View style={[s.avatar, { backgroundColor: colors.infoBg }]}>
+                    <Text style={{ fontWeight: '700', color: colors.primary }}>{(g.nom || '?')[0].toUpperCase()}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.cardName} numberOfLines={1}>{g.nomComplet}</Text>
-                    <Text style={s.cardSub}>{g.numero} · {g.nombreDepotsActifs} dépôt(s) actif(s)</Text>
+                    <Text style={[s.cardName, { color: colors.text }]} numberOfLines={1}>{g.nomComplet}</Text>
+                    <Text style={[s.cardSub, { color: colors.textSecondary }]}>{g.numero} · {g.nombreDepotsActifs} dépôt(s) actif(s)</Text>
                   </View>
-                  <Text style={s.cardAmt}>{money(g.totalMontantRestant)}</Text>
+                  <Text style={[s.cardAmt, { color: colors.text }]}>{money(g.totalMontantRestant)}</Text>
                 </Card.Content>
                 <Card.Content style={{ paddingTop: 0, flexDirection: 'row', justifyContent: 'flex-end' }}>
-                  <TouchableOpacity style={s.btnRetraitGlobal} onPress={() => ouvrirRetraitGlobal(g)}>
+                  <TouchableOpacity style={[s.btnRetraitGlobal, { backgroundColor: colors.danger }]} onPress={() => ouvrirRetraitGlobal(g)}>
                     <MaterialCommunityIcons name="cash-minus" size={14} color="#fff" />
                     <Text style={s.btnRetraitGlobalTxt}>Retrait global</Text>
                   </TouchableOpacity>
@@ -461,67 +472,67 @@ export default function DepotsScreen() {
       )}
 
       {/* ── FAB ── */}
-      <FAB icon="plus" style={s.fab} onPress={openCreate} />
+      <FAB icon="plus" style={[s.fab, { backgroundColor: colors.primary }]} onPress={openCreate} color="#fff" />
 
       {/* ── Modal Création ── */}
       <Modal visible={showCreate} animationType="slide" onRequestClose={() => setShowCreate(false)}>
-        <View style={s.modalHeader}>
+        <View style={[s.modalHeader, { backgroundColor: colors.primary }]}>
           <Text style={s.modalTitle}>{tr('nouveau_depot', lang)}</Text>
           <TouchableOpacity onPress={() => setShowCreate(false)}>
             <Text style={s.modalClose}>✕</Text>
           </TouchableOpacity>
         </View>
-        <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
+        <ScrollView style={[s.modalBody, { backgroundColor: colors.background }]} keyboardShouldPersistTaps="handled">
           {/* Recherche personne existante */}
-          <View style={s.clientSearchBox}>
-            <Text style={s.clientSearchLabel}>{tr('personne_existante', lang)}</Text>
+          <View style={[s.clientSearchBox, { backgroundColor: colors.infoBg }]}>
+            <Text style={[s.clientSearchLabel, { color: colors.primary }]}>{tr('personne_existante', lang)}</Text>
             {selectedClient ? (
-              <View style={s.clientChip}>
-                <Text style={s.clientChipTxt}>{selectedClient.nomComplet} — {selectedClient.numero}</Text>
+              <View style={[s.clientChip, { backgroundColor: colors.card, borderColor: colors.success }]}>
+                <Text style={[s.clientChipTxt, { color: colors.success }]}>{selectedClient.nomComplet} — {selectedClient.numero}</Text>
                 <TouchableOpacity onPress={effacerClient}>
-                  <Text style={s.clientChipX}>✕</Text>
+                  <Text style={[s.clientChipX, { color: colors.danger }]}>✕</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <>
                 <TextInput
-                  style={s.clientSearchInput}
+                  style={[s.clientSearchInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                   placeholder={tr('recherche_client', lang)}
                   value={clientSearch}
                   onChangeText={rechercherClients}
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={colors.placeholder}
                 />
                 {clientSuggestions.map(c => (
-                  <TouchableOpacity key={c.id} style={s.clientSugg} onPress={() => choisirClient(c)}>
-                    <View style={s.suggAvatar}>
+                  <TouchableOpacity key={c.id} style={[s.clientSugg, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => choisirClient(c)}>
+                    <View style={[s.suggAvatar, { backgroundColor: colors.primary }]}>
                       <Text style={s.suggAvatarTxt}>{c.nom[0].toUpperCase()}</Text>
                     </View>
                     <View>
-                      <Text style={s.suggNom}>{c.nomComplet}</Text>
-                      <Text style={s.suggTel}>{c.numero}</Text>
+                      <Text style={[s.suggNom, { color: colors.text }]}>{c.nomComplet}</Text>
+                      <Text style={[s.suggTel, { color: colors.textSecondary }]}>{c.numero}</Text>
                     </View>
                   </TouchableOpacity>
                 ))}
                 {clientSearch.length > 0 && clientSuggestions.length === 0 && (
-                  <Text style={s.noSugg}>Aucune personne trouvée — remplir manuellement</Text>
+                  <Text style={[s.noSugg, { color: colors.textSecondary }]}>Aucune personne trouvée — remplir manuellement</Text>
                 )}
               </>
             )}
-            <View style={s.divider}><View style={s.dividerLine} /><Text style={s.dividerTxt}>ou manuellement</Text><View style={s.dividerLine} /></View>
+            <View style={s.divider}><View style={[s.dividerLine, { backgroundColor: colors.border }]} /><Text style={[s.dividerTxt, { color: colors.textSecondary }]}>ou manuellement</Text><View style={[s.dividerLine, { backgroundColor: colors.border }]} /></View>
           </View>
 
-          <Text style={s.fieldLabel}>{tr('nom', lang)} *</Text>
-          <TextInput style={s.input} value={form.nom} onChangeText={v => setForm(f => ({ ...f, nom: v }))} placeholder={tr('nom_deposant', lang)} />
-          <Text style={s.fieldLabel}>{tr('prenom', lang)}</Text>
-          <TextInput style={s.input} value={form.prenom} onChangeText={v => setForm(f => ({ ...f, prenom: v }))} placeholder={tr('prenom', lang)} />
-          <Text style={s.fieldLabel}>{tr('telephone', lang)} *</Text>
-          <TextInput style={s.input} value={form.numero} onChangeText={v => setForm(f => ({ ...f, numero: v }))} placeholder="Ex: 77 000 00 00" keyboardType="phone-pad" />
-          <Text style={s.fieldLabel}>{tr('montant_depot', lang)} *</Text>
-          <MontantInput style={s.input} value={form.montant} onChangeValue={v => setForm(f => ({ ...f, montant: v }))} placeholder="0" />
-          <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
-          <TextInput style={[s.input, { height: 70 }]} value={form.observation} onChangeText={v => setForm(f => ({ ...f, observation: v }))} placeholder={tr('description', lang)} multiline />
+          <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('nom', lang)} *</Text>
+          <TextInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={form.nom} onChangeText={v => setForm(f => ({ ...f, nom: v }))} placeholder={tr('nom_deposant', lang)} placeholderTextColor={colors.placeholder} />
+          <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('prenom', lang)}</Text>
+          <TextInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={form.prenom} onChangeText={v => setForm(f => ({ ...f, prenom: v }))} placeholder={tr('prenom', lang)} placeholderTextColor={colors.placeholder} />
+          <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('telephone', lang)} *</Text>
+          <TextInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={form.numero} onChangeText={v => setForm(f => ({ ...f, numero: v }))} placeholder="Ex: 77 000 00 00" keyboardType="phone-pad" placeholderTextColor={colors.placeholder} />
+          <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('montant_depot', lang)} *</Text>
+          <MontantInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={form.montant} onChangeValue={v => setForm(f => ({ ...f, montant: v }))} placeholder="0" />
+          <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('description', lang)}</Text>
+          <TextInput style={[s.input, { height: 70, backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={form.observation} onChangeText={v => setForm(f => ({ ...f, observation: v }))} placeholder={tr('description', lang)} multiline placeholderTextColor={colors.placeholder} />
 
-          <TouchableOpacity style={s.saveBtn} onPress={sauvegarder} disabled={saving}>
+          <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary }]} onPress={sauvegarder} disabled={saving}>
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>{tr('enregistrer', lang)}</Text>}
           </TouchableOpacity>
         </ScrollView>
@@ -531,28 +542,28 @@ export default function DepotsScreen() {
       <Modal visible={showDetail} animationType="slide" onRequestClose={() => setShowDetail(false)}>
         {selected && (
           <>
-            <View style={s.modalHeader}>
+            <View style={[s.modalHeader, { backgroundColor: colors.primary }]}>
               <Text style={s.modalTitle}>{selected.nomComplet}</Text>
               <TouchableOpacity onPress={() => setShowDetail(false)}>
                 <Text style={s.modalClose}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView style={s.modalBody}>
-              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('telephone', lang)}</Text><Text style={s.detailVal}>{selected.numero}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('actif', lang)}</Text><Text style={[s.detailVal, selected.statut === 'ACTIF' ? { color: '#0e9f6e' } : { color: '#6b7280' }]}>{selected.statut === 'ACTIF' ? tr('actif', lang) : tr('cloture', lang)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('date', lang)}</Text><Text style={s.detailVal}>{fmt(selected.dateDepot)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('montant_depot', lang)}</Text><Text style={s.detailVal}>{money(selected.montantInitial)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('restant', lang)}</Text><Text style={[s.detailVal, { color: '#1a56db', fontWeight: '700' }]}>{money(selected.montantRestant)}</Text></View>
-              <View style={s.detailRow}><Text style={s.detailLbl}>{tr('retire', lang)}</Text><Text style={[s.detailVal, { color: '#dc2626' }]}>{money(selected.montantRetire)}</Text></View>
-              {selected.observation && <View style={s.detailRow}><Text style={s.detailLbl}>{tr('description', lang)}</Text><Text style={s.detailVal}>{selected.observation}</Text></View>}
+            <ScrollView style={[s.modalBody, { backgroundColor: colors.background }]}>
+              <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('telephone', lang)}</Text><Text style={[s.detailVal, { color: colors.text }]}>{selected.numero}</Text></View>
+              <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('actif', lang)}</Text><Text style={[s.detailVal, selected.statut === 'ACTIF' ? { color: colors.success } : { color: colors.textSecondary }]}>{selected.statut === 'ACTIF' ? tr('actif', lang) : tr('cloture', lang)}</Text></View>
+              <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('date', lang)}</Text><Text style={[s.detailVal, { color: colors.text }]}>{fmt(selected.dateDepot)}</Text></View>
+              <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('montant_depot', lang)}</Text><Text style={[s.detailVal, { color: colors.text }]}>{money(selected.montantInitial)}</Text></View>
+              <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('restant', lang)}</Text><Text style={[s.detailVal, { color: colors.primary, fontWeight: '700' }]}>{money(selected.montantRestant)}</Text></View>
+              <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('retire', lang)}</Text><Text style={[s.detailVal, { color: colors.danger }]}>{money(selected.montantRetire)}</Text></View>
+              {selected.observation && <View style={[s.detailRow, { borderBottomColor: colors.border }]}><Text style={[s.detailLbl, { color: colors.textSecondary }]}>{tr('description', lang)}</Text><Text style={[s.detailVal, { color: colors.text }]}>{selected.observation}</Text></View>}
 
               {selected.retraits?.length > 0 && (
                 <View style={{ marginTop: 16 }}>
-                  <Text style={s.sectionTitle}>{tr('historique_retraits', lang)}</Text>
+                  <Text style={[s.sectionTitle, { color: colors.text }]}>{tr('historique_retraits', lang)}</Text>
                   {selected.retraits.map(r => (
-                    <View key={r.id} style={s.retraitRow}>
-                      <Text style={s.retraitDate}>{fmt(r.dateRetrait)}</Text>
-                      <Text style={s.retraitMontant}>- {money(r.montant)}</Text>
+                    <View key={r.id} style={[s.retraitRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[s.retraitDate, { color: colors.textSecondary }]}>{fmt(r.dateRetrait)}</Text>
+                      <Text style={[s.retraitMontant, { color: colors.danger }]}>- {money(r.montant)}</Text>
                     </View>
                   ))}
                 </View>
@@ -560,7 +571,7 @@ export default function DepotsScreen() {
 
               {selected.statut === 'ACTIF' && (
                 <>
-                  <TouchableOpacity style={[s.saveBtn, { backgroundColor: '#dc2626', marginTop: 24 }]} onPress={() => {
+                  <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.danger, marginTop: 24 }]} onPress={() => {
                     setRetraitMontant(0);
                     setRetraitObs('');
                     setShowRetrait(true);
@@ -568,7 +579,7 @@ export default function DepotsScreen() {
                     <Text style={s.saveBtnTxt}>{tr('effectuer_retrait', lang)}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[s.saveBtn, { backgroundColor: '#6b7280', marginTop: 10 }]}
+                    style={[s.saveBtn, { backgroundColor: colors.textSecondary, marginTop: 10 }]}
                     disabled={cloturing}
                     onPress={() => cloturer(selected)}
                   >
@@ -583,19 +594,19 @@ export default function DepotsScreen() {
 
       {/* ── Modal Retrait ── */}
       <Modal visible={showRetrait} animationType="slide" transparent onRequestClose={() => setShowRetrait(false)}>
-        <View style={s.retraitOverlay}>
-          <View style={s.retraitCard}>
-            <Text style={s.retraitTitle}>{tr('retrait', lang)}</Text>
-            <Text style={s.retraitInfo}>{tr('disponible', lang)} : {selected ? money(selected.montantRestant) : ''}</Text>
-            <Text style={s.fieldLabel}>{tr('montant_retrait', lang)} *</Text>
-            <MontantInput style={s.input} value={retraitMontant} onChangeValue={setRetraitMontant} placeholder="0" />
-            <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
-            <TextInput style={s.input} value={retraitObs} onChangeText={setRetraitObs} placeholder={tr('description', lang)} />
+        <View style={[s.retraitOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.retraitCard, { backgroundColor: colors.card }]}>
+            <Text style={[s.retraitTitle, { color: colors.text }]}>{tr('retrait', lang)}</Text>
+            <Text style={[s.retraitInfo, { color: colors.textSecondary }]}>{tr('disponible', lang)} : {selected ? money(selected.montantRestant) : ''}</Text>
+            <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('montant_retrait', lang)} *</Text>
+            <MontantInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={retraitMontant} onChangeValue={setRetraitMontant} placeholder="0" />
+            <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('description', lang)}</Text>
+            <TextInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={retraitObs} onChangeText={setRetraitObs} placeholder={tr('description', lang)} placeholderTextColor={colors.placeholder} />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#6b7280' }]} onPress={() => setShowRetrait(false)}>
+              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: colors.textSecondary }]} onPress={() => setShowRetrait(false)}>
                 <Text style={s.saveBtnTxt}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#dc2626' }]} onPress={effectuerRetrait}>
+              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: colors.danger }]} onPress={effectuerRetrait}>
                 <Text style={s.saveBtnTxt}>{tr('confirmer', lang)}</Text>
               </TouchableOpacity>
             </View>
@@ -605,21 +616,21 @@ export default function DepotsScreen() {
 
       {/* ── Modal Retrait global (vue groupée) ── */}
       <Modal visible={showRetraitGlobal} animationType="slide" transparent onRequestClose={() => setShowRetraitGlobal(false)}>
-        <View style={s.retraitOverlay}>
-          <View style={s.retraitCard}>
-            <Text style={s.retraitTitle}>Retrait global — {clientRetraitGlobal?.nomComplet}</Text>
-            <Text style={s.retraitInfo}>
+        <View style={[s.retraitOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.retraitCard, { backgroundColor: colors.card }]}>
+            <Text style={[s.retraitTitle, { color: colors.text }]}>Retrait global — {clientRetraitGlobal?.nomComplet}</Text>
+            <Text style={[s.retraitInfo, { color: colors.textSecondary }]}>
               {tr('disponible', lang)} : {clientRetraitGlobal ? money(clientRetraitGlobal.totalMontantRestant) : ''} · {clientRetraitGlobal?.nombreDepotsActifs} dépôt(s)
             </Text>
-            <Text style={s.fieldLabel}>Montant (laisser vide pour tout retirer)</Text>
-            <MontantInput style={s.input} value={retraitGlobalMontant} onChangeValue={setRetraitGlobalMontant} placeholder="Total si vide" />
-            <Text style={s.fieldLabel}>{tr('description', lang)}</Text>
-            <TextInput style={s.input} value={retraitGlobalObs} onChangeText={setRetraitGlobalObs} placeholder={tr('description', lang)} />
+            <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Montant (laisser vide pour tout retirer)</Text>
+            <MontantInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={retraitGlobalMontant} onChangeValue={setRetraitGlobalMontant} placeholder="Total si vide" />
+            <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{tr('description', lang)}</Text>
+            <TextInput style={[s.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]} value={retraitGlobalObs} onChangeText={setRetraitGlobalObs} placeholder={tr('description', lang)} placeholderTextColor={colors.placeholder} />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#6b7280' }]} onPress={() => setShowRetraitGlobal(false)}>
+              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: colors.textSecondary }]} onPress={() => setShowRetraitGlobal(false)}>
                 <Text style={s.saveBtnTxt}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: '#dc2626' }]} disabled={savingRetraitGlobal} onPress={saveRetraitGlobal}>
+              <TouchableOpacity style={[s.saveBtn, { flex: 1, backgroundColor: colors.danger }]} disabled={savingRetraitGlobal} onPress={saveRetraitGlobal}>
                 {savingRetraitGlobal ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>{tr('confirmer', lang)}</Text>}
               </TouchableOpacity>
             </View>
@@ -631,10 +642,10 @@ export default function DepotsScreen() {
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  container: { flex: 1 },
 
   // Hero banner
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  hero: { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
   heroStat: { flex: 1, alignItems: 'center' },
   heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
@@ -645,87 +656,83 @@ const s = StyleSheet.create({
 
   // Bascule vue liste / groupée
   vueRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 8 },
-  vueBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, borderRadius: 10, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
-  vueBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  vueTxt: { fontSize: 12, fontWeight: '600', color: '#64748b' },
-  vueTxtActive: { color: '#fff' },
-  btnRetraitGlobal: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#dc2626', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  vueBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  vueTxt: { fontSize: 12, fontWeight: '600' },
+  btnRetraitGlobal: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   btnRetraitGlobalTxt: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   // Filtres
   filtreRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center' },
-  filtreBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#e2e8f0' },
-  filtreBtnActive: { backgroundColor: '#1a56db' },
-  filtreTxt: { fontSize: 12, color: '#475569', fontWeight: '600' },
-  filtreTxtActive: { color: '#fff' },
+  filtreBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  filtreTxt: { fontSize: 12, fontWeight: '600' },
 
   // Searchbar
-  searchBar: { marginHorizontal: 12, marginBottom: 4, borderRadius: 10, backgroundColor: '#fff', elevation: 1 },
+  searchBar: { marginHorizontal: 12, marginBottom: 4, borderRadius: 10, elevation: 1 },
 
   // Paper Card
   card: { marginBottom: 10, borderRadius: 16, elevation: 2 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
-  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+  cardName: { fontWeight: '600', fontSize: 14 },
+  cardSub: { fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', fontSize: 13 },
   badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 },
   badgeTxt: { fontSize: 10, fontWeight: '700' },
 
   // Progress bar
-  progressBg: { height: 5, backgroundColor: '#e2e8f0', borderRadius: 3, marginTop: 8 },
-  progressFill: { height: 5, backgroundColor: '#dc2626', borderRadius: 3 },
-  progressLbl: { fontSize: 10, color: '#94a3b8', marginTop: 3 },
+  progressBg: { height: 5, borderRadius: 3, marginTop: 8 },
+  progressFill: { height: 5, borderRadius: 3 },
+  progressLbl: { fontSize: 10, marginTop: 3 },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
-  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', marginTop: 12 },
+  emptySub: { fontSize: 13, textAlign: 'center', marginTop: 4 },
 
   // FAB
-  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
+  fab: { position: 'absolute', right: 16, bottom: 20 },
 
   // Modal
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#1a56db' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
   modalTitle: { color: '#fff', fontSize: 17, fontWeight: '700' },
   modalClose: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  modalBody: { flex: 1, padding: 16, backgroundColor: '#f8fafc' },
+  modalBody: { flex: 1, padding: 16 },
 
   // Recherche client
-  clientSearchBox: { backgroundColor: '#eff6ff', borderRadius: 12, padding: 12, marginBottom: 16 },
-  clientSearchLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', color: '#1a56db', letterSpacing: 0.6, marginBottom: 8 },
-  clientChip: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#0e9f6e', borderRadius: 10, padding: 10 },
-  clientChipTxt: { fontSize: 14, fontWeight: '600', color: '#065f46', flex: 1 },
-  clientChipX: { color: '#dc2626', fontSize: 16, fontWeight: '700', marginLeft: 8 },
-  clientSearchInput: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a' },
-  clientSugg: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: 8, padding: 10, marginTop: 4, borderWidth: 1, borderColor: '#e2e8f0' },
-  suggAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1a56db', justifyContent: 'center', alignItems: 'center' },
+  clientSearchBox: { borderRadius: 12, padding: 12, marginBottom: 16 },
+  clientSearchLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 },
+  clientChip: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1.5, borderRadius: 10, padding: 10 },
+  clientChipTxt: { fontSize: 14, fontWeight: '600', flex: 1 },
+  clientChipX: { fontSize: 16, fontWeight: '700', marginLeft: 8 },
+  clientSearchInput: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, borderWidth: 1 },
+  clientSugg: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 8, padding: 10, marginTop: 4, borderWidth: 1 },
+  suggAvatar: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' },
   suggAvatarTxt: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  suggNom: { fontSize: 14, fontWeight: '600', color: '#0f172a' },
-  suggTel: { fontSize: 12, color: '#64748b' },
-  noSugg: { fontSize: 12, color: '#94a3b8', textAlign: 'center', paddingVertical: 8 },
+  suggNom: { fontSize: 14, fontWeight: '600' },
+  suggTel: { fontSize: 12 },
+  noSugg: { fontSize: 12, textAlign: 'center', paddingVertical: 8 },
   divider: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 4 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#cbd5e1' },
-  dividerTxt: { fontSize: 11, color: '#94a3b8' },
+  dividerLine: { flex: 1, height: 1 },
+  dividerTxt: { fontSize: 11 },
 
   // Formulaire
-  fieldLabel: { fontSize: 12, fontWeight: '600', color: '#475569', marginTop: 12, marginBottom: 4 },
-  input: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a' },
-  saveBtn: { backgroundColor: '#1a56db', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  fieldLabel: { fontSize: 12, fontWeight: '600', marginTop: 12, marginBottom: 4 },
+  input: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1 },
+  saveBtn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   saveBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
   // Détail
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
-  detailLbl: { fontSize: 13, color: '#64748b' },
-  detailVal: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
-  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#0f172a', marginBottom: 8 },
-  retraitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#f1f5f9' },
-  retraitDate: { fontSize: 13, color: '#64748b' },
-  retraitMontant: { fontSize: 13, fontWeight: '700', color: '#dc2626' },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1 },
+  detailLbl: { fontSize: 13 },
+  detailVal: { fontSize: 13, fontWeight: '600' },
+  sectionTitle: { fontSize: 14, fontWeight: '700', marginBottom: 8 },
+  retraitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1 },
+  retraitDate: { fontSize: 13 },
+  retraitMontant: { fontSize: 13, fontWeight: '700' },
 
   // Retrait overlay
-  retraitOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,.5)', justifyContent: 'flex-end' },
-  retraitCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
-  retraitTitle: { color: '#0f172a', fontSize: 17, fontWeight: '700', marginBottom: 4 },
-  retraitInfo: { fontSize: 13, color: '#64748b', marginBottom: 12 },
+  retraitOverlay: { flex: 1, justifyContent: 'flex-end' },
+  retraitCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  retraitTitle: { fontSize: 17, fontWeight: '700', marginBottom: 4 },
+  retraitInfo: { fontSize: 13, marginBottom: 12 },
 });

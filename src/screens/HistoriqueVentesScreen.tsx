@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, Alert,
-  Modal, ScrollView, TouchableOpacity, TextInput as RNTextInput,
+  Modal, ScrollView, TouchableOpacity, TextInput as RNTextInput, Linking,
 } from 'react-native';
 import { Text, Card, Chip, Searchbar, ActivityIndicator, ProgressBar, FAB, RadioButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -17,9 +17,13 @@ import {
 } from '../services/api.service';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { imprimerFactureRN } from '../services/invoice.service';
+import { TicketVente } from '../services/thermalPrinter.service';
+import ImprimerTicketButton from '../components/ImprimerTicketButton';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
+import { SkeletonCard } from '../components/SkeletonLoader';
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
 const money = (v: number) => (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
@@ -58,6 +62,7 @@ interface VenteAnnulee {
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function HistoriqueVentesScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const navigation = useNavigation<any>();
 
   // ─── Onglets ───────────────────────────────────────────────────────────────
@@ -89,6 +94,10 @@ export default function HistoriqueVentesScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [annulationEnCours, setAnnulationEnCours] = useState(false);
   const [userId, setUserId] = useState<number>(0);
+  // Impression ticket (CleFonctionnalite.IMPRESSION_TICKET) — même mécanisme
+  // exact que les autres fonctionnalités avancées (cache
+  // 'fonctionnalites_avancees_desactivees', voir LoginScreen.tsx).
+  const [impressionTicketActif, setImpressionTicketActif] = useState(false);
 
   // Modale de confirmation d'annulation avec motif (Alert.alert ne permet pas
   // de champ de saisie sur Android — réplique le comportement Ionic : motif
@@ -129,6 +138,11 @@ export default function HistoriqueVentesScreen() {
         const role: string = u?.role || '';
         setIsAdmin(role === 'ROLE_ADMIN' || role === 'ADMIN');
       } catch {}
+    });
+    AsyncStorage.getItem('fonctionnalites_avancees_desactivees').then(raw => {
+      let desactivees: string[] = [];
+      if (raw) { try { desactivees = JSON.parse(raw); } catch { /* ignore */ } }
+      setImpressionTicketActif(!desactivees.includes('IMPRESSION_TICKET'));
     });
   }, []);
 
@@ -404,6 +418,43 @@ export default function HistoriqueVentesScreen() {
     return { boutique, design };
   };
 
+  // Construit le TicketVente (reçu thermique) attendu par thermalPrinter.service.ts
+  // à partir d'une vente + son détail — reçu simple, indépendant du PDF facture
+  // ci-dessus (voir imprimerFactureRN, format A4/A5, pas fait pour une
+  // imprimante 58/80mm).
+  const buildTicketVente = (vente: any, detail: any, boutique: any): TicketVente => {
+    const lignes: any[] = detail?.lignes || detail?.produits || vente.lignes || vente.produits || [];
+    return {
+      boutiqueNom: boutique?.nom || 'Ges Boutique',
+      boutiqueAdresse: boutique?.adresse,
+      boutiqueTelephone: boutique?.telephone,
+      numeroVente: vente.numeroVente || `#${vente.id}`,
+      date: vente.dateVente ? new Date(vente.dateVente) : new Date(),
+      vendeurNom: vente.vendeurNom,
+      clientNom: vente.clientNom,
+      lignes: lignes.map((l: any) => ({
+        nom: l.produitNom || l.designation || 'Produit',
+        quantite: l.quantite || 0,
+        prixUnitaire: l.prixUnitaire || 0,
+        sousTotal: l.sousTotal,
+      })),
+      montantTotal: vente.montantApresRemise ?? vente.montantTotal ?? 0,
+      montantRemise: vente.montantRemiseTotal,
+      modePaiement: vente.modePaiement,
+    };
+  };
+
+  const getTicketPourVente = async (vente: any, detailDejaCharge?: any): Promise<TicketVente | null> => {
+    try {
+      const detail = detailDejaCharge ?? await chargerDetailVente(vente);
+      const { boutique } = await chargerBoutiqueEtDesign();
+      return buildTicketVente(vente, detail, boutique);
+    } catch {
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
+      return null;
+    }
+  };
+
   const handleImprimer = async (vente: any, detail: any) => {
     try {
       const { boutique, design } = await chargerBoutiqueEtDesign();
@@ -582,6 +633,51 @@ export default function HistoriqueVentesScreen() {
     setSavingRetour(false);
   };
 
+  // ─── Envoi facture par WhatsApp ─────────────────────────────────────────────
+  // Parité avec sales.page.ts:envoyerFactureWhatsApp/construireMessageWhatsAppVente
+  // (Ionic) — même message (lignes, remise, net à payer, versé/reste si crédit),
+  // via le même pattern wa.me déjà utilisé ailleurs dans RN (RapportsScreen,
+  // CommandesScreen : Linking.openURL(`https://wa.me/...`)).
+  const construireMessageWhatsAppVente = (vente: any, detail: any, boutiqueNom: string) => {
+    const nomClient = [vente.clientPrenom, vente.clientNom].filter(Boolean).join(' ') || vente.clientNom || tr('client_anonyme', lang);
+    const lignesVente: any[] = detail?.lignes || detail?.produits || vente.lignes || vente.produits || [];
+    const lignes = [
+      `🧾 *Facture de vente N°${vente.numeroVente}*`,
+      `🏪 ${boutiqueNom || 'Ges Boutique'}`,
+      `👤 Client : ${nomClient}`,
+      `📅 ${new Date(vente.dateVente).toLocaleDateString('fr-FR')}`,
+      '',
+      ...lignesVente.map((l: any) => `${l.produitNom || l.designation} ×${l.quantite} — ${money(l.sousTotal || l.quantite * l.prixUnitaire)}`),
+      '',
+      `💰 Montant total : ${money(vente.montantTotal)}`,
+    ];
+    if (vente.montantRemiseTotal > 0) {
+      lignes.push(`🏷️ Remise : -${money(vente.montantRemiseTotal)}`);
+    }
+    lignes.push(`✅ Net à payer : ${money(vente.montantApresRemise ?? vente.montantTotal)}`);
+    if (vente.estCredit) {
+      lignes.push(`💵 Versé : ${money(vente.montantVerse || 0)}`);
+      lignes.push(`⏳ Reste à payer : ${money(vente.montantRestant || 0)}`);
+    }
+    return lignes.join('\n');
+  };
+
+  const envoyerFactureWhatsApp = async (vente: any, detailDejaCharge?: any) => {
+    if (!vente.clientTelephone) {
+      Alert.alert(tr('erreur', lang), "Ajoutez un numéro de téléphone à ce client pour activer l'envoi WhatsApp");
+      return;
+    }
+    try {
+      const detail = detailDejaCharge ?? await chargerDetailVente(vente);
+      const { boutique } = await chargerBoutiqueEtDesign();
+      const message = construireMessageWhatsAppVente(vente, detail, boutique?.nom);
+      const clean = String(vente.clientTelephone).replace(/[\s()\-+]/g, '');
+      Linking.openURL(`https://wa.me/${clean}?text=${encodeURIComponent(message)}`);
+    } catch {
+      Alert.alert(tr('erreur', lang), tr('erreur', lang));
+    }
+  };
+
   // ─── QR code facture ───────────────────────────────────────────────────────
   const openQr = async (vente: any) => {
     setShowModal(false);
@@ -598,34 +694,38 @@ export default function HistoriqueVentesScreen() {
 
   // ─── Rendu si chargement initial (onglet actif) ────────────────────────────
   if (activeTab === 'ventes' && loading) {
-    return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, padding: 12 }]}>
+        <SkeletonCard count={5} />
+      </View>
+    );
   }
 
   // ─── Rendu principal ───────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
 
       {/* ── Barre d'onglets ── */}
-      <View style={styles.tabRow}>
+      <View style={[styles.tabRow, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'ventes' && styles.tabBtnActive]}
+          style={[styles.tabBtn, activeTab === 'ventes' && { borderBottomColor: colors.primary }]}
           onPress={() => setActiveTab('ventes')}
         >
-          <Text style={[styles.tabBtnText, activeTab === 'ventes' && styles.tabBtnTextActive]}>
+          <Text style={[styles.tabBtnText, { color: colors.textSecondary }, activeTab === 'ventes' && { color: colors.primary }]}>
             Ventes
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'annulees' && styles.tabBtnActive]}
+          style={[styles.tabBtn, activeTab === 'annulees' && { borderBottomColor: colors.primary }]}
           onPress={() => setActiveTab('annulees')}
         >
           <View style={styles.tabBtnInner}>
-            <Text style={[styles.tabBtnText, activeTab === 'annulees' && styles.tabBtnTextActive]}>
+            <Text style={[styles.tabBtnText, { color: colors.textSecondary }, activeTab === 'annulees' && { color: colors.primary }]}>
               Annulées
             </Text>
             {ventesAnnulees.length > 0 && (
-              <View style={styles.tabBadge}>
+              <View style={[styles.tabBadge, { backgroundColor: colors.danger }]}>
                 <Text style={styles.tabBadgeText}>{ventesAnnulees.length}</Text>
               </View>
             )}
@@ -667,10 +767,10 @@ export default function HistoriqueVentesScreen() {
             {([ ['today', tr('rapport_journalier', lang)], ['week', tr('rapport_semaine', lang)], ['month', tr('rapport_mois', lang)], ['all', tr('historique', lang)] ] as [ActivePeriod, string][]).map(([p, label]) => (
               <TouchableOpacity
                 key={p}
-                style={[styles.periodBtn, activePeriod === p && styles.periodBtnActive]}
+                style={[styles.periodBtn, { backgroundColor: colors.inputBg, borderColor: colors.border }, activePeriod === p && { backgroundColor: colors.primary, borderColor: colors.primary }]}
                 onPress={() => onPeriod(p)}
               >
-                <Text style={[styles.periodBtnText, activePeriod === p && styles.periodBtnTextActive]}>
+                <Text style={[styles.periodBtnText, { color: colors.textSecondary }, activePeriod === p && styles.periodBtnTextActive]}>
                   {label}
                 </Text>
               </TouchableOpacity>
@@ -684,8 +784,8 @@ export default function HistoriqueVentesScreen() {
                 key={t}
                 compact
                 onPress={() => onTypeFilter(t)}
-                style={[styles.filterChip, typeFilter === t && styles.filterChipActive]}
-                textStyle={[styles.filterChipText, typeFilter === t && styles.filterChipTextActive]}
+                style={[styles.filterChip, { backgroundColor: colors.inputBg, borderColor: colors.border }, typeFilter === t && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                textStyle={[styles.filterChipText, { color: colors.textSecondary }, typeFilter === t && styles.filterChipTextActive]}
               >
                 {label}
               </Chip>
@@ -703,8 +803,8 @@ export default function HistoriqueVentesScreen() {
                   key={m}
                   compact
                   onPress={() => onModePaiementFilter(m)}
-                  style={[styles.filterChip, modePaiementFilter === m && styles.filterChipActive]}
-                  textStyle={[styles.filterChipText, modePaiementFilter === m && styles.filterChipTextActive]}
+                  style={[styles.filterChip, { backgroundColor: colors.inputBg, borderColor: colors.border }, modePaiementFilter === m && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                  textStyle={[styles.filterChipText, { color: colors.textSecondary }, modePaiementFilter === m && styles.filterChipTextActive]}
                 >
                   {label}
                 </Chip>
@@ -715,18 +815,20 @@ export default function HistoriqueVentesScreen() {
           {/* ── Plage de dates libre Du/Au (comme Ionic sales.page.html:209-219) ── */}
           <View style={styles.dateRangeRow}>
             <RNTextInput
-              style={styles.dateRangeInput}
+              style={[styles.dateRangeInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
               placeholder="Du (AAAA-MM-JJ)"
+              placeholderTextColor={colors.placeholder}
               value={dateDebut}
               onChangeText={setDateDebut}
             />
             <RNTextInput
-              style={styles.dateRangeInput}
+              style={[styles.dateRangeInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
               placeholder="Au (AAAA-MM-JJ)"
+              placeholderTextColor={colors.placeholder}
               value={dateFin}
               onChangeText={setDateFin}
             />
-            <TouchableOpacity style={styles.dateRangeBtn} onPress={appliquerPeriodePersonnalisee}>
+            <TouchableOpacity style={[styles.dateRangeBtn, { backgroundColor: colors.primary }]} onPress={appliquerPeriodePersonnalisee}>
               <MaterialCommunityIcons name="magnify" size={18} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -736,8 +838,10 @@ export default function HistoriqueVentesScreen() {
             placeholder={tr('recherche_vente', lang)}
             value={search}
             onChangeText={onSearch}
-            style={styles.search}
-            inputStyle={{ fontSize: 14 }}
+            style={[styles.search, { backgroundColor: colors.card }]}
+            inputStyle={{ fontSize: 14, color: colors.text }}
+            placeholderTextColor={colors.placeholder}
+            iconColor={colors.textSecondary}
           />
 
           {/* ── Liste ventes ── */}
@@ -753,9 +857,9 @@ export default function HistoriqueVentesScreen() {
             contentContainerStyle={{ paddingVertical: 8, paddingBottom: 24 }}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <MaterialCommunityIcons name="cart-off" size={64} color="#cbd5e1" />
-                <Text style={styles.emptyTitle}>{tr('aucune_vente', lang)}</Text>
-                <Text style={styles.emptySub}>Aucune vente pour cette période</Text>
+                <MaterialCommunityIcons name="cart-off" size={64} color={colors.border} />
+                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{tr('aucune_vente', lang)}</Text>
+                <Text style={[styles.emptySub, { color: colors.placeholder }]}>Aucune vente pour cette période</Text>
               </View>
             }
             renderItem={({ item }) => {
@@ -869,9 +973,23 @@ export default function HistoriqueVentesScreen() {
                         <Text style={[styles.cardActionTxt, styles.cardActionTxtPrimary]}>PDF</Text>
                       </TouchableOpacity>
 
+                      {impressionTicketActif && (
+                        <ImprimerTicketButton compact getTicket={() => getTicketPourVente(item)} />
+                      )}
+
                       <TouchableOpacity style={styles.cardActionBtn} onPress={() => openQr(item)}>
                         <MaterialCommunityIcons name="qrcode" size={15} color="#475569" />
                         <Text style={styles.cardActionTxt}>QR</Text>
+                      </TouchableOpacity>
+
+                      {/* WhatsApp — parité avec sales.page.ts (bouton .saction--whatsapp,
+                          désactivé + infobulle si le client n'a pas de téléphone). */}
+                      <TouchableOpacity
+                        style={[styles.cardActionBtn, styles.cardActionWhatsApp, !item.clientTelephone && styles.cardActionDisabled]}
+                        onPress={() => envoyerFactureWhatsApp(item)}
+                      >
+                        <MaterialCommunityIcons name="whatsapp" size={15} color={item.clientTelephone ? '#16a34a' : '#94a3b8'} />
+                        <Text style={[styles.cardActionTxt, item.clientTelephone && styles.cardActionTxtWhatsApp]}>WhatsApp</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -1086,6 +1204,10 @@ export default function HistoriqueVentesScreen() {
                 >
                   <Text style={styles.btnPrintText}>{tr('imprimer', lang)}</Text>
                 </TouchableOpacity>
+              )}
+
+              {impressionTicketActif && selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
+                <ImprimerTicketButton compact getTicket={() => getTicketPourVente(selectedVente, venteDetail)} />
               )}
 
               {selectedVente && !(selectedVente.annulee || selectedVente.statut === 'ANNULEE') && (
@@ -1510,6 +1632,9 @@ const styles = StyleSheet.create({
   cardActionTxtRetour: { color: '#7c3aed' },
   cardActionPrimary: { backgroundColor: '#1a56db' },
   cardActionTxtPrimary: { color: '#fff' },
+  cardActionWhatsApp: { backgroundColor: '#dcfce7' },
+  cardActionTxtWhatsApp: { color: '#16a34a' },
+  cardActionDisabled: { opacity: 0.5 },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },

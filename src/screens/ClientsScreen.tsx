@@ -12,6 +12,7 @@ import {
   getClients, updateClient, deleteClient,
   getClientVentes, getCreditsNonRegles, getVenteDetail,
   createAvanceClient, getHistoriqueAvanceClient, getBackendRootUrl,
+  getSoldeFideliteClient, getMouvementsFideliteClient, ajusterPointsFidelite,
 } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { creerClientOffline, sauvegarderCache, lireCache } from '../services/offline.service';
@@ -21,6 +22,7 @@ import { Client } from '../types';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useMontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 // ─── Types locaux ─────────────────────────────────────────────────────────────
 interface VenteClient {
@@ -48,7 +50,25 @@ function estEnRetard(c: CreditClient): boolean {
   return new Date(c.dateEcheance).getTime() < Date.now();
 }
 
-type Onglet = 'infos' | 'achats' | 'credits';
+// Fidélité — voir CleFonctionnalite.PROGRAMME_FIDELITE. `type` correspond à
+// TypeMouvementFidelite côté backend (GAGNE/UTILISE/AJUSTEMENT), `points` est
+// signé (positif = gagné, négatif = utilisé).
+interface MouvementFideliteClient {
+  id: number;
+  type: 'GAGNE' | 'UTILISE' | 'AJUSTEMENT';
+  points: number;
+  venteId?: number;
+  motif?: string;
+  dateMouvement: string;
+  annule?: boolean;
+}
+
+interface SoldeFidelite {
+  points: number;
+  valeurFcfa: number;
+}
+
+type Onglet = 'infos' | 'achats' | 'credits' | 'fidelite';
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
 function money(v: number) { return (v ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA'; }
@@ -70,6 +90,8 @@ const AVATAR_TEXT = ['#1a56db',   '#16a34a',   '#d97706'];
 // ─── Composant principal ───────────────────────────────────────────────────────
 export default function ClientsScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const styles = createStyles(colors);
 
   // ── Liste ──────────────────────────────────────────────────────────────────
   const [clients, setClients] = useState<Client[]>([]);
@@ -109,6 +131,20 @@ export default function ClientsScreen() {
   const [loadingHistoriqueAvance, setLoadingHistoriqueAvance] = useState(false);
   const [historiqueAvance, setHistoriqueAvance] = useState<any>(null);
 
+  // ── Fidélité (CleFonctionnalite.PROGRAMME_FIDELITE) — masquée si la
+  // fonctionnalité est désactivée par le super admin, exactement comme Dépôt
+  // garde / Comptes bancaires (cache 'fonctionnalites_avancees_desactivees',
+  // voir LoginScreen.tsx). isAdmin sert uniquement à afficher le bouton
+  // d'ajustement manuel (réservé ADMIN côté backend, PATCH .../ajuster).
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [fideliteActif, setFideliteActif] = useState(false);
+  const [soldeFidelite, setSoldeFidelite] = useState<SoldeFidelite | null>(null);
+  const [mouvementsFidelite, setMouvementsFidelite] = useState<MouvementFideliteClient[]>([]);
+  const [loadingFidelite, setLoadingFidelite] = useState(false);
+  const [showAjusterFidelite, setShowAjusterFidelite] = useState(false);
+  const [ajusterForm, setAjusterForm] = useState({ delta: '', motif: '' });
+  const [savingAjusterFidelite, setSavingAjusterFidelite] = useState(false);
+
   // ── Chargement liste ───────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     try {
@@ -146,6 +182,21 @@ export default function ClientsScreen() {
   }, []);
 
   useEffect(() => { charger(); }, [charger]);
+
+  useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (!raw) return;
+      try {
+        const role: string = JSON.parse(raw)?.role || '';
+        setIsAdmin(role === 'ROLE_ADMIN' || role === 'ADMIN');
+      } catch { /* ignore */ }
+    });
+    AsyncStorage.getItem('fonctionnalites_avancees_desactivees').then(raw => {
+      let desactivees: string[] = [];
+      if (raw) { try { desactivees = JSON.parse(raw); } catch { /* ignore */ } }
+      setFideliteActif(!desactivees.includes('PROGRAMME_FIDELITE'));
+    });
+  }, []);
 
   useEffect(() => {
     if (!search) { setFiltered(clients); return; }
@@ -231,7 +282,48 @@ export default function ClientsScreen() {
     setOnglet('infos');
     setVentes([]);
     setCredits([]);
+    setSoldeFidelite(null);
+    setMouvementsFidelite([]);
     setShowDetail(true);
+  };
+
+  // ── Chargement onglet Fidélité — solde + historique des mouvements ────────
+  const chargerFidelite = useCallback(async (client: Client) => {
+    setLoadingFidelite(true);
+    try {
+      const [resSolde, resMouvements] = await Promise.all([
+        getSoldeFideliteClient(client.id),
+        getMouvementsFideliteClient(client.id),
+      ]);
+      setSoldeFidelite(resSolde.data || null);
+      setMouvementsFidelite(resMouvements.data || []);
+    } catch {
+      setSoldeFidelite(null);
+      setMouvementsFidelite([]);
+    }
+    setLoadingFidelite(false);
+  }, []);
+
+  // ── Ajustement manuel du solde (ADMIN uniquement) ─────────────────────────
+  const ouvrirAjusterFidelite = () => {
+    setAjusterForm({ delta: '', motif: '' });
+    setShowAjusterFidelite(true);
+  };
+
+  const enregistrerAjusterFidelite = async () => {
+    if (!selectedClient) return;
+    const delta = parseInt(ajusterForm.delta, 10);
+    if (!delta || isNaN(delta)) { Alert.alert(tr('erreur', lang), tr('fidelite_ajuster_delta_invalide', lang)); return; }
+    setSavingAjusterFidelite(true);
+    try {
+      await ajusterPointsFidelite(selectedClient.id, delta, ajusterForm.motif.trim() || undefined);
+      setShowAjusterFidelite(false);
+      Alert.alert(tr('succes', lang), tr('fidelite_ajuster_succes', lang));
+      await chargerFidelite(selectedClient);
+    } catch (e: any) {
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || tr('fidelite_ajuster_erreur', lang));
+    }
+    setSavingAjusterFidelite(false);
   };
 
   // ── Chargement onglet Achats ───────────────────────────────────────────────
@@ -358,6 +450,7 @@ export default function ClientsScreen() {
     if (!selectedClient) return;
     if (o === 'achats' && !ventes.length && !loadingVentes) chargerVentes(selectedClient);
     if (o === 'credits' && !credits.length && !loadingCredits) chargerCredits(selectedClient);
+    if (o === 'fidelite' && !soldeFidelite && !loadingFidelite) chargerFidelite(selectedClient);
   };
 
   // ── KPI dérivés ────────────────────────────────────────────────────────────
@@ -368,7 +461,7 @@ export default function ClientsScreen() {
   const avecCredit   = clients.filter(c => c.soldeCredit && c.soldeCredit > 0).length;
   const avecTelephone = clients.filter(c => !!c.telephone).length;
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
     <View style={styles.container}>
@@ -424,11 +517,11 @@ export default function ClientsScreen() {
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   {item.soldeCredit && item.soldeCredit > 0 ? (
-                    <Text style={[styles.cardAmt, { color: '#dc2626' }]}>
+                    <Text style={[styles.cardAmt, { color: colors.danger }]}>
                       {money(item.soldeCredit)}
                     </Text>
                   ) : null}
-                  <Text style={{ color: '#94a3b8', fontSize: 18, fontWeight: 'bold' }}>›</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 18, fontWeight: 'bold' }}>›</Text>
                 </View>
               </Card.Content>
             </Card>
@@ -436,7 +529,7 @@ export default function ClientsScreen() {
         }}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <MaterialCommunityIcons name={"account-multiple-off-outline" as any} size={64} color="#cbd5e1" />
+            <MaterialCommunityIcons name={"account-multiple-off-outline" as any} size={64} color={colors.border} />
             <Text style={styles.emptyTitle}>{tr('aucun_client', lang)}</Text>
             <Text style={styles.emptySub}>Aucun client enregistré</Text>
           </View>
@@ -499,7 +592,7 @@ export default function ClientsScreen() {
             <Button
               mode="contained"
               onPress={enregistrer}
-              style={{ marginTop: 8, backgroundColor: '#1a56db' }}
+              style={{ marginTop: 8, backgroundColor: colors.primary }}
             >
               {editingClient ? tr('enregistrer', lang) : tr('enregistrer', lang)}
             </Button>
@@ -543,8 +636,8 @@ export default function ClientsScreen() {
 
             {/* Barre onglets */}
             <View style={styles.tabBar}>
-              {(['infos', 'achats', 'credits'] as Onglet[]).map(o => {
-                const labels: Record<Onglet, string> = { infos: 'Infos', achats: tr('achat', lang), credits: tr('credits', lang) };
+              {(['infos', 'achats', 'credits', ...(fideliteActif ? ['fidelite'] as Onglet[] : [])] as Onglet[]).map(o => {
+                const labels: Record<Onglet, string> = { infos: 'Infos', achats: tr('achat', lang), credits: tr('credits', lang), fidelite: tr('fidelite_onglet', lang) };
                 return (
                   <TouchableOpacity
                     key={o}
@@ -591,17 +684,17 @@ export default function ClientsScreen() {
                     style={styles.btnReleve}
                     onPress={() => setShowReleve(true)}
                   >
-                    <MaterialCommunityIcons name="file-document-outline" size={18} color="#1a56db" />
+                    <MaterialCommunityIcons name="file-document-outline" size={18} color={colors.primary} />
                     <Text style={styles.btnReleveText}>Relevé complet du client</Text>
                   </TouchableOpacity>
 
                   <View style={styles.actionsRow}>
                     <TouchableOpacity style={styles.btnAvance} onPress={ouvrirAvanceModal}>
-                      <MaterialCommunityIcons name="wallet-outline" size={16} color="#0e9f6e" />
+                      <MaterialCommunityIcons name="wallet-outline" size={16} color={colors.success} />
                       <Text style={styles.btnAvanceText}>Avance</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.btnHistorique} onPress={ouvrirHistoriqueAvance}>
-                      <MaterialCommunityIcons name="clock-outline" size={16} color="#1a56db" />
+                      <MaterialCommunityIcons name="clock-outline" size={16} color={colors.primary} />
                       <Text style={styles.btnHistoriqueText}>Historique avances</Text>
                     </TouchableOpacity>
                   </View>
@@ -632,7 +725,7 @@ export default function ClientsScreen() {
               {onglet === 'achats' && (
                 <>
                   {loadingVentes ? (
-                    <ActivityIndicator size="large" color="#1a56db" style={{ marginTop: 40 }} />
+                    <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
                   ) : (
                     <>
                       {/* KPI Total CA */}
@@ -667,9 +760,9 @@ export default function ClientsScreen() {
                                 disabled={venteEnCoursImpression === v.id}
                               >
                                 {venteEnCoursImpression === v.id ? (
-                                  <ActivityIndicator size={12} color="#1a56db" />
+                                  <ActivityIndicator size={12} color={colors.primary} />
                                 ) : (
-                                  <MaterialCommunityIcons name="file-pdf-box" size={14} color="#1a56db" />
+                                  <MaterialCommunityIcons name="file-pdf-box" size={14} color={colors.primary} />
                                 )}
                                 <Text style={styles.btnPdfVenteText}>Facture PDF</Text>
                               </TouchableOpacity>
@@ -686,17 +779,17 @@ export default function ClientsScreen() {
               {onglet === 'credits' && (
                 <>
                   {loadingCredits ? (
-                    <ActivityIndicator size="large" color="#dc2626" style={{ marginTop: 40 }} />
+                    <ActivityIndicator size="large" color={colors.danger} style={{ marginTop: 40 }} />
                   ) : (
                     <>
                       {totalRestantDu > 0 ? (
                         <View style={[styles.kpiBox, styles.kpiBoxRed]}>
-                          <Text style={[styles.kpiLabel, { color: '#dc2626' }]}>Total restant du</Text>
-                          <Text style={[styles.kpiVal, { color: '#dc2626' }]}>{money(totalRestantDu)}</Text>
+                          <Text style={[styles.kpiLabel, { color: colors.danger }]}>Total restant du</Text>
+                          <Text style={[styles.kpiVal, { color: colors.danger }]}>{money(totalRestantDu)}</Text>
                         </View>
                       ) : (
-                        <View style={[styles.kpiBox, { borderColor: '#16a34a' }]}>
-                          <Text style={[styles.kpiLabel, { color: '#16a34a' }]}>Aucun credit en cours</Text>
+                        <View style={[styles.kpiBox, { borderColor: colors.success }]}>
+                          <Text style={[styles.kpiLabel, { color: colors.success }]}>Aucun credit en cours</Text>
                         </View>
                       )}
 
@@ -713,7 +806,7 @@ export default function ClientsScreen() {
                               <View style={styles.creditTop}>
                                 <Text style={styles.creditNum}>{c.numeroVente ?? `Vente #${c.venteId}`}</Text>
                                 <View style={[styles.statutBadge, c.estReglee ? styles.statutRegle : retard ? styles.statutRetard : styles.statutEnCours]}>
-                                  <Text style={[styles.statutText, c.estReglee ? { color: '#16a34a' } : retard ? { color: '#dc2626' } : { color: '#d97706' }]}>
+                                  <Text style={[styles.statutText, c.estReglee ? { color: colors.success } : retard ? { color: colors.danger } : { color: colors.warning }]}>
                                     {c.estReglee ? 'Solde' : retard ? 'En retard' : 'En cours'}
                                   </Text>
                                 </View>
@@ -731,15 +824,76 @@ export default function ClientsScreen() {
                               </View>
 
                               {!c.estReglee && (
-                                <Text style={[styles.creditRestant, retard && { color: '#dc2626' }]}>
+                                <Text style={[styles.creditRestant, retard && { color: colors.danger }]}>
                                   Restant : {money(c.montantRestant)}
                                 </Text>
                               )}
                               {!c.estReglee && !!c.dateEcheance && (
-                                <Text style={[styles.creditEcheance, retard && { color: '#dc2626' }]}>
+                                <Text style={[styles.creditEcheance, retard && { color: colors.danger }]}>
                                   Échéance : {fdate(c.dateEcheance)}
                                 </Text>
                               )}
+                            </View>
+                          );
+                        })
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* ── ONGLET FIDÉLITÉ ── */}
+              {onglet === 'fidelite' && (
+                <>
+                  {loadingFidelite ? (
+                    <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+                  ) : (
+                    <>
+                      <View style={[styles.kpiBox, { borderColor: colors.warning, backgroundColor: colors.warningBg }]}>
+                        <Text style={[styles.kpiLabel, { color: colors.warning }]}>{tr('fidelite_solde_titre', lang)}</Text>
+                        <Text style={[styles.kpiVal, { color: colors.warning }]}>{soldeFidelite ? soldeFidelite.points : 0} {tr('fidelite_points_mot', lang)}</Text>
+                        <Text style={styles.kpiSub}>
+                          {tr('fidelite_valeur_equivalente', lang)} : {money(soldeFidelite?.valeurFcfa || 0)}
+                        </Text>
+                      </View>
+
+                      {isAdmin && (
+                        <TouchableOpacity style={styles.btnReleve} onPress={ouvrirAjusterFidelite}>
+                          <MaterialCommunityIcons name="tune-variant" size={18} color={colors.primary} />
+                          <Text style={styles.btnReleveText}>{tr('fidelite_ajuster_solde', lang)}</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      <Text style={[styles.kpiLabel, { color: colors.textSecondary, marginTop: 14, marginBottom: 8 }]}>
+                        {tr('fidelite_historique_titre', lang)}
+                      </Text>
+
+                      {mouvementsFidelite.length === 0 ? (
+                        <Text style={styles.emptyOnglet}>{tr('fidelite_aucun_mouvement', lang)}</Text>
+                      ) : (
+                        mouvementsFidelite.map(m => {
+                          const positif = m.points >= 0;
+                          const typeLabel = m.type === 'GAGNE' ? tr('fidelite_type_gagne', lang)
+                            : m.type === 'UTILISE' ? tr('fidelite_type_utilise', lang)
+                            : tr('fidelite_type_ajustement', lang);
+                          return (
+                            <View key={m.id} style={styles.venteItem}>
+                              <View style={styles.venteTop}>
+                                <Text style={styles.venteDate}>{typeLabel}</Text>
+                                {m.annule ? (
+                                  <View style={styles.badgeCredit}>
+                                    <Text style={styles.badgeCreditText}>ANNULÉ</Text>
+                                  </View>
+                                ) : null}
+                                <Text style={{ fontWeight: 'bold', fontSize: 14, color: positif ? colors.success : colors.danger }}>
+                                  {positif ? '+' : ''}{m.points}
+                                </Text>
+                              </View>
+                              <Text style={styles.venteMode}>
+                                {fdate(m.dateMouvement)}
+                                {m.venteId ? `  ·  Vente #${m.venteId}` : ''}
+                                {m.motif ? `  ·  ${m.motif}` : ''}
+                              </Text>
                             </View>
                           );
                         })
@@ -778,17 +932,17 @@ export default function ClientsScreen() {
               </TouchableOpacity>
             </View>
             <View style={{ padding: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#64748b', fontSize: 12, textAlign: 'center', marginBottom: 16 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginBottom: 16 }}>
                 Le client scanne ce QR code pour télécharger son relevé de compte PDF
               </Text>
               {selectedClient?.id ? (
                 <Image
                   source={{ uri: `${getBackendRootUrl()}/api/clients/${selectedClient.id}/qrcode` }}
-                  style={{ width: 200, height: 200, borderRadius: 12, borderWidth: 2, borderColor: '#e2e8f0' }}
+                  style={{ width: 200, height: 200, borderRadius: 12, borderWidth: 2, borderColor: colors.border }}
                   resizeMode="contain"
                 />
               ) : null}
-              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 12 }}>{selectedClient ? nomComplet(selectedClient) : ''}</Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 12 }}>{selectedClient ? nomComplet(selectedClient) : ''}</Text>
             </View>
           </View>
         </View>
@@ -828,7 +982,7 @@ export default function ClientsScreen() {
                   mode="outlined"
                   style={styles.input}
                 />
-                <Text style={{ marginBottom: 6, fontSize: 12, fontWeight: '600', color: '#64748b' }}>Mode de paiement</Text>
+                <Text style={{ marginBottom: 6, fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>Mode de paiement</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
                   {['ESPECES', 'ORANGE_MONEY', 'MOOV_MONEY', 'CARTE_BANCAIRE', 'VIREMENT'].map(m => (
                     <TouchableOpacity
@@ -864,7 +1018,7 @@ export default function ClientsScreen() {
                   onPress={enregistrerAvanceFn}
                   loading={savingAvance}
                   disabled={savingAvance}
-                  style={{ marginTop: 8, backgroundColor: '#0e9f6e' }}
+                  style={{ marginTop: 8, backgroundColor: colors.success }}
                 >
                   Enregistrer l'avance
                 </Button>
@@ -890,23 +1044,23 @@ export default function ClientsScreen() {
               </TouchableOpacity>
             </View>
             {loadingHistoriqueAvance ? (
-              <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#1a56db" />
+              <ActivityIndicator style={{ marginTop: 40 }} size="large" color={colors.primary} />
             ) : (
               <ScrollView style={styles.detailBody} contentContainerStyle={{ paddingBottom: 20 }}>
                 {historiqueAvance ? (
                   <>
                     <View style={styles.avanceKpiRow}>
-                      <View style={[styles.avanceKpi, { backgroundColor: '#dcfce7' }]}>
-                        <Text style={[styles.avanceKpiLabel, { color: '#15803d' }]}>Disponible</Text>
-                        <Text style={[styles.avanceKpiVal, { color: '#15803d' }]}>{money(historiqueAvance.soldeDisponible || 0)}</Text>
+                      <View style={[styles.avanceKpi, { backgroundColor: colors.successBg }]}>
+                        <Text style={[styles.avanceKpiLabel, { color: colors.success }]}>Disponible</Text>
+                        <Text style={[styles.avanceKpiVal, { color: colors.success }]}>{money(historiqueAvance.soldeDisponible || 0)}</Text>
                       </View>
-                      <View style={[styles.avanceKpi, { backgroundColor: '#dbeafe' }]}>
-                        <Text style={[styles.avanceKpiLabel, { color: '#1d4ed8' }]}>Déposé</Text>
-                        <Text style={[styles.avanceKpiVal, { color: '#1d4ed8' }]}>{money(historiqueAvance.totalDepose || 0)}</Text>
+                      <View style={[styles.avanceKpi, { backgroundColor: colors.infoBg }]}>
+                        <Text style={[styles.avanceKpiLabel, { color: colors.primary }]}>Déposé</Text>
+                        <Text style={[styles.avanceKpiVal, { color: colors.primary }]}>{money(historiqueAvance.totalDepose || 0)}</Text>
                       </View>
-                      <View style={[styles.avanceKpi, { backgroundColor: '#fef3c7' }]}>
-                        <Text style={[styles.avanceKpiLabel, { color: '#b45309' }]}>Utilisé</Text>
-                        <Text style={[styles.avanceKpiVal, { color: '#b45309' }]}>{money(historiqueAvance.totalUtilise || 0)}</Text>
+                      <View style={[styles.avanceKpi, { backgroundColor: colors.warningBg }]}>
+                        <Text style={[styles.avanceKpiLabel, { color: colors.warning }]}>Utilisé</Text>
+                        <Text style={[styles.avanceKpiVal, { color: colors.warning }]}>{money(historiqueAvance.totalUtilise || 0)}</Text>
                       </View>
                     </View>
 
@@ -918,13 +1072,13 @@ export default function ClientsScreen() {
                           <View style={styles.venteTop}>
                             <Text style={styles.venteMontant}>{money(a.montant)}</Text>
                             <View style={[styles.statutBadge, a.statut === 'EPUISEE' ? styles.statutRegle : styles.statutEnCours]}>
-                              <Text style={[styles.statutText, { color: a.statut === 'EPUISEE' ? '#16a34a' : '#d97706' }]}>{a.statut}</Text>
+                              <Text style={[styles.statutText, { color: a.statut === 'EPUISEE' ? colors.success : colors.warning }]}>{a.statut}</Text>
                             </View>
                           </View>
                           <Text style={styles.venteMode}>{fdate(a.dateDepot)}</Text>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-                            <Text style={{ fontSize: 12, color: '#16a34a' }}>Disponible : {money(a.montantDisponible)}</Text>
-                            <Text style={{ fontSize: 12, color: '#d97706' }}>Utilisé : {money(a.montantUtilise)}</Text>
+                            <Text style={{ fontSize: 12, color: colors.success }}>Disponible : {money(a.montantDisponible)}</Text>
+                            <Text style={{ fontSize: 12, color: colors.warning }}>Utilisé : {money(a.montantUtilise)}</Text>
                           </View>
                         </View>
                       ))
@@ -938,16 +1092,67 @@ export default function ClientsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          MODAL AJUSTEMENT MANUEL FIDÉLITÉ (ADMIN)
+      ════════════════════════════════════════════════════════════════════════ */}
+      <Modal visible={showAjusterFidelite} animationType="slide" transparent onRequestClose={() => setShowAjusterFidelite(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={styles.overlay}>
+            <View style={styles.sheet}>
+              <View style={styles.handle} />
+              <View style={styles.detailHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.detailNom}>{tr('fidelite_ajuster_titre', lang)} · {selectedClient ? nomComplet(selectedClient) : ''}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowAjusterFidelite(false)} style={styles.closeBtn}>
+                  <Text style={styles.closeBtnText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.detailBody} contentContainerStyle={{ paddingBottom: 20 }}>
+                <TextInput
+                  label={tr('fidelite_ajuster_delta_label', lang)}
+                  value={ajusterForm.delta}
+                  onChangeText={v => setAjusterForm(f => ({ ...f, delta: v.replace(/[^0-9-]/g, '') }))}
+                  keyboardType="numeric"
+                  mode="outlined"
+                  style={styles.input}
+                  placeholder="+10 / -10"
+                />
+                <TextInput
+                  label={tr('fidelite_ajuster_motif_label', lang)}
+                  value={ajusterForm.motif}
+                  onChangeText={v => setAjusterForm(f => ({ ...f, motif: v }))}
+                  mode="outlined"
+                  multiline
+                  style={styles.input}
+                />
+                <Button
+                  mode="contained"
+                  onPress={enregistrerAjusterFidelite}
+                  loading={savingAjusterFidelite}
+                  disabled={savingAjusterFidelite}
+                  style={{ marginTop: 8, backgroundColor: colors.primary }}
+                >
+                  {tr('fidelite_ajuster_valider', lang)}
+                </Button>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+// Factory paramétrée par la palette active (mode sombre auto/manuel) — même
+// pattern que CreditsScreen.tsx / SortiesScreen.tsx.
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
 
   // Hero
-  hero: { backgroundColor: '#081648', flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
+  hero: { backgroundColor: colors.hero, flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 8 },
   heroStat: { flex: 1, alignItems: 'center' },
   heroVal: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   heroLbl: { color: '#93c5fd', fontSize: 11, marginTop: 2 },
@@ -955,115 +1160,116 @@ const styles = StyleSheet.create({
   // Offline
   offlineBanner: {
     flexDirection: 'row', gap: 6, alignItems: 'center',
-    backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: colors.warningBg, paddingHorizontal: 12, paddingVertical: 6,
   },
-  offlineTxt: { color: '#92400e', fontSize: 12 },
+  offlineTxt: { color: colors.warning, fontSize: 12 },
 
   // Liste
   search: { margin: 12 },
 
   // Card design system
   // STYLE (2026-08-16) : coins plus arrondis pour un rendu plus premium.
-  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1 },
+  card: { marginHorizontal: 12, marginBottom: 8, borderRadius: 16, elevation: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   avatarTxt: { fontWeight: 'bold', fontSize: 15 },
-  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
-  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  cardAmt: { fontWeight: '700', color: '#081648', fontSize: 13 },
+  cardName: { fontWeight: '600', fontSize: 14, color: colors.text },
+  cardSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  cardAmt: { fontWeight: '700', color: colors.text, fontSize: 13 },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 12 },
-  emptySub: { fontSize: 13, color: '#cbd5e1', textAlign: 'center', marginTop: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: colors.textSecondary, marginTop: 12 },
+  emptySub: { fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 4 },
 
   // FAB
-  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: '#1a56db' },
+  fab: { position: 'absolute', right: 16, bottom: 20, backgroundColor: colors.primary },
 
   // Modal ajout / modification (Paper)
-  paperModal: { backgroundColor: '#fff', margin: 20, borderRadius: 20, padding: 20 },
+  paperModal: { backgroundColor: colors.card, margin: 20, borderRadius: 20, padding: 20 },
   input: { marginBottom: 12 },
 
   // Modal detail (RN)
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%' },
+  overlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
+  sheet: { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%' },
   handle: {
-    width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2,
+    width: 36, height: 4, backgroundColor: colors.border, borderRadius: 2,
     alignSelf: 'center', marginTop: 10,
   },
 
   // Header detail
   detailHeader: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0',
+    padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   detailAvatar: {
     width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center',
   },
   detailAvatarText: { fontWeight: 'bold', fontSize: 18 },
-  detailNom: { fontWeight: 'bold', fontSize: 17, color: '#1e293b' },
-  detailSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
+  detailNom: { fontWeight: 'bold', fontSize: 17, color: colors.text },
+  detailSub: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
   closeBtn: { padding: 8 },
-  closeBtnText: { color: '#64748b', fontSize: 18, fontWeight: '600' },
+  closeBtnText: { color: colors.textSecondary, fontSize: 18, fontWeight: '600' },
 
   // Onglets
   tabBar: {
-    flexDirection: 'row', backgroundColor: '#fff',
-    borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+    flexDirection: 'row', backgroundColor: colors.card,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   tabBtn: {
     flex: 1, paddingVertical: 12, alignItems: 'center',
     borderBottomWidth: 2, borderBottomColor: 'transparent',
   },
-  tabBtnActive: { borderBottomColor: '#1a56db' },
-  tabLabel: { fontSize: 13, color: '#6b7280', fontWeight: '500' },
-  tabLabelActive: { color: '#1a56db', fontWeight: 'bold' },
+  tabBtnActive: { borderBottomColor: colors.primary },
+  tabLabel: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
+  tabLabelActive: { color: colors.primary, fontWeight: 'bold' },
 
   // Corps detail
   detailBody: { padding: 16, maxHeight: 440 },
 
   // Infos
   infoCard: {
-    backgroundColor: '#f8fafc', borderRadius: 14, padding: 12, marginBottom: 14,
-    borderWidth: 1, borderColor: '#e2e8f0',
+    backgroundColor: colors.inputBg, borderRadius: 14, padding: 12, marginBottom: 14,
+    borderWidth: 1, borderColor: colors.border,
   },
   infoRow: {
     flexDirection: 'row', justifyContent: 'space-between',
-    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  infoLabel: { color: '#64748b', fontSize: 13 },
-  infoVal: { color: '#1e293b', fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },
+  infoLabel: { color: colors.textSecondary, fontSize: 13 },
+  infoVal: { color: colors.text, fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },
 
   // Alerte credit
   alertCredit: {
-    backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginBottom: 14,
-    borderWidth: 1, borderColor: '#fca5a5', alignItems: 'center',
+    backgroundColor: colors.dangerBg, borderRadius: 10, padding: 12, marginBottom: 14,
+    borderWidth: 1, borderColor: colors.danger, alignItems: 'center',
   },
-  alertCreditText: { color: '#dc2626', fontWeight: 'bold', fontSize: 15 },
+  alertCreditText: { color: colors.danger, fontWeight: 'bold', fontSize: 15 },
 
   // Bouton relevé complet
   btnReleve: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#eff6ff', borderRadius: 12, paddingVertical: 12,
-    borderWidth: 1, borderColor: '#bfdbfe', marginBottom: 14,
+    backgroundColor: colors.infoBg, borderRadius: 12, paddingVertical: 12,
+    borderWidth: 1, borderColor: colors.primary, marginBottom: 14,
   },
-  btnReleveText: { color: '#1a56db', fontWeight: 'bold', fontSize: 14 },
+  btnReleveText: { color: colors.primary, fontWeight: 'bold', fontSize: 14 },
 
   // Boutons avance
   btnAvance: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#ecfdf5', borderRadius: 12, paddingVertical: 11,
-    borderWidth: 1, borderColor: '#a7f3d0',
+    backgroundColor: colors.successBg, borderRadius: 12, paddingVertical: 11,
+    borderWidth: 1, borderColor: colors.success,
   },
-  btnAvanceText: { color: '#0e9f6e', fontWeight: 'bold', fontSize: 13 },
+  btnAvanceText: { color: colors.success, fontWeight: 'bold', fontSize: 13 },
   btnHistorique: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#eff6ff', borderRadius: 12, paddingVertical: 11,
-    borderWidth: 1, borderColor: '#bfdbfe',
+    backgroundColor: colors.infoBg, borderRadius: 12, paddingVertical: 11,
+    borderWidth: 1, borderColor: colors.primary,
   },
-  btnHistoriqueText: { color: '#1a56db', fontWeight: 'bold', fontSize: 13 },
+  btnHistoriqueText: { color: colors.primary, fontWeight: 'bold', fontSize: 13 },
 
-  // Bouton QR code
+  // Bouton QR code — accent violet décoratif fixe (pas de token dédié dans la
+  // palette, comme l'icône "layers" violette de ProduitsScreen).
   btnQr: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: '#f5f3ff', borderRadius: 12, paddingVertical: 12,
@@ -1074,15 +1280,15 @@ const styles = StyleSheet.create({
   // Bouton facture PDF par vente
   btnPdfVente: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 8,
+    borderWidth: 1, borderColor: colors.primary, borderRadius: 8,
     paddingHorizontal: 8, paddingVertical: 3,
   },
-  btnPdfVenteText: { color: '#1a56db', fontSize: 10, fontWeight: '700' },
+  btnPdfVenteText: { color: colors.primary, fontSize: 10, fontWeight: '700' },
 
   // Chips mode paiement (modal avance)
-  modeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
-  modeChipActive: { backgroundColor: '#0e9f6e', borderColor: '#0e9f6e' },
-  modeChipText: { fontSize: 12, color: '#555' },
+  modeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.inputBg },
+  modeChipActive: { backgroundColor: colors.success, borderColor: colors.success },
+  modeChipText: { fontSize: 12, color: colors.textSecondary },
   modeChipTextActive: { color: '#fff', fontWeight: '600' },
 
   // KPI historique avances
@@ -1094,71 +1300,71 @@ const styles = StyleSheet.create({
   // Actions infos
   actionsRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   btnModifier: {
-    flex: 1, backgroundColor: '#1a56db', borderRadius: 12,
+    flex: 1, backgroundColor: colors.primary, borderRadius: 12,
     paddingVertical: 12, alignItems: 'center',
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
   },
   btnModifierText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   btnSupprimer: {
-    flex: 1, backgroundColor: '#fef2f2', borderRadius: 12,
+    flex: 1, backgroundColor: colors.dangerBg, borderRadius: 12,
     paddingVertical: 12, alignItems: 'center',
-    borderWidth: 1, borderColor: '#fca5a5',
+    borderWidth: 1, borderColor: colors.danger,
   },
-  btnSupprimerText: { color: '#dc2626', fontWeight: 'bold', fontSize: 14 },
+  btnSupprimerText: { color: colors.danger, fontWeight: 'bold', fontSize: 14 },
 
   // KPI achats / credits
   kpiBox: {
-    backgroundColor: '#eff6ff', borderRadius: 14, padding: 14,
+    backgroundColor: colors.infoBg, borderRadius: 14, padding: 14,
     marginBottom: 14, alignItems: 'center',
-    borderWidth: 1, borderColor: '#bfdbfe',
+    borderWidth: 1, borderColor: colors.primary,
   },
-  kpiBoxRed: { backgroundColor: '#fef2f2', borderColor: '#fca5a5' },
-  kpiLabel: { color: '#475569', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
-  kpiVal: { color: '#1a56db', fontWeight: 'bold', fontSize: 22, marginTop: 4 },
-  kpiSub: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
+  kpiBoxRed: { backgroundColor: colors.dangerBg, borderColor: colors.danger },
+  kpiLabel: { color: colors.textSecondary, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
+  kpiVal: { color: colors.primary, fontWeight: 'bold', fontSize: 22, marginTop: 4 },
+  kpiSub: { color: colors.textSecondary, fontSize: 11, marginTop: 2 },
 
   // Ventes
   venteItem: {
-    backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 8,
-    borderWidth: 1, borderColor: '#e2e8f0',
+    backgroundColor: colors.card, borderRadius: 10, padding: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: colors.border,
   },
   venteTop: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  venteDate: { flex: 1, color: '#475569', fontSize: 13, fontWeight: '500' },
-  venteMontant: { fontWeight: 'bold', color: '#1e293b', fontSize: 14 },
-  venteMode: { color: '#94a3b8', fontSize: 11 },
-  badgeCredit: { backgroundColor: '#fef3c7', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
-  badgeCreditText: { color: '#92400e', fontSize: 10, fontWeight: 'bold' },
-  emptyOnglet: { textAlign: 'center', color: '#94a3b8', marginTop: 40, fontSize: 14 },
+  venteDate: { flex: 1, color: colors.textSecondary, fontSize: 13, fontWeight: '500' },
+  venteMontant: { fontWeight: 'bold', color: colors.text, fontSize: 14 },
+  venteMode: { color: colors.textSecondary, fontSize: 11 },
+  badgeCredit: { backgroundColor: colors.warningBg, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+  badgeCreditText: { color: colors.warning, fontSize: 10, fontWeight: 'bold' },
+  emptyOnglet: { textAlign: 'center', color: colors.textSecondary, marginTop: 40, fontSize: 14 },
 
   // Credits
   creditItem: {
-    backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 8,
-    borderWidth: 1, borderColor: '#e2e8f0',
+    backgroundColor: colors.card, borderRadius: 10, padding: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: colors.border,
   },
-  creditItemRegle: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-  creditItemRetard: { backgroundColor: '#fef2f2', borderColor: '#fca5a5' },
+  creditItemRegle: { backgroundColor: colors.successBg, borderColor: colors.success },
+  creditItemRetard: { backgroundColor: colors.dangerBg, borderColor: colors.danger },
   creditTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  creditNum: { flex: 1, fontWeight: '600', color: '#334155', fontSize: 13 },
+  creditNum: { flex: 1, fontWeight: '600', color: colors.text, fontSize: 13 },
   statutBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
-  statutRegle: { backgroundColor: '#dcfce7' },
-  statutEnCours: { backgroundColor: '#fef3c7' },
-  statutRetard: { backgroundColor: '#fee2e2' },
+  statutRegle: { backgroundColor: colors.successBg },
+  statutEnCours: { backgroundColor: colors.warningBg },
+  statutRetard: { backgroundColor: colors.dangerBg },
   statutText: { fontSize: 11, fontWeight: '600' },
-  creditRestant: { color: '#dc2626', fontWeight: 'bold', fontSize: 13, marginTop: 4 },
-  creditEcheance: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
+  creditRestant: { color: colors.danger, fontWeight: 'bold', fontSize: 13, marginTop: 4 },
+  creditEcheance: { color: colors.textSecondary, fontSize: 11, marginTop: 2 },
 
   // Progression
   progressWrap: { marginVertical: 6 },
-  progressBg: { height: 6, backgroundColor: '#e2e8f0', borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: 6, backgroundColor: '#1a56db', borderRadius: 3 },
+  progressBg: { height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: 6, backgroundColor: colors.primary, borderRadius: 3 },
   progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 },
-  progressText: { fontSize: 10, color: '#94a3b8' },
+  progressText: { fontSize: 10, color: colors.textSecondary },
 
   // Pied modal detail
-  detailFoot: { padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
+  detailFoot: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border },
   btnFermer: {
-    backgroundColor: '#f1f5f9', borderRadius: 10,
+    backgroundColor: colors.inputBg, borderRadius: 10,
     paddingVertical: 12, alignItems: 'center',
   },
-  btnFermerText: { color: '#475569', fontWeight: '600', fontSize: 14 },
+  btnFermerText: { color: colors.textSecondary, fontWeight: '600', fontSize: 14 },
 });

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, FlatList, StyleSheet, RefreshControl, TouchableOpacity,
   TextInput, Alert, ScrollView, Modal,
@@ -12,6 +12,7 @@ import { imprimerDocumentPdfRN, DesignFacture } from '../services/invoice.servic
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 // Modèle réel backend (DetteAncienneController/Dto) : une "dette ancienne" est
@@ -74,6 +75,7 @@ function extractList(payload: any, key: string): any[] {
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function DettesAnciennesScreen() {
   const { lang } = useLang();
+  const colors = useColors();
 
   const [dettes, setDettes] = useState<DetteAncienne[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,6 +105,10 @@ export default function DettesAnciennesScreen() {
   const [formMontant, setFormMontant] = useState(0);
   const [formDateCredit, setFormDateCredit] = useState(new Date().toISOString().split('T')[0]);
   const [saving, setSaving] = useState(false);
+  // Modification d'une dette existante — même formulaire que la création (comme
+  // resources.page.ts edit(item) + saveDette() côté Ionic, qui réutilisent
+  // detteForm avec un id). null = mode création.
+  const [editingDette, setEditingDette] = useState<DetteAncienne | null>(null);
 
   // Formulaire règlement
   const [reglMontant, setReglMontant] = useState(0);
@@ -247,11 +253,31 @@ export default function DettesAnciennesScreen() {
   };
 
   const resetForm = () => {
+    setEditingDette(null);
     setSelectedClient(null);
     setClientSearch('');
     setFormDescription('');
     setFormMontant(0);
     setFormDateCredit(new Date().toISOString().split('T')[0]);
+  };
+
+  // Ouvre le formulaire pré-rempli pour modifier une dette existante — parité
+  // avec le bouton générique "Modifier" (edit(item) + saveDette() en mode
+  // édition) toujours affiché côté Ionic pour chaque dette de la liste.
+  const ouvrirEditerDette = (dette: DetteAncienne) => {
+    setEditingDette(dette);
+    const clientExistant = clients.find(c => c.id === dette.clientId);
+    setSelectedClient(clientExistant || {
+      id: dette.clientId,
+      nom: dette.clientNom || '',
+      prenom: dette.clientPrenom,
+      telephone: dette.clientTelephone,
+    });
+    setClientSearch('');
+    setFormMontant(dette.montantInitial || 0);
+    setFormDateCredit(dette.dateCredit ? new Date(dette.dateCredit).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+    setFormDescription(dette.description || '');
+    setShowNouvelle(true);
   };
 
   const sauvegarderDette = async () => {
@@ -273,7 +299,15 @@ export default function DettesAnciennesScreen() {
       description: formDescription.trim() || undefined,
     };
     try {
-      await executerOuMettreEnFile('dette_create', payload, () => api.post('/dettes-anciennes', payload));
+      if (editingDette) {
+        await executerOuMettreEnFile(
+          'dette_update',
+          { id: editingDette.id, ...payload },
+          () => api.put(`/dettes-anciennes/${editingDette.id}`, payload)
+        );
+      } else {
+        await executerOuMettreEnFile('dette_create', payload, () => api.post('/dettes-anciennes', payload));
+      }
       setShowNouvelle(false);
       resetForm();
       charger();
@@ -321,10 +355,10 @@ export default function DettesAnciennesScreen() {
       {MODES_PAIEMENT.map(m => (
         <TouchableOpacity
           key={m}
-          style={[s.chip, current === m && s.chipActive]}
+          style={[s.chip, { backgroundColor: current === m ? colors.hero : colors.inputBg, borderColor: current === m ? colors.hero : colors.border }]}
           onPress={() => onSelect(m)}
         >
-          <Text style={[s.chipText, current === m && s.chipTextActive]}>{MODE_LABELS[m]}</Text>
+          <Text style={[s.chipText, { color: current === m ? '#fff' : colors.textSecondary }, current === m && { fontWeight: '600' }]}>{MODE_LABELS[m]}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -332,8 +366,8 @@ export default function DettesAnciennesScreen() {
 
   const renderStatutBadge = (d: DetteAncienne) => {
     const cfg = d.estReglee
-      ? { color: '#16a34a', bg: '#f0fdf4', label: 'Soldée', icon: 'check-circle-outline' as const }
-      : { color: '#d97706', bg: '#fffbeb', label: 'En cours', icon: 'clock-outline' as const };
+      ? { color: colors.success, bg: colors.successBg, label: 'Soldée', icon: 'check-circle-outline' as const }
+      : { color: colors.warning, bg: colors.warningBg, label: 'En cours', icon: 'clock-outline' as const };
     return (
       <View style={[s.statutBadge, { backgroundColor: cfg.bg }]}>
         <MaterialCommunityIcons name={cfg.icon} size={11} color={cfg.color} />
@@ -343,13 +377,13 @@ export default function DettesAnciennesScreen() {
   };
 
   // ─── Rendu principal ──────────────────────────────────────────────────────
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#081648" />;
+  if (loading) return <View style={[s.container, { backgroundColor: colors.background }]}><ActivityIndicator style={{ flex: 1 }} size="large" color={colors.hero} /></View>;
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { backgroundColor: colors.background }]}>
 
       {/* ── Hero stats ─────────────────────────────────────────────────────── */}
-      <View style={s.hero}>
+      <View style={[s.hero, { backgroundColor: colors.hero }]}>
         <View style={s.heroStat}>
           <Text style={s.heroLabel}>Total dettes</Text>
           <Text style={s.heroVal}>{money(totalDettes)}</Text>
@@ -367,78 +401,78 @@ export default function DettesAnciennesScreen() {
       </View>
 
       {/* ── Barre de recherche + bouton nouveau ───────────────────────────── */}
-      <View style={s.toolbar}>
-        <View style={s.searchWrap}>
-          <MaterialCommunityIcons name="magnify" size={18} color="#999" />
+      <View style={[s.toolbar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        <View style={[s.searchWrap, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+          <MaterialCommunityIcons name="magnify" size={18} color={colors.textSecondary} />
           <TextInput
-            style={s.searchInput}
+            style={[s.searchInput, { color: colors.text }]}
             value={search}
             onChangeText={setSearch}
             placeholder="Rechercher un client..."
-            placeholderTextColor="#bbb"
+            placeholderTextColor={colors.placeholder}
           />
           {search.length > 0 && (
             <TouchableOpacity onPress={() => setSearch('')}>
-              <MaterialCommunityIcons name="close-circle" size={16} color="#bbb" />
+              <MaterialCommunityIcons name="close-circle" size={16} color={colors.placeholder} />
             </TouchableOpacity>
           )}
         </View>
         <TouchableOpacity
-          style={[s.iconBtn, showFiltres && s.iconBtnActive]}
+          style={[s.iconBtn, { backgroundColor: showFiltres ? colors.hero : colors.inputBg, borderColor: showFiltres ? colors.hero : colors.border }]}
           onPress={() => setShowFiltres(v => !v)}
         >
-          <MaterialCommunityIcons name="filter-variant" size={20} color={showFiltres ? '#fff' : '#081648'} />
+          <MaterialCommunityIcons name="filter-variant" size={20} color={showFiltres ? '#fff' : colors.hero} />
         </TouchableOpacity>
-        <TouchableOpacity style={s.iconBtn} onPress={imprimerListe}>
-          <MaterialCommunityIcons name="printer-outline" size={20} color="#081648" />
+        <TouchableOpacity style={[s.iconBtn, { backgroundColor: colors.inputBg, borderColor: colors.border }]} onPress={imprimerListe}>
+          <MaterialCommunityIcons name="printer-outline" size={20} color={colors.hero} />
         </TouchableOpacity>
-        <TouchableOpacity style={s.addBtn} onPress={() => { resetForm(); setShowNouvelle(true); }}>
+        <TouchableOpacity style={[s.addBtn, { backgroundColor: colors.hero }]} onPress={() => { resetForm(); setShowNouvelle(true); }}>
           <MaterialCommunityIcons name="plus" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
       {/* ── Panneau filtres (statut + période) ─────────────────────────────── */}
       {showFiltres && (
-        <View style={s.filtresPanel}>
+        <View style={[s.filtresPanel, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <View style={s.chips}>
             <TouchableOpacity
-              style={[s.chip, filtreActif === 'nonReglees' && s.chipActive]}
+              style={[s.chip, { backgroundColor: filtreActif === 'nonReglees' ? colors.hero : colors.inputBg, borderColor: filtreActif === 'nonReglees' ? colors.hero : colors.border }]}
               onPress={() => setFiltreActif('nonReglees')}
             >
-              <Text style={[s.chipText, filtreActif === 'nonReglees' && s.chipTextActive]}>Non réglées</Text>
+              <Text style={[s.chipText, { color: filtreActif === 'nonReglees' ? '#fff' : colors.textSecondary }, filtreActif === 'nonReglees' && { fontWeight: '600' }]}>Non réglées</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[s.chip, filtreActif === 'reglees' && s.chipActive]}
+              style={[s.chip, { backgroundColor: filtreActif === 'reglees' ? colors.hero : colors.inputBg, borderColor: filtreActif === 'reglees' ? colors.hero : colors.border }]}
               onPress={() => setFiltreActif('reglees')}
             >
-              <Text style={[s.chipText, filtreActif === 'reglees' && s.chipTextActive]}>Réglées</Text>
+              <Text style={[s.chipText, { color: filtreActif === 'reglees' ? '#fff' : colors.textSecondary }, filtreActif === 'reglees' && { fontWeight: '600' }]}>Réglées</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[s.chip, filtreActif === 'toutes' && s.chipActive]}
+              style={[s.chip, { backgroundColor: filtreActif === 'toutes' ? colors.hero : colors.inputBg, borderColor: filtreActif === 'toutes' ? colors.hero : colors.border }]}
               onPress={() => setFiltreActif('toutes')}
             >
-              <Text style={[s.chipText, filtreActif === 'toutes' && s.chipTextActive]}>Toutes</Text>
+              <Text style={[s.chipText, { color: filtreActif === 'toutes' ? '#fff' : colors.textSecondary }, filtreActif === 'toutes' && { fontWeight: '600' }]}>Toutes</Text>
             </TouchableOpacity>
           </View>
           <View style={s.periodeRow}>
             <TextInput
-              style={[s.fieldInput, s.periodeInput]}
+              style={[s.fieldInput, s.periodeInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
               value={dateDebut}
               onChangeText={setDateDebut}
               placeholder="Début AAAA-MM-JJ"
-              placeholderTextColor="#bbb"
+              placeholderTextColor={colors.placeholder}
             />
-            <Text style={{ color: '#999' }}>→</Text>
+            <Text style={{ color: colors.textSecondary }}>→</Text>
             <TextInput
-              style={[s.fieldInput, s.periodeInput]}
+              style={[s.fieldInput, s.periodeInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
               value={dateFin}
               onChangeText={setDateFin}
               placeholder="Fin AAAA-MM-JJ"
-              placeholderTextColor="#bbb"
+              placeholderTextColor={colors.placeholder}
             />
             {(dateDebut || dateFin) && (
               <TouchableOpacity onPress={() => { setDateDebut(''); setDateFin(''); }}>
-                <MaterialCommunityIcons name="close-circle" size={18} color="#bbb" />
+                <MaterialCommunityIcons name="close-circle" size={18} color={colors.placeholder} />
               </TouchableOpacity>
             )}
           </View>
@@ -453,22 +487,23 @@ export default function DettesAnciennesScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); charger(); }}
+            colors={[colors.hero]}
           />
         }
         contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
         ListEmptyComponent={
           <View style={s.emptyState}>
-            <MaterialCommunityIcons name="bank-off-outline" size={48} color="#ccc" />
-            <Text style={s.emptyStateText}>Aucune dette enregistrée</Text>
+            <MaterialCommunityIcons name="bank-off-outline" size={48} color={colors.textSecondary} />
+            <Text style={[s.emptyStateText, { color: colors.textSecondary }]}>Aucune dette enregistrée</Text>
           </View>
         }
         renderItem={({ item: d }) => {
-          const cfg = d.estReglee ? '#16a34a' : '#d97706';
+          const cfg = d.estReglee ? colors.success : colors.warning;
           const pct = d.montantInitial > 0
             ? Math.min(100, Math.round((d.montantPaye / d.montantInitial) * 100))
             : 0;
           return (
-            <View style={s.card}>
+            <View style={[s.card, { backgroundColor: colors.card }]}>
 
               {/* En-tête carte */}
               <View style={s.cardTop}>
@@ -476,38 +511,38 @@ export default function DettesAnciennesScreen() {
                   <Text style={s.avatarText}>{nomClient(d)[0]?.toUpperCase() || '?'}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.creancierText}>{nomClient(d)}</Text>
+                  <Text style={[s.creancierText, { color: colors.text }]}>{nomClient(d)}</Text>
                   {!!d.description && (
-                    <Text style={s.descText} numberOfLines={1}>{d.description}</Text>
+                    <Text style={[s.descText, { color: colors.textSecondary }]} numberOfLines={1}>{d.description}</Text>
                   )}
-                  <Text style={s.dateText}>Crédit du : {dateStr(d.dateCredit)}</Text>
+                  <Text style={[s.dateText, { color: colors.textSecondary }]}>Crédit du : {dateStr(d.dateCredit)}</Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={[s.montantText, { color: cfg }]}>{money(d.montantRestant)}</Text>
-                  <Text style={s.montantSub}>/ {money(d.montantInitial)}</Text>
+                  <Text style={[s.montantSub, { color: colors.textSecondary }]}>/ {money(d.montantInitial)}</Text>
                   {renderStatutBadge(d)}
                 </View>
               </View>
 
               {/* Barre de progression */}
               <View style={s.progressWrap}>
-                <View style={s.progressBg}>
+                <View style={[s.progressBg, { backgroundColor: colors.border }]}>
                   <View
                     style={[s.progressFill, { width: `${pct}%` as any, backgroundColor: cfg }]}
                   />
                 </View>
-                <Text style={s.progressLabel}>{pct}% réglé</Text>
+                <Text style={[s.progressLabel, { color: colors.textSecondary }]}>{pct}% réglé</Text>
               </View>
 
               {/* Actions */}
               <View style={s.cardActions}>
-                <TouchableOpacity style={s.actionBtn} onPress={() => openDetails(d)}>
-                  <MaterialCommunityIcons name="eye-outline" size={14} color="#081648" />
-                  <Text style={s.actionBtnText}>Détails</Text>
+                <TouchableOpacity style={[s.actionBtn, { borderColor: colors.border }]} onPress={() => openDetails(d)}>
+                  <MaterialCommunityIcons name="eye-outline" size={14} color={colors.hero} />
+                  <Text style={[s.actionBtnText, { color: colors.hero }]}>Détails</Text>
                 </TouchableOpacity>
                 {!d.estReglee && (
                   <TouchableOpacity
-                    style={[s.actionBtn, s.actionBtnPrimary]}
+                    style={[s.actionBtn, s.actionBtnPrimary, { backgroundColor: colors.hero, borderColor: colors.hero }]}
                     onPress={() => openReglement(d)}
                   >
                     <MaterialCommunityIcons name="cash-plus" size={14} color="#fff" />
@@ -515,10 +550,16 @@ export default function DettesAnciennesScreen() {
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity
-                  style={[s.actionBtn, s.actionBtnDanger]}
+                  style={[s.actionBtn, s.actionBtnDanger, { borderColor: colors.hero }]}
+                  onPress={() => ouvrirEditerDette(d)}
+                >
+                  <MaterialCommunityIcons name="pencil-outline" size={14} color={colors.hero} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.actionBtn, s.actionBtnDanger, { borderColor: colors.danger }]}
                   onPress={() => supprimerDette(d)}
                 >
-                  <MaterialCommunityIcons name="trash-can-outline" size={14} color="#dc2626" />
+                  <MaterialCommunityIcons name="trash-can-outline" size={14} color={colors.danger} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -533,80 +574,80 @@ export default function DettesAnciennesScreen() {
         transparent
         onRequestClose={() => setShowNouvelle(false)}
       >
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.handle} />
-            <View style={s.modalHead}>
-              <Text style={s.modalTitle}>Nouvelle dette</Text>
-              <TouchableOpacity onPress={() => setShowNouvelle(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#666" />
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
+            <View style={[s.modalHead, { borderBottomColor: colors.border }]}>
+              <Text style={[s.modalTitle, { color: colors.text }]}>{editingDette ? 'Modifier la dette' : 'Nouvelle dette'}</Text>
+              <TouchableOpacity onPress={() => { setShowNouvelle(false); resetForm(); }}>
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
-              <Text style={s.fieldLabel}>Client *</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Client *</Text>
               {selectedClient ? (
-                <View style={s.selectedClientBox}>
-                  <Text style={s.selectedClientText}>
+                <View style={[s.selectedClientBox, { backgroundColor: colors.infoBg }]}>
+                  <Text style={[s.selectedClientText, { color: colors.info }]}>
                     {`${selectedClient.prenom || ''} ${selectedClient.nom}`.trim()}
                     {selectedClient.telephone ? ` · ${selectedClient.telephone}` : ''}
                   </Text>
                   <TouchableOpacity onPress={() => { setSelectedClient(null); setClientSearch(''); }}>
-                    <MaterialCommunityIcons name="close-circle" size={18} color="#999" />
+                    <MaterialCommunityIcons name="close-circle" size={18} color={colors.textSecondary} />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <>
                   <TextInput
-                    style={s.fieldInput}
+                    style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                     value={clientSearch}
                     onChangeText={setClientSearch}
                     placeholder="Rechercher un client..."
-                    placeholderTextColor="#bbb"
+                    placeholderTextColor={colors.placeholder}
                   />
                   {clientsFiltres.map(c => (
                     <TouchableOpacity
                       key={c.id}
-                      style={s.clientOption}
+                      style={[s.clientOption, { borderBottomColor: colors.border }]}
                       onPress={() => { setSelectedClient(c); setClientSearch(''); }}
                     >
-                      <Text style={s.clientOptionText}>{`${c.prenom || ''} ${c.nom}`.trim()}</Text>
-                      {!!c.telephone && <Text style={s.clientOptionSub}>{c.telephone}</Text>}
+                      <Text style={[s.clientOptionText, { color: colors.text }]}>{`${c.prenom || ''} ${c.nom}`.trim()}</Text>
+                      {!!c.telephone && <Text style={[s.clientOptionSub, { color: colors.textSecondary }]}>{c.telephone}</Text>}
                     </TouchableOpacity>
                   ))}
                 </>
               )}
-              <Text style={s.fieldLabel}>Montant *</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Montant *</Text>
               <MontantInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formMontant}
                 onChangeValue={setFormMontant}
                 placeholder="0"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>Date du crédit</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Date du crédit</Text>
               <TextInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formDateCredit}
                 onChangeText={setFormDateCredit}
                 placeholder="AAAA-MM-JJ"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>Description</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Description</Text>
               <TextInput
-                style={[s.fieldInput, { height: 80, textAlignVertical: 'top' }]}
+                style={[s.fieldInput, { height: 80, textAlignVertical: 'top', backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={formDescription}
                 onChangeText={setFormDescription}
                 multiline
                 placeholder="Description de la dette"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
             </ScrollView>
-            <View style={s.modalFoot}>
-              <TouchableOpacity style={s.btnCancel} onPress={() => setShowNouvelle(false)}>
-                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnCancel, { borderColor: colors.border }]} onPress={() => setShowNouvelle(false)}>
+                <Text style={[s.btnCancelText, { color: colors.textSecondary }]}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.btnConfirm, saving && { opacity: 0.5 }]}
+                style={[s.btnConfirm, { backgroundColor: colors.hero }, saving && { opacity: 0.5 }]}
                 onPress={sauvegarderDette}
                 disabled={saving}
               >
@@ -632,56 +673,56 @@ export default function DettesAnciennesScreen() {
         transparent
         onRequestClose={() => setShowReglement(false)}
       >
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.handle} />
-            <View style={s.modalHead}>
-              <Text style={s.modalTitle}>Ajouter un règlement</Text>
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
+            <View style={[s.modalHead, { borderBottomColor: colors.border }]}>
+              <Text style={[s.modalTitle, { color: colors.text }]}>Ajouter un règlement</Text>
               <TouchableOpacity onPress={() => setShowReglement(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#666" />
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
               {selectedDette && (
-                <View style={s.infoCard}>
-                  <Text style={s.infoCardTitle}>{nomClient(selectedDette)}</Text>
-                  <View style={s.infoRow}>
-                    <Text style={s.infoLabel}>Reste à payer</Text>
-                    <Text style={[s.infoVal, { color: '#dc2626', fontWeight: '700' }]}>
+                <View style={[s.infoCard, { backgroundColor: colors.inputBg }]}>
+                  <Text style={[s.infoCardTitle, { color: colors.hero }]}>{nomClient(selectedDette)}</Text>
+                  <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                    <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Reste à payer</Text>
+                    <Text style={[s.infoVal, { color: colors.danger, fontWeight: '700' }]}>
                       {money(selectedDette.montantRestant)}
                     </Text>
                   </View>
                 </View>
               )}
-              <Text style={s.fieldLabel}>Montant versé *</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Montant versé *</Text>
               <MontantInput
-                style={s.fieldInput}
+                style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                 value={reglMontant}
                 onChangeValue={setReglMontant}
                 placeholder="0"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={colors.placeholder}
               />
-              <Text style={s.fieldLabel}>Mode de paiement</Text>
+              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Mode de paiement</Text>
               {renderModeChips(reglMode, setReglMode)}
               {reglMode !== 'ESPECES' && (
                 <>
-                  <Text style={s.fieldLabel}>Référence</Text>
+                  <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Référence</Text>
                   <TextInput
-                    style={s.fieldInput}
+                    style={[s.fieldInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                     value={reglRef}
                     onChangeText={setReglRef}
                     placeholder="N° transaction..."
-                    placeholderTextColor="#bbb"
+                    placeholderTextColor={colors.placeholder}
                   />
                 </>
               )}
             </ScrollView>
-            <View style={s.modalFoot}>
-              <TouchableOpacity style={s.btnCancel} onPress={() => setShowReglement(false)}>
-                <Text style={s.btnCancelText}>{tr('annuler', lang)}</Text>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnCancel, { borderColor: colors.border }]} onPress={() => setShowReglement(false)}>
+                <Text style={[s.btnCancelText, { color: colors.textSecondary }]}>{tr('annuler', lang)}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.btnConfirm, savingRegl && { opacity: 0.5 }]}
+                style={[s.btnConfirm, { backgroundColor: colors.hero }, savingRegl && { opacity: 0.5 }]}
                 onPress={sauvegarderReglement}
                 disabled={savingRegl}
               >
@@ -707,75 +748,75 @@ export default function DettesAnciennesScreen() {
         transparent
         onRequestClose={() => setShowDetails(false)}
       >
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.handle} />
-            <View style={s.modalHead}>
-              <Text style={s.modalTitle} numberOfLines={1}>
+        <View style={[s.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[s.sheet, { backgroundColor: colors.card }]}>
+            <View style={[s.handle, { backgroundColor: colors.border }]} />
+            <View style={[s.modalHead, { borderBottomColor: colors.border }]}>
+              <Text style={[s.modalTitle, { color: colors.text }]} numberOfLines={1}>
                 Détails — {selectedDette ? nomClient(selectedDette) : ''}
               </Text>
               <TouchableOpacity onPress={() => setShowDetails(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#666" />
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={s.modalBody}>
               {selectedDette && (
                 <>
-                  <View style={s.infoCard}>
-                    <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Client</Text>
-                      <Text style={s.infoVal}>{nomClient(selectedDette)}</Text>
+                  <View style={[s.infoCard, { backgroundColor: colors.inputBg }]}>
+                    <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Client</Text>
+                      <Text style={[s.infoVal, { color: colors.text }]}>{nomClient(selectedDette)}</Text>
                     </View>
                     {!!selectedDette.clientTelephone && (
-                      <View style={s.infoRow}>
-                        <Text style={s.infoLabel}>Téléphone</Text>
-                        <Text style={s.infoVal}>{selectedDette.clientTelephone}</Text>
+                      <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                        <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Téléphone</Text>
+                        <Text style={[s.infoVal, { color: colors.text }]}>{selectedDette.clientTelephone}</Text>
                       </View>
                     )}
                     {!!selectedDette.description && (
-                      <View style={s.infoRow}>
-                        <Text style={s.infoLabel}>Description</Text>
-                        <Text style={s.infoVal}>{selectedDette.description}</Text>
+                      <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                        <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Description</Text>
+                        <Text style={[s.infoVal, { color: colors.text }]}>{selectedDette.description}</Text>
                       </View>
                     )}
-                    <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Montant total</Text>
-                      <Text style={s.infoVal}>{money(selectedDette.montantInitial)}</Text>
+                    <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Montant total</Text>
+                      <Text style={[s.infoVal, { color: colors.text }]}>{money(selectedDette.montantInitial)}</Text>
                     </View>
-                    <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Montant réglé</Text>
-                      <Text style={[s.infoVal, { color: '#16a34a' }]}>{money(selectedDette.montantPaye)}</Text>
+                    <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Montant réglé</Text>
+                      <Text style={[s.infoVal, { color: colors.success }]}>{money(selectedDette.montantPaye)}</Text>
                     </View>
-                    <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Reste à payer</Text>
-                      <Text style={[s.infoVal, { color: '#dc2626' }]}>{money(selectedDette.montantRestant)}</Text>
+                    <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Reste à payer</Text>
+                      <Text style={[s.infoVal, { color: colors.danger }]}>{money(selectedDette.montantRestant)}</Text>
                     </View>
-                    <View style={s.infoRow}>
-                      <Text style={s.infoLabel}>Date du crédit</Text>
-                      <Text style={s.infoVal}>{dateStr(selectedDette.dateCredit)}</Text>
+                    <View style={[s.infoRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Date du crédit</Text>
+                      <Text style={[s.infoVal, { color: colors.text }]}>{dateStr(selectedDette.dateCredit)}</Text>
                     </View>
-                    <View style={[s.infoRow, { alignItems: 'center' }]}>
-                      <Text style={s.infoLabel}>Statut</Text>
+                    <View style={[s.infoRow, { alignItems: 'center', borderBottomColor: colors.border }]}>
+                      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>Statut</Text>
                       {renderStatutBadge(selectedDette)}
                     </View>
                   </View>
 
-                  <Text style={s.sectionTitle}>Historique des règlements</Text>
+                  <Text style={[s.sectionTitle, { color: colors.hero }]}>Historique des règlements</Text>
 
                   {loadingReglements ? (
-                    <ActivityIndicator size="small" style={{ margin: 12 }} />
+                    <ActivityIndicator size="small" style={{ margin: 12 }} color={colors.hero} />
                   ) : reglements.length === 0 ? (
-                    <Text style={s.emptyText}>Aucun règlement enregistré</Text>
+                    <Text style={[s.emptyText, { color: colors.textSecondary }]}>Aucun règlement enregistré</Text>
                   ) : (
                     reglements.map((r, i) => (
-                      <View key={r.id ?? i} style={s.reglRow}>
+                      <View key={r.id ?? i} style={[s.reglRow, { borderBottomColor: colors.border }]}>
                         <View style={s.reglTop}>
-                          <Text style={s.reglDate}>{dateStr(r.dateReglement)}</Text>
-                          <Text style={s.reglMontant}>+{money(r.montantPaye)}</Text>
-                          <Text style={s.reglMode}>{r.modePaiement}</Text>
+                          <Text style={[s.reglDate, { color: colors.textSecondary }]}>{dateStr(r.dateReglement)}</Text>
+                          <Text style={[s.reglMontant, { color: colors.success }]}>+{money(r.montantPaye)}</Text>
+                          <Text style={[s.reglMode, { backgroundColor: colors.inputBg, color: colors.textSecondary }]}>{r.modePaiement}</Text>
                         </View>
                         {!!r.referencePaiement && (
-                          <Text style={s.reglRef}>Réf : {r.referencePaiement}</Text>
+                          <Text style={[s.reglRef, { color: colors.textSecondary }]}>Réf : {r.referencePaiement}</Text>
                         )}
                       </View>
                     ))
@@ -783,8 +824,8 @@ export default function DettesAnciennesScreen() {
                 </>
               )}
             </ScrollView>
-            <View style={s.modalFoot}>
-              <TouchableOpacity style={[s.btnConfirm, { flex: 1 }]} onPress={() => setShowDetails(false)}>
+            <View style={[s.modalFoot, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[s.btnConfirm, { flex: 1, backgroundColor: colors.hero }]} onPress={() => setShowDetails(false)}>
                 <Text style={s.btnConfirmText}>{tr('fermer', lang)}</Text>
               </TouchableOpacity>
             </View>
@@ -798,10 +839,10 @@ export default function DettesAnciennesScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f8' },
+  container: { flex: 1 },
 
   // Hero
-  hero: { backgroundColor: '#081648', flexDirection: 'row', padding: 14, alignItems: 'center' },
+  hero: { flexDirection: 'row', padding: 14, alignItems: 'center' },
   heroStat: { flex: 1, alignItems: 'center' },
   heroLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 10, marginBottom: 2, textAlign: 'center' },
   heroVal: { color: '#fff', fontWeight: 'bold', fontSize: 14, textAlign: 'center' },
@@ -810,45 +851,44 @@ const s = StyleSheet.create({
   // Toolbar
   toolbar: {
     flexDirection: 'row', padding: 10, gap: 8, alignItems: 'center',
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0',
+    borderBottomWidth: 1,
   },
   searchWrap: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5',
-    borderRadius: 12, paddingHorizontal: 12, height: 40, borderWidth: 1, borderColor: '#e0e0e0',
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    borderRadius: 12, paddingHorizontal: 12, height: 40, borderWidth: 1,
   },
-  searchInput: { flex: 1, marginLeft: 6, fontSize: 14, color: '#333' },
+  searchInput: { flex: 1, marginLeft: 6, fontSize: 14 },
   addBtn: {
-    backgroundColor: '#081648', borderRadius: 12, width: 40, height: 40,
+    borderRadius: 12, width: 40, height: 40,
     alignItems: 'center', justifyContent: 'center',
   },
   iconBtn: {
-    width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0',
-    alignItems: 'center', justifyContent: 'center', backgroundColor: '#fafafa',
+    width: 40, height: 40, borderRadius: 12, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
   },
-  iconBtnActive: { backgroundColor: '#081648', borderColor: '#081648' },
 
   // Panneau filtres
   filtresPanel: {
-    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, gap: 10,
   },
   periodeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   periodeInput: { flex: 1, paddingVertical: 8 },
 
   // Carte dette
   card: {
-    backgroundColor: '#fff', borderRadius: 18, marginBottom: 12, padding: 14,
+    borderRadius: 18, marginBottom: 12, padding: 14,
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
   },
   cardTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 10 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  creancierText: { fontWeight: 'bold', fontSize: 15, color: '#1a1a1a', marginBottom: 2 },
-  descText: { color: '#666', fontSize: 12, marginBottom: 3 },
-  dateText: { color: '#888', fontSize: 11 },
+  creancierText: { fontWeight: 'bold', fontSize: 15, marginBottom: 2 },
+  descText: { fontSize: 12, marginBottom: 3 },
+  dateText: { fontSize: 11 },
   montantText: { fontWeight: 'bold', fontSize: 16 },
-  montantSub: { color: '#aaa', fontSize: 11, marginTop: 1 },
+  montantSub: { fontSize: 11, marginTop: 1 },
 
   // Badge statut
   statutBadge: {
@@ -859,97 +899,95 @@ const s = StyleSheet.create({
 
   // Barre progression
   progressWrap: { marginBottom: 10 },
-  progressBg: { height: 5, backgroundColor: '#f0f0f0', borderRadius: 3, overflow: 'hidden' },
+  progressBg: { height: 5, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: 5, borderRadius: 3 },
-  progressLabel: { fontSize: 10, color: '#aaa', marginTop: 3, textAlign: 'right' },
+  progressLabel: { fontSize: 10, marginTop: 3, textAlign: 'right' },
 
   // Actions carte
   cardActions: { flexDirection: 'row', gap: 8 },
   actionBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 5, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, paddingVertical: 7,
+    gap: 5, borderWidth: 1, borderRadius: 8, paddingVertical: 7,
   },
-  actionBtnText: { color: '#081648', fontSize: 12, fontWeight: '600' },
-  actionBtnPrimary: { backgroundColor: '#081648', borderColor: '#081648', flex: 2 },
+  actionBtnText: { fontSize: 12, fontWeight: '600' },
+  actionBtnPrimary: { flex: 2 },
   actionBtnTextPrimary: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  actionBtnDanger: { flex: 0, paddingHorizontal: 12, borderColor: '#fca5a5' },
+  actionBtnDanger: { flex: 0, paddingHorizontal: 12 },
 
   // Empty state
   emptyState: { alignItems: 'center', marginTop: 60, gap: 12 },
-  emptyStateText: { color: '#999', fontSize: 15 },
-  emptyText: { color: '#aaa', textAlign: 'center', padding: 12, fontSize: 13 },
+  emptyStateText: { fontSize: 15 },
+  emptyText: { textAlign: 'center', padding: 12, fontSize: 13 },
 
   // Modal commun
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
-  handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
+  handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: 10 },
   modalHead: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0',
+    padding: 16, borderBottomWidth: 1,
   },
-  modalTitle: { fontWeight: 'bold', fontSize: 16, color: '#1a1a1a', flex: 1, marginRight: 8 },
+  modalTitle: { fontWeight: 'bold', fontSize: 16, flex: 1, marginRight: 8 },
   modalBody: { padding: 16, maxHeight: 420 },
-  modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
+  modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1 },
 
   // Info card (modal détails)
-  infoCard: { backgroundColor: '#fafafa', borderRadius: 14, padding: 12, marginBottom: 14 },
-  infoCardTitle: { fontWeight: 'bold', color: '#081648', fontSize: 15, marginBottom: 8 },
+  infoCard: { borderRadius: 14, padding: 12, marginBottom: 14 },
+  infoCardTitle: { fontWeight: 'bold', fontSize: 15, marginBottom: 8 },
   infoRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-    paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f5f5f5',
+    paddingVertical: 5, borderBottomWidth: 1,
   },
-  infoLabel: { color: '#888', fontSize: 13 },
-  infoVal: { color: '#333', fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right', marginLeft: 8 },
+  infoLabel: { fontSize: 13 },
+  infoVal: { fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right', marginLeft: 8 },
 
   // Titre de section
-  sectionTitle: { fontWeight: 'bold', color: '#081648', marginBottom: 8, marginTop: 4, fontSize: 13 },
+  sectionTitle: { fontWeight: 'bold', marginBottom: 8, marginTop: 4, fontSize: 13 },
 
   // Ligne règlement
-  reglRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  reglRow: { paddingVertical: 8, borderBottomWidth: 1 },
   reglTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  reglDate: { flex: 1, fontSize: 12, color: '#64748b' },
-  reglMontant: { fontWeight: '700', color: '#16a34a', fontSize: 13 },
+  reglDate: { flex: 1, fontSize: 12 },
+  reglMontant: { fontWeight: '700', fontSize: 13 },
   reglMode: {
-    fontSize: 11, backgroundColor: '#f1f5f9', paddingHorizontal: 6,
-    paddingVertical: 2, borderRadius: 4, color: '#475569',
+    fontSize: 11, paddingHorizontal: 6,
+    paddingVertical: 2, borderRadius: 4,
   },
-  reglRef: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+  reglRef: { fontSize: 11, marginTop: 2 },
 
   // Formulaire
-  fieldLabel: { color: '#666', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
+  fieldLabel: { fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
   fieldInput: {
-    borderWidth: 1, borderColor: '#ddd', borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa',
+    borderWidth: 1, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
   },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
-    borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa',
+    borderWidth: 1,
   },
-  chipActive: { backgroundColor: '#081648', borderColor: '#081648' },
-  chipText: { fontSize: 13, color: '#555' },
-  chipTextActive: { color: '#fff', fontWeight: '600' },
+  chipText: { fontSize: 13 },
 
   // Sélecteur client
   selectedClientBox: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#eff6ff', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#bfdbfe',
+    borderRadius: 10, padding: 12,
   },
-  selectedClientText: { color: '#1e3a8a', fontWeight: '600', fontSize: 13, flex: 1 },
+  selectedClientText: { fontWeight: '600', fontSize: 13, flex: 1 },
   clientOption: {
-    paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+    paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1,
   },
-  clientOptionText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
-  clientOptionSub: { fontSize: 11, color: '#94a3b8', marginTop: 1 },
+  clientOptionText: { fontSize: 13, fontWeight: '500' },
+  clientOptionSub: { fontSize: 11, marginTop: 1 },
 
   // Boutons footer
   btnCancel: {
-    flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10,
+    flex: 1, borderWidth: 1, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center', paddingVertical: 12,
   },
-  btnCancelText: { color: '#666', fontWeight: '600' },
+  btnCancelText: { fontWeight: '600' },
   btnConfirm: {
-    flex: 2, backgroundColor: '#081648', borderRadius: 10, flexDirection: 'row',
+    flex: 2, borderRadius: 10, flexDirection: 'row',
     alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12,
   },
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },

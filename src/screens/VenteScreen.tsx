@@ -4,16 +4,22 @@ import { Text, ActivityIndicator, Switch } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SkeletonCard } from '../components/SkeletonLoader';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
-import { getProduits, getClients, getSoldeAvanceClient } from '../services/api.service';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import {
+  getProduits, getClients, getSoldeAvanceClient,
+  getParametresFidelite, getSoldeFideliteClient, utiliserPointsFidelite,
+} from '../services/api.service';
 import { getProduitsCache, getClientsCache, cacheProduits } from '../db/database';
 import { enregistrerVente, getNombreVentesPending, sauvegarderCache, lireCache } from '../services/offline.service';
 import { Produit, Client, LigneVenteRequest } from '../types';
 import { ProduitNiveau, getNiveauxEtPrincipal, calculerFacteurTotal, disponibleNiveau } from '../services/produit-niveau.service';
+import { UniteVente, getUnitesVente } from '../services/unite-vente.service';
 import { Promotion, getPromosPourProduit, calculerPrixPromo } from '../services/promotion.service';
 import { showToast } from '../services/toast.service';
 import { annoncerMontantVente } from '../services/vocalConfirmation.service';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import ImprimerTicketButton from '../components/ImprimerTicketButton';
+import { TicketVente } from '../services/thermalPrinter.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
@@ -29,6 +35,16 @@ interface CartItem {
   niveauPrixAchat?: number;
   niveauFacteurTotal?: number;
   niveauStockMax?: number;
+  // Nouveau système simple gros/détail (CleFonctionnalite.VENTE_GROS_DETAIL,
+  // unite-vente.service.ts) — INDÉPENDANT de l'ancien ProduitNiveau ci-dessus.
+  // Quand true, `niveauId` ci-dessus contient en réalité l'id local de
+  // l'UniteVente choisie (réutilisé uniquement pour le regroupement/la clé du
+  // panier — mêmes fonctions modifierQte/retirerLigne/etc. que l'ancien
+  // système, aucune duplication de code) : il ne doit JAMAIS être envoyé au
+  // serveur comme niveauId à la validation (voir valider()), seulement
+  // niveauNom/niveauFacteur pour la déduction directe sur le stock unique du
+  // produit — c'est précisément ce qui distingue les deux systèmes.
+  venteSimple?: boolean;
   // BUG FIX (2026-08-16) : parité Ionic (cart.page.ts addWithPromo/choisirNiveau)
   // — la promo active était vérifiée et appliquée automatiquement à l'ajout
   // au panier côté Ionic, jamais côté React Native (toujours prix plein).
@@ -104,6 +120,28 @@ export default function VenteScreen() {
   const [clientTelephone, setClientTelephone] = useState('');
   const [creerClient, setCreerClient] = useState(false);
 
+  // ─── Fidélité (CleFonctionnalite.PROGRAMME_FIDELITE) ────────────────────
+  // Masquée/désactivée exactement comme Dépôt garde / Comptes bancaires si la
+  // fonctionnalité est coupée par le super admin (cache 'fonctionnalites_
+  // avancees_desactivees', voir LoginScreen.tsx) — et masquée aussi hors ligne
+  // (aucune vérification NetInfo dédiée : les appels échouent silencieusement
+  // et soldeFidelite/fideliteParams restent null, donc rien ne s'affiche —
+  // la vente classique, elle, continue de fonctionner hors ligne sans y toucher).
+  const [fideliteActif, setFideliteActif] = useState(false);
+  const [fideliteParams, setFideliteParams] = useState<{ montantParPoint: number; pointValeur: number } | null>(null);
+  const [soldeFidelite, setSoldeFidelite] = useState<{ points: number; valeurFcfa: number } | null>(null);
+  const [pointsFideliteAUtiliser, setPointsFideliteAUtiliser] = useState('');
+
+  // ─── Impression ticket (CleFonctionnalite.IMPRESSION_TICKET) ────────────
+  // Même mécanisme exact que Dépôt garde / Comptes bancaires / Programme de
+  // fidélité (cache 'fonctionnalites_avancees_desactivees', voir
+  // LoginScreen.tsx) : masqué si désactivé par le super admin. `dernierTicket`
+  // ne contient les données du reçu que juste après une vente réussie et
+  // synchronisée (pas en mode hors ligne — pas de venteId exploitable tant
+  // que la vente n'est pas créée côté serveur).
+  const [impressionTicketActif, setImpressionTicketActif] = useState(false);
+  const [dernierTicket, setDernierTicket] = useState<TicketVente | null>(null);
+
   // ─── Paiement ────────────────────────────────────────────────────────────
   const [modePaiement, setModePaiement] = useState('ESPECES');
   const [referencePaiement, setReferencePaiement] = useState('');
@@ -121,17 +159,59 @@ export default function VenteScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   // ─── Conditionnement ─────────────────────────────────────────────────────
+  // Ancien système ProduitNiveau, gate PAR LE MÊME DRAPEAU LOCAL À L'APPAREIL
+  // que côté Ionic (feat_conditionnement, AsyncStorage/localStorage — décidé
+  // par un admin normal depuis Réglages boutique, PAS par le super admin,
+  // contrairement à fidélité/vente gros-détail/impression ticket ci-dessous
+  // qui utilisent 'fonctionnalites_avancees_desactivees'). Voir
+  // BoutiqueSettingsScreen.tsx (toggleConditionnement) pour l'écriture de ce
+  // drapeau. Parité stricte avec Ionic (FonctionnaliteService.
+  // isConditionnementActif(), relu à ngOnInit ET à chaque ionViewWillEnter) :
+  // BUG FIX (parité) — cet écran ne lisait jamais ce drapeau et interrogeait
+  // systématiquement /produits/{id}/niveaux à chaque ajout au panier, même
+  // quand l'admin avait désactivé "Gestion par conditionnement" dans
+  // Réglages, ce qui pouvait proposer le modal de niveaux alors qu'Ionic ne
+  // l'aurait jamais fait dans le même état.
+  const [conditionnementActif, setConditionnementActif] = useState(false);
   const [showNiveauModal, setShowNiveauModal] = useState(false);
   const [produitEnAttente, setProduitEnAttente] = useState<Produit | null>(null);
   const [niveauxDisponibles, setNiveauxDisponibles] = useState<ProduitNiveau[]>([]);
   const [quantitePrincipale, setQuantitePrincipale] = useState<number>(0);
   const [loadingNiveaux, setLoadingNiveaux] = useState(false);
 
+  // ─── Unités de vente (CleFonctionnalite.VENTE_GROS_DETAIL) — système simple
+  // et indépendant du conditionnement ProduitNiveau ci-dessus (un seul stock
+  // produit, pas de cascade). Masqué/désactivé exactement comme Fidélité si
+  // coupé par le super admin (cache 'fonctionnalites_avancees_desactivees').
+  const [venteGrosDetailActif, setVenteGrosDetailActif] = useState(false);
+  const [showUniteVenteModal, setShowUniteVenteModal] = useState(false);
+  const [produitEnAttenteUnite, setProduitEnAttenteUnite] = useState<Produit | null>(null);
+  const [unitesVenteDisponibles, setUnitesVenteDisponibles] = useState<UniteVente[]>([]);
+
   useEffect(() => {
     AsyncStorage.getItem('user').then(raw => {
       if (raw) { try { setUserId(JSON.parse(raw)?.id || 0); } catch {} }
     });
+    AsyncStorage.getItem('fonctionnalites_avancees_desactivees').then(raw => {
+      let desactivees: string[] = [];
+      if (raw) { try { desactivees = JSON.parse(raw); } catch { /* ignore */ } }
+      const actif = !desactivees.includes('PROGRAMME_FIDELITE');
+      setFideliteActif(actif);
+      if (actif) {
+        getParametresFidelite().then(res => setFideliteParams(res.data || null)).catch(() => setFideliteParams(null));
+      }
+      setVenteGrosDetailActif(!desactivees.includes('VENTE_GROS_DETAIL'));
+      setImpressionTicketActif(!desactivees.includes('IMPRESSION_TICKET'));
+    });
   }, []);
+
+  // Drapeau local "Gestion par conditionnement" (feat_conditionnement) — relu
+  // à chaque focus de l'écran, pas seulement au montage, exactement comme
+  // ionViewWillEnter côté Ionic : l'admin a pu le changer dans Réglages
+  // boutique puis revenir directement sur Vente sans relancer l'appli.
+  useFocusEffect(useCallback(() => {
+    AsyncStorage.getItem('feat_conditionnement').then(v => setConditionnementActif(v === 'true'));
+  }, []));
 
   // En-tête : lien rapide vers l'historique des ventes (comme receipt-outline d'Ionic).
   React.useLayoutEffect(() => {
@@ -182,8 +262,13 @@ export default function VenteScreen() {
     setClientSearch(term);
     const t = term.trim().toLowerCase();
     if (!t) { setClientsFiltres(clients.slice(0, 8)); setShowClientDropdown(false); return; }
+    // BUG FIX (parité) : parité Ionic (filterClients — recherche aussi sur
+    // c.prenom) — RN ne filtrait que sur nom/téléphone, un client trouvable
+    // par son seul prénom côté Ionic restait invisible ici.
     const f = clients.filter(c =>
-      (c.nom || '').toLowerCase().includes(t) || (c.telephone || '').includes(t)
+      (c.nom || '').toLowerCase().includes(t) ||
+      (c.prenom || '').toLowerCase().includes(t) ||
+      (c.telephone || '').includes(t)
     ).slice(0, 10);
     setClientsFiltres(f);
     setShowClientDropdown(f.length > 0);
@@ -191,15 +276,24 @@ export default function VenteScreen() {
 
   const pickClient = async (c: Client) => {
     setClientId(c.id);
-    setClientSearch(`${c.nom || ''}${c.telephone ? ' · ' + c.telephone : ''}`);
+    // Parité Ionic (pickClient — `${nom} ${prenom}` puis `· téléphone`) :
+    // inclut le prénom dans le texte affiché, cohérent avec le fix ci-dessous
+    // qui reprend désormais aussi c.prenom dans clientPrenom.
+    setClientSearch(`${c.nom || ''}${c.prenom ? ' ' + c.prenom : ''}${c.telephone ? ' · ' + c.telephone : ''}`);
     setShowClientDropdown(false);
     setClientNom(c.nom || '');
-    setClientPrenom('');
+    // BUG FIX (parité) : parité Ionic (selectClient — this.clientPrenom =
+    // client.prenom || '') — RN vidait toujours ce champ à la sélection d'un
+    // client existant au lieu de reprendre son prénom réel, ce qui l'affichait
+    // vide dans le formulaire crédit même quand le client en avait un.
+    setClientPrenom(c.prenom || '');
     setClientTelephone(c.telephone || '');
     setCreerClient(false);
     setSoldeAvanceClient(0);
     setUtiliserAvance(false);
     setMontantAvanceAUtiliser(0);
+    setSoldeFidelite(null);
+    setPointsFideliteAUtiliser('');
     if (c.nom) {
       setIsLoadingAvance(true);
       try {
@@ -209,6 +303,18 @@ export default function VenteScreen() {
         setSoldeAvanceClient(0);
       }
       setIsLoadingAvance(false);
+    }
+    // Solde fidélité : uniquement pour un client identifié (pas "client
+    // divers") et si la fonctionnalité est active — échoue silencieusement
+    // (hors ligne ou fonctionnalité coupée côté serveur) : soldeFidelite reste
+    // null et la section correspondante ne s'affiche simplement pas.
+    if (fideliteActif) {
+      try {
+        const res = await getSoldeFideliteClient(c.id);
+        setSoldeFidelite(res.data || null);
+      } catch {
+        setSoldeFidelite(null);
+      }
     }
   };
 
@@ -222,6 +328,8 @@ export default function VenteScreen() {
     setSoldeAvanceClient(0);
     setUtiliserAvance(false);
     setMontantAvanceAUtiliser(0);
+    setSoldeFidelite(null);
+    setPointsFideliteAUtiliser('');
   };
 
   // ─── Scanner ─────────────────────────────────────────────────────────────
@@ -239,6 +347,10 @@ export default function VenteScreen() {
 
   // ─── Ajout au panier ─────────────────────────────────────────────────────
   const ajouterAuPanier = async (p: Produit) => {
+    // Un nouvel article ajouté = nouvelle vente en cours : on retire le
+    // bouton "Imprimer le reçu" de la vente précédente pour ne pas risquer
+    // d'imprimer un reçu qui ne correspond plus au panier affiché.
+    setDernierTicket(null);
     if (p.quantite <= 0) {
       Alert.alert(tr('rupture_stock', lang), `${p.nom} est en rupture de stock.`);
       return;
@@ -253,18 +365,42 @@ export default function VenteScreen() {
       return;
     }
     setLoadingNiveaux(true);
-    try {
-      const { niveaux, quantitePrincipale: qp } = await getNiveauxEtPrincipal(p.id);
-      if (niveaux.length > 0) {
-        setNiveauxDisponibles(niveaux);
-        setQuantitePrincipale(qp);
-        setProduitEnAttente(p);
-        setShowNiveauModal(true);
-        setLoadingNiveaux(false);
-        return;
+    // Ancien système ProduitNiveau — interrogé UNIQUEMENT si l'admin a activé
+    // "Gestion par conditionnement" sur cet appareil (conditionnementActif,
+    // feat_conditionnement). Sinon on passe directement à VENTE_GROS_DETAIL
+    // (ou à l'ajout simple) sans jamais appeler /niveaux ni proposer ce
+    // modal — exactement le if/else-if exclusif de cart.page.ts add().
+    if (conditionnementActif) {
+      try {
+        const { niveaux, quantitePrincipale: qp } = await getNiveauxEtPrincipal(p.id);
+        if (niveaux.length > 0) {
+          setNiveauxDisponibles(niveaux);
+          setQuantitePrincipale(qp);
+          setProduitEnAttente(p);
+          setShowNiveauModal(true);
+          setLoadingNiveaux(false);
+          return;
+        }
+      } catch {
+        // pas de niveaux ou erreur → ajout direct
       }
-    } catch {
-      // pas de niveaux ou erreur → ajout direct
+    } else if (venteGrosDetailActif) {
+      // Nouveau système simple gros/détail (VENTE_GROS_DETAIL) — indépendant
+      // du conditionnement ProduitNiveau ci-dessus, consulté seulement si ce
+      // dernier est désactivé (les deux systèmes ne sont jamais actifs en
+      // même temps sur un même écran, comme côté Ionic).
+      try {
+        const unites = await getUnitesVente(p.id);
+        if (unites.length > 0) {
+          setUnitesVenteDisponibles(unites);
+          setProduitEnAttenteUnite(p);
+          setShowUniteVenteModal(true);
+          setLoadingNiveaux(false);
+          return;
+        }
+      } catch {
+        // pas d'unités de vente ou erreur → ajout direct
+      }
     }
     setLoadingNiveaux(false);
     ajouterSansNiveau(p);
@@ -354,6 +490,70 @@ export default function VenteScreen() {
     }
   };
 
+  // Choix d'une unité de vente (système simple gros/détail) OU de l'unité de
+  // base du produit (unite === null) — indépendant de choisirNiveau ci-dessus.
+  // `unite.facteurBase` déjà résolu côté serveur : combien d'unités de base
+  // (Produit.uniteBase) représente 1 unité de vente choisie. Stock max local
+  // dérivé du stock UNIQUE du produit (pas de stock séparé par unité,
+  // contrairement à ProduitNiveau).
+  const choisirUniteVente = async (unite: UniteVente | null) => {
+    const p = produitEnAttenteUnite;
+    if (!p) return;
+    setShowUniteVenteModal(false);
+    setProduitEnAttenteUnite(null);
+    if (!unite) {
+      // "Unité de base" — prix normal du produit, comportement inchangé.
+      await ajouterSansNiveau(p);
+      return;
+    }
+    const facteur = unite.facteurBase > 0 ? unite.facteurBase : 1;
+    const stockMaxUnite = Math.floor((p.quantite || 0) / facteur);
+
+    let promo: Promotion | undefined;
+    const prixOriginal = unite.prixVente;
+    let prixUnitaire = prixOriginal;
+    try {
+      const promos = await getPromosPourProduit(p.id);
+      if (promos.length > 0) {
+        promo = promos[0];
+        prixUnitaire = calculerPrixPromo(prixOriginal, promo);
+      }
+    } catch { /* pas de promo trouvable → prix plein */ }
+
+    setPanier(prev => {
+      const idx = prev.findIndex(i => i.produit.id === p.id && i.venteSimple && i.niveauId === unite.id);
+      if (idx >= 0) {
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], quantite: updated[idx].quantite + 1 };
+        return updated;
+      }
+      return [...prev, {
+        produit: p,
+        quantite: 1,
+        prixUnitaire,
+        remisePourcentage: 0,
+        // Réutilise les mêmes champs génériques que ProduitNiveau (niveauId/
+        // niveauNom/niveauPrixAchat/niveauFacteurTotal/niveauStockMax) pour
+        // profiter telles quelles des fonctions déjà existantes
+        // (modifierQte, retirerLigne, getStockMax, badge d'affichage...) —
+        // `venteSimple: true` est le seul marqueur qui change le comportement
+        // à l'envoi (voir valider() : niveauId jamais transmis dans ce cas).
+        niveauId: unite.id,
+        niveauNom: unite.nom,
+        niveauPrixAchat: unite.prixAchat,
+        niveauFacteurTotal: facteur,
+        niveauStockMax: stockMaxUnite,
+        venteSimple: true,
+        promo,
+        prixOriginal,
+      }];
+    });
+    if (promo) {
+      const label = promo.typeReduction === 'POURCENTAGE' ? `-${promo.valeurReduction}%` : `-${promo.valeurReduction} FCFA`;
+      showToast(`🏷️ ${promo.titre} ${label} appliqué`, 'success');
+    }
+  };
+
   const getStockMax = (item: CartItem) => (item.niveauId !== undefined && item.niveauStockMax !== undefined ? item.niveauStockMax : item.produit.quantite);
 
   const modifierQte = (id: number, delta: number, niveauId?: number) => {
@@ -425,7 +625,20 @@ export default function VenteScreen() {
     if (typeRemiseGlobale === 'POURCENTAGE') return Math.max(0, subTotal - (subTotal * rg / 100));
     return Math.max(0, subTotal - rg);
   })();
-  const resteAPayerCredit = Math.max(0, total - (montantVerse || 0) - (utiliserAvance ? (montantAvanceAUtiliser || 0) : 0));
+
+  // Points fidélité à utiliser sur cette vente — calcul strictement ADDITIF,
+  // ne modifie ni ne réécrit la formule de `total` ci-dessus (inchangée à la
+  // lettre) : la réduction correspondante est injectée dans remiseGlobale/
+  // MONTANT_FIXE uniquement au moment de la validation (voir valider()), en
+  // réutilisant remiseGlobaleMontant déjà calculé plus bas par la formule
+  // existante. `totalAffiche` ci-dessous n'est qu'une couche d'affichage :
+  // strictement égal à `total` quand aucun point n'est utilisé (reductionFidelite
+  // === 0), donc aucun changement de comportement dans ce cas.
+  const pointsFideliteNum = Math.max(0, Math.min(parseInt(pointsFideliteAUtiliser, 10) || 0, soldeFidelite?.points ?? 0));
+  const reductionFidelite = fideliteActif && fideliteParams ? pointsFideliteNum * fideliteParams.pointValeur : 0;
+  const totalAffiche = reductionFidelite > 0 ? Math.max(0, total - reductionFidelite) : total;
+
+  const resteAPayerCredit = Math.max(0, totalAffiche - (montantVerse || 0) - (utiliserAvance ? (montantAvanceAUtiliser || 0) : 0));
 
   // BUG FIX (2026-08-16) : parité Ionic (cart.page.ts getBeneficeTotal) — le
   // bénéfice/perte estimé du panier entier n'était affiché nulle part côté
@@ -439,13 +652,19 @@ export default function VenteScreen() {
   const beneficeTotalLabel = beneficeTotal > 0 ? 'Bénéfice estimé' : beneficeTotal < 0 ? 'Perte estimée' : 'Équilibre';
   const beneficeTotalColor = beneficeTotal > 0 ? colors.success : beneficeTotal < 0 ? colors.danger : colors.textSecondary;
 
-  const utiliserTouteAvance = () => setMontantAvanceAUtiliser(Math.min(soldeAvanceClient, total));
+  const utiliserTouteAvance = () => setMontantAvanceAUtiliser(Math.min(soldeAvanceClient, totalAffiche));
 
   // ─── Stock local (optimiste après vente) ────────────────────────────────
   const mettreAJourStockLocal = (panierVendu: CartItem[]) => {
     setProduits(prev => {
       const updated = prev.map(p => {
-        const total = panierVendu.filter(i => i.produit.id === p.id && !i.niveauId).reduce((s, i) => s + i.quantite, 0);
+        const totalBase = panierVendu.filter(i => i.produit.id === p.id && !i.niveauId).reduce((s, i) => s + i.quantite, 0);
+        // Nouveau système simple gros/détail : même stock UNIQUE que le
+        // produit, déduit directement (quantité × facteur) — contrairement à
+        // l'ancien ProduitNiveau (niveauId sans venteSimple) qui a son propre
+        // stock côté serveur et ne doit pas toucher p.quantite ici.
+        const totalUniteVente = panierVendu.filter(i => i.produit.id === p.id && i.venteSimple).reduce((s, i) => s + i.quantite * (i.niveauFacteurTotal || 1), 0);
+        const total = totalBase + totalUniteVente;
         return total > 0 ? { ...p, quantite: Math.max(0, p.quantite - total) } : p;
       });
       cacheProduits(updated);
@@ -494,17 +713,34 @@ export default function VenteScreen() {
       prixUnitaire: i.prixUnitaire,
       remisePourcentage: i.remisePourcentage || undefined,
       prixAchat: i.niveauPrixAchat || undefined,
-      niveauId: i.niveauId,
+      // CRITIQUE : le nouveau système simple gros/détail (venteSimple) ne
+      // doit JAMAIS envoyer niveauId — c'est précisément ce qui distingue la
+      // déduction directe sur le stock unique du produit (niveauNom +
+      // niveauFacteur seuls) de l'ancien ProduitNiveau (niveauId, cascade sur
+      // des stocks séparés). `i.niveauId` contient ici l'id local de
+      // l'UniteVente choisie, utilisé seulement pour le regroupement du
+      // panier (voir choisirUniteVente) — jamais transmis tel quel au serveur.
+      niveauId: i.venteSimple ? undefined : i.niveauId,
       niveauNom: i.niveauNom,
       niveauFacteur: i.niveauFacteurTotal || 1,
     }));
+    // Fidélité : si des points sont utilisés, la réduction correspondante est
+    // injectée dans le mécanisme remiseGlobale/MONTANT_FIXE déjà existant —
+    // exactement comme si le vendeur avait tapé cette remise manuellement.
+    // remiseGlobaleMontant réutilise la formule de calcul EXISTANTE et
+    // inchangée (subTotal - total, ci-dessus) : on ne fait qu'additionner la
+    // réduction fidélité à un montant déjà calculé, sans créer de nouvelle
+    // logique de calcul. Si aucun point n'est utilisé, ce bloc est un no-op
+    // strict — remiseGlobale/typeRemiseGlobale partent tel quel, comme avant.
+    const remiseGlobaleAEnvoyer = reductionFidelite > 0 ? remiseGlobaleMontant + reductionFidelite : Number(remiseGlobale || 0);
+    const typeRemiseGlobaleAEnvoyer = reductionFidelite > 0 ? 'MONTANT_FIXE' : typeRemiseGlobale;
     const vente = {
       vendeurId: userId,
       lignes,
       modePaiement,
       referencePaiement: referencePaiement.trim() || undefined,
-      remiseGlobale: Number(remiseGlobale || 0),
-      typeRemiseGlobale,
+      remiseGlobale: remiseGlobaleAEnvoyer,
+      typeRemiseGlobale: typeRemiseGlobaleAEnvoyer,
       clientId: clientId || undefined,
       clientNom: clientNom.trim() || undefined,
       clientPrenom: clientPrenom.trim() || undefined,
@@ -517,6 +753,8 @@ export default function VenteScreen() {
       estCredit,
     };
     const panierSnapshot = [...panier];
+    const pointsUtilisesSnapshot = pointsFideliteNum;
+    const clientIdSnapshot = clientId;
     const result = await enregistrerVente(vente);
     setSubmitting(false);
     if (result.success) {
@@ -527,7 +765,63 @@ export default function VenteScreen() {
       // validation de vente, avale toute erreur en interne (voir
       // vocalConfirmation.service.ts). Réglable et activée par défaut
       // depuis "Mon profil".
-      annoncerMontantVente(total);
+      annoncerMontantVente(totalAffiche);
+
+      // Reçu imprimable (ticket thermique Bluetooth) — uniquement si la
+      // fonctionnalité est active et si la vente est réellement créée côté
+      // serveur (pas en mode hors ligne : pas de venteId/numéro exploitable
+      // tant que la vente n'est pas synchronisée). Purement optionnel : une
+      // erreur ici n'affecte jamais la vente déjà enregistrée.
+      if (impressionTicketActif && !result.offline && result.venteId) {
+        try {
+          const [boutiqueRaw, userRaw] = await Promise.all([
+            AsyncStorage.getItem('boutique_info'),
+            AsyncStorage.getItem('user'),
+          ]);
+          const boutique = boutiqueRaw ? JSON.parse(boutiqueRaw) : {};
+          const utilisateur = userRaw ? JSON.parse(userRaw) : {};
+          setDernierTicket({
+            boutiqueNom: boutique.nom || 'Ges Boutique',
+            boutiqueAdresse: boutique.adresse,
+            boutiqueTelephone: boutique.telephone,
+            numeroVente: `Vente #${result.venteId}`,
+            date: new Date(),
+            vendeurNom: utilisateur.nomComplet || utilisateur.username,
+            clientNom: clientNom.trim() || undefined,
+            lignes: panierSnapshot.map(i => ({
+              nom: i.niveauNom ? `${i.produit.nom} (${i.niveauNom})` : i.produit.nom,
+              quantite: i.quantite,
+              prixUnitaire: i.prixUnitaire,
+              sousTotal: calculerPrixApresRemise(i.prixUnitaire, i.remisePourcentage) * i.quantite,
+            })),
+            montantTotal: totalAffiche,
+            modePaiement,
+          });
+        } catch {
+          // Le bouton d'impression n'apparaît simplement pas si la
+          // préparation du reçu échoue — la vente reste validée normalement.
+        }
+      }
+
+      // Débit réel des points fidélité utilisés — UNIQUEMENT après création
+      // réussie de la vente, jamais avant. La vente est déjà enregistrée (et
+      // payée) : si ce débit échoue, on avertit simplement le vendeur, on
+      // n'annule jamais la vente. Pas de venteId exploitable en mode hors
+      // ligne (vente mise en file, pas encore créée côté serveur) — dans ce
+      // cas aussi, on avertit sans bloquer, le vendeur devra le refaire
+      // manuellement une fois la vente synchronisée.
+      if (pointsUtilisesSnapshot > 0 && clientIdSnapshot) {
+        if (result.offline || !result.venteId) {
+          showToast(tr('fidelite_debit_reporte', lang), 'warning');
+        } else {
+          try {
+            await utiliserPointsFidelite(clientIdSnapshot, pointsUtilisesSnapshot, result.venteId);
+          } catch {
+            Alert.alert(tr('erreur', lang), tr('fidelite_debit_echec', lang));
+          }
+        }
+      }
+
       reset();
       const n = await getNombreVentesPending();
       setVentesPending(n);
@@ -567,6 +861,17 @@ export default function VenteScreen() {
           <View style={styles.pendingBanner}>
             <MaterialCommunityIcons name="clock-outline" size={14} color="#92400e" />
             <Text style={styles.cacheTxt}>{ventesPending} vente(s) en attente de synchronisation</Text>
+          </View>
+        )}
+
+        {/* Reçu de la dernière vente validée — bouton optionnel et séparé,
+            n'apparaît que si IMPRESSION_TICKET est actif (voir useEffect plus
+            haut) et disparaît dès qu'un nouvel article est ajouté au panier. */}
+        {impressionTicketActif && dernierTicket && (
+          <View style={[styles.section, { backgroundColor: colors.card, paddingVertical: 14 }]}>
+            <Text style={{ color: colors.text, fontWeight: '700', marginBottom: 2 }}>{tr('ticket_disponible_titre', lang)}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 10 }}>{tr('ticket_disponible_sous_titre', lang)}</Text>
+            <ImprimerTicketButton getTicket={() => dernierTicket} />
           </View>
         )}
 
@@ -793,9 +1098,18 @@ export default function VenteScreen() {
               </View>
             </View>
 
+            {reductionFidelite > 0 && (
+              <View style={[styles.rowBetween, { marginTop: 8 }]}>
+                <Text style={{ color: colors.success, fontSize: 12, fontWeight: '600' }}>
+                  <MaterialCommunityIcons name="star-circle-outline" size={13} /> {tr('fidelite_reduction_appliquee', lang)}
+                </Text>
+                <Text style={{ fontWeight: 'bold', color: colors.success }}>-{reductionFidelite.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+              </View>
+            )}
+
             <View style={[styles.totalLine, { borderTopColor: colors.border }]}>
               <Text style={{ fontWeight: 'bold', color: colors.text }}>TOTAL À PAYER</Text>
-              <Text style={[styles.totalVal, { color: colors.primary }]}>{total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+              <Text style={[styles.totalVal, { color: colors.primary }]}>{totalAffiche.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
             </View>
           </View>
 
@@ -824,7 +1138,7 @@ export default function VenteScreen() {
             {clientId && (
               <View style={styles.clientSelected}>
                 <MaterialCommunityIcons name="check-circle-outline" size={15} color={colors.success} />
-                <Text style={{ color: colors.text, fontSize: 12 }}>{clientNom} {clientTelephone ? `· ${clientTelephone}` : ''}</Text>
+                <Text style={{ color: colors.text, fontSize: 12 }}>{clientNom} {clientPrenom} {clientTelephone ? `· ${clientTelephone}` : ''}</Text>
               </View>
             )}
 
@@ -836,7 +1150,7 @@ export default function VenteScreen() {
                       <Text style={{ color: colors.primary, fontWeight: 'bold' }}>{(c.nom || '?')[0].toUpperCase()}</Text>
                     </View>
                     <View>
-                      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{c.nom}</Text>
+                      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{c.nom} {c.prenom || ''}</Text>
                       {!!c.telephone && <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{c.telephone}</Text>}
                     </View>
                   </TouchableOpacity>
@@ -844,6 +1158,44 @@ export default function VenteScreen() {
               </View>
             )}
           </View>
+
+          {/* Fidélité — uniquement pour un client identifié (pas "client divers"),
+              fonctionnalité active, et solde chargé avec succès (échoue
+              silencieusement hors ligne, voir pickClient : rien ne s'affiche
+              alors, la vente classique continue de fonctionner normalement). */}
+          {fideliteActif && clientId && soldeFidelite && (
+            <View style={[styles.fieldGroup, styles.totauxCard, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <View style={styles.rowStart}>
+                <MaterialCommunityIcons name="star-circle-outline" size={16} color={colors.primary} />
+                <Text style={{ marginLeft: 6, fontSize: 12, color: colors.text, flex: 1 }}>
+                  {tr('fidelite_client_a', lang)} <Text style={{ fontWeight: 'bold' }}>{soldeFidelite.points}</Text> {tr('fidelite_points_mot', lang)}
+                  {' '}({tr('fidelite_equivaut_a', lang)} {soldeFidelite.valeurFcfa.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA)
+                </Text>
+              </View>
+
+              {soldeFidelite.points > 0 && fideliteParams && (
+                <View style={{ marginTop: 10 }}>
+                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{tr('fidelite_points_a_utiliser', lang)}</Text>
+                  <RNTextInput
+                    style={[styles.fieldInput, { borderColor: colors.border, color: colors.text }]}
+                    value={pointsFideliteAUtiliser}
+                    onChangeText={v => {
+                      if (!v) { setPointsFideliteAUtiliser(''); return; }
+                      const n = parseInt(v, 10);
+                      setPointsFideliteAUtiliser(String(isNaN(n) ? 0 : Math.max(0, Math.min(n, soldeFidelite.points))));
+                    }}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={colors.placeholder}
+                  />
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                    {tr('fidelite_max', lang)} {soldeFidelite.points}
+                    {pointsFideliteNum > 0 ? ` · ${tr('fidelite_reduction_de', lang)} ${reductionFidelite.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA ${tr('fidelite_a_la_validation', lang)}` : ''}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Mode de paiement en chips */}
           <View style={styles.fieldGroup}>
@@ -990,7 +1342,7 @@ export default function VenteScreen() {
             ) : (
               <>
                 <MaterialCommunityIcons name="check-circle-outline" size={20} color="#fff" />
-                <Text style={styles.submitBtnText}>Valider la vente · {total.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
+                <Text style={styles.submitBtnText}>Valider la vente · {totalAffiche.toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA</Text>
               </>
             )}
           </TouchableOpacity>
@@ -1059,6 +1411,71 @@ export default function VenteScreen() {
                   </TouchableOpacity>
                 </>
               )}
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Modal sélection unité de vente (nouveau système simple gros/détail,
+          CleFonctionnalite.VENTE_GROS_DETAIL) — indépendant du modal niveau
+          ci-dessus (ancien ProduitNiveau) */}
+      {showUniteVenteModal && (
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeadRow}>
+              <Text variant="titleMedium" style={{ color: colors.text, flex: 1 }}>
+                {tr('choisir_unite_vente', lang)} — {produitEnAttenteUnite?.nom}
+              </Text>
+              <TouchableOpacity onPress={() => { setShowUniteVenteModal(false); setProduitEnAttenteUnite(null); }}>
+                <MaterialCommunityIcons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              <TouchableOpacity
+                onPress={() => choisirUniteVente(null)}
+                style={[styles.niveauCard, { backgroundColor: colors.infoBg, borderColor: colors.border }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 15, color: colors.text }}>
+                    {produitEnAttenteUnite?.uniteBase || tr('unite_base_mot', lang)}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 3 }}>
+                    {tr('prix_normal_produit', lang)}
+                  </Text>
+                </View>
+                <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>
+                  {(produitEnAttenteUnite?.prixVente || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
+                </Text>
+              </TouchableOpacity>
+
+              {unitesVenteDisponibles.map(u => {
+                const facteur = u.facteurBase > 0 ? u.facteurBase : 1;
+                const stockDispo = Math.floor((produitEnAttenteUnite?.quantite || 0) / facteur);
+                const enRupture = stockDispo <= 0;
+                return (
+                  <TouchableOpacity
+                    key={u.id}
+                    onPress={() => { if (!enRupture) choisirUniteVente(u); }}
+                    style={[styles.niveauCard, { backgroundColor: colors.infoBg, borderColor: colors.border }, enRupture && { opacity: 0.45 }]}
+                    disabled={enRupture}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: 'bold', fontSize: 15, color: colors.text }}>{u.nom}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: colors.primary + '22', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>
+                          1 {u.nom} = {u.facteurBase} {produitEnAttenteUnite?.uniteBase || tr('unite_base_mot', lang)}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12, marginTop: 2, fontWeight: '600', color: enRupture ? colors.danger : colors.textSecondary }}>
+                        {tr('disponible', lang)} : {stockDispo}
+                      </Text>
+                    </View>
+                    <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>
+                      {(u.prixVente || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           </View>
         </View>

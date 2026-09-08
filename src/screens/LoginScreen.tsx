@@ -7,7 +7,7 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { login, getBoutique, setAuthToken, setStoredToken } from '../services/api.service';
+import { login, getBoutique, setAuthToken, setStoredToken, getFonctionnalitesAvancees, getPermissionsVendeur } from '../services/api.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
@@ -69,10 +69,25 @@ export default function LoginScreen({ onLogin }: any) {
       await setStoredToken(data.token);
       setAuthToken(data.token);
       // Charger les infos boutique immédiatement après login
+      let boutiqueNom = 'Boutique';
       try {
         const bRes = await getBoutique();
         const boutiqueData = bRes.data?.data || bRes.data;
         if (boutiqueData) await AsyncStorage.setItem('boutique_info', JSON.stringify(boutiqueData));
+        // Fonctionnalités avancées (système séparé) — clés désactivées mises en cache
+        // pour que le tiroir/menu puisse masquer les entrées correspondantes.
+        const fRes = await getFonctionnalitesAvancees();
+        const liste = fRes.data?.fonctionnalites || [];
+        const desactivees = liste.filter((f: any) => !f.actif).map((f: any) => f.cle);
+        await AsyncStorage.setItem('fonctionnalites_avancees_desactivees', JSON.stringify(desactivees));
+        // Permissions vendeur (système séparé) — clés ACTIVES mises en cache (sémantique
+        // inversée par rapport aux fonctionnalités avancées ci-dessus) pour que le
+        // tiroir/menu puisse afficher les entrées correspondantes au vendeur.
+        const pRes = await getPermissionsVendeur();
+        const permissions = pRes.data?.permissions || [];
+        const actives = permissions.filter((p: any) => p.actif).map((p: any) => p.cle);
+        await AsyncStorage.setItem('permissions_vendeur_actives', JSON.stringify(actives));
+        boutiqueNom = boutiqueData?.nom || boutiqueNom;
       } catch {
         // Ne bloque jamais la connexion, mais on informe l'utilisateur (toast
         // discret, non bloquant) plutôt que d'échouer silencieusement — il
@@ -82,7 +97,18 @@ export default function LoginScreen({ onLogin }: any) {
           'warning'
         );
       }
-      onLogin(user);
+      // Message de bienvenue — même comportement que login.page.ts côté Ionic
+      // (alerte avec nom, rôle et boutique, validée par l'utilisateur avant
+      // d'accéder à l'app).
+      const nomAffiche = user.nomComplet || user.username || 'Utilisateur';
+      const roleLabel = user.role === 'ADMIN'
+        ? `👑 ${tr('role_administrateur', lang)}`
+        : `🛒 ${tr('role_vendeur', lang)}`;
+      Alert.alert(
+        `${tr('bienvenue_titre', lang)}, ${nomAffiche}`,
+        `${roleLabel}\n${boutiqueNom}`,
+        [{ text: 'OK', onPress: () => onLogin(user) }]
+      );
     } catch (e: any) {
       let msg: string;
       if (e.response) {

@@ -19,6 +19,7 @@ import { tr } from '../i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 const money = (v: number) => (v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' FCFA';
@@ -79,7 +80,6 @@ const TYPE_LABELS: Record<string, string> = {
 const isOpEntree = (type: string) => ['ENTREE', 'VENTE_COMPTANT', 'REGLEMENT_CREDIT', 'OUVERTURE'].includes(type);
 const isOpSortie = (type: string) => ['SORTIE', 'PAIEMENT_FOURNISSEUR', 'PAIEMENT_EMPLOYE', 'FERMETURE'].includes(type);
 const isOpCredit = (type: string) => type === 'VENTE_CREDIT';
-const getOpColor = (type: string) => (isOpEntree(type) ? '#16a34a' : isOpSortie(type) ? '#dc2626' : isOpCredit(type) ? '#d97706' : '#64748b');
 const getOpSign = (type: string) => (isOpSortie(type) ? '−' : '+');
 
 interface CreditInfo {
@@ -123,11 +123,29 @@ const EMPTY_PICKER: PickerConfig = { visible: false, title: '', options: [], onS
 // ─── Composant ────────────────────────────────────────────────────────────────
 export default function CaisseScreen() {
   const { lang } = useLang();
+  const colors = useColors();
+  const st = createStyles(colors);
+  const getOpColor = (type: string) => (isOpEntree(type) ? colors.success : isOpSortie(type) ? colors.danger : isOpCredit(type) ? colors.warning : colors.textSecondary);
   const navigation = useNavigation<any>();
   const [onglet, setOnglet] = useState<Onglet>('etat');
   const [fromCache, setFromCache] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Ouvrir/fermer caisse, entrée/sortie et transfert vers banque sont réservés
+  // à l'ADMIN côté backend (@PreAuthorize hasRole('ADMIN')) — cet écran doit
+  // masquer ces actions pour VENDEUR, sinon il obtient une erreur au clic sur
+  // des boutons qui n'auraient jamais dû s'afficher.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem('user').then(raw => {
+      if (!raw) return;
+      try {
+        const role: string = JSON.parse(raw)?.role || '';
+        setIsAdmin(role === 'ROLE_ADMIN' || role === 'ADMIN');
+      } catch {}
+    });
+  }, []);
 
   const [etatCaisse, setEtatCaisse] = useState<any>(null);
   const [statsJour, setStatsJour] = useState<any>(null);
@@ -202,14 +220,14 @@ export default function CaisseScreen() {
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        (etatCaisse?.estOuverte || etatCaisse?.ouverte) ? (
+        (isAdmin && (etatCaisse?.estOuverte || etatCaisse?.ouverte)) ? (
           <TouchableOpacity onPress={openTransfertModal} style={{ marginRight: 14 }}>
             <MaterialCommunityIcons name="swap-horizontal" color="#fff" size={24} />
           </TouchableOpacity>
         ) : null
       ),
     });
-  }, [navigation, etatCaisse]);
+  }, [navigation, etatCaisse, isAdmin]);
 
   // ─── Refs toujours à jour ───────────────────────────────────────────────
   // chargerTout/chargerOperations sont appelées depuis useFocusEffect (voir plus
@@ -636,7 +654,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
   return (
     <View style={st.root}>
       {loadingInitial ? (
-        <ActivityIndicator style={{ marginTop: 60 }} size="large" color="#1a56db" />
+        <ActivityIndicator style={{ marginTop: 60 }} size="large" color={colors.primary} />
       ) : (
         <>
           {/* Cartes couleur — mêmes 4 chiffres et mêmes endpoints que la page
@@ -644,29 +662,29 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
               mois clôturé / Crédits clients), au lieu d'Entrées/Sorties du
               jour qui redoublonnaient avec "Caisse du jour". */}
           <View style={st.colorCards}>
-            <View style={[st.colorCard, { backgroundColor: '#dbeafe' }]}>
-              <MaterialCommunityIcons name="wallet-outline" size={18} color="#1d4ed8" />
-              <Text style={[st.ccLabel, { color: '#1d4ed8' }]}>Solde actuel</Text>
-              <Text style={[st.ccValue, { color: '#1d4ed8' }]} numberOfLines={1}>{money(soldeActuel)}</Text>
-              <Text style={[st.ccSub, { color: '#1d4ed8' }]}>{caisseOuverte ? 'Ouverte' : 'Fermée'}</Text>
+            <View style={[st.colorCard, { backgroundColor: colors.infoBg }]}>
+              <MaterialCommunityIcons name="wallet-outline" size={18} color={colors.info} />
+              <Text style={[st.ccLabel, { color: colors.info }]}>Solde actuel</Text>
+              <Text style={[st.ccValue, { color: colors.info }]} numberOfLines={1}>{money(soldeActuel)}</Text>
+              <Text style={[st.ccSub, { color: colors.info }]}>{caisseOuverte ? 'Ouverte' : 'Fermée'}</Text>
             </View>
-            <View style={[st.colorCard, { backgroundColor: '#dcfce7' }]}>
-              <MaterialCommunityIcons name="calendar-outline" size={18} color="#15803d" />
-              <Text style={[st.ccLabel, { color: '#15803d' }]}>Caisse du jour</Text>
-              <Text style={[st.ccValue, { color: '#15803d' }]} numberOfLines={1}>{money(statsJour?.soldeNetPeriode || 0)}</Text>
-              <Text style={[st.ccSub, { color: '#15803d' }]}>↑ {money(statsJour?.totalEntrees || 0)} · ↓ {money(statsJour?.totalSorties || 0)}</Text>
+            <View style={[st.colorCard, { backgroundColor: colors.successBg }]}>
+              <MaterialCommunityIcons name="calendar-outline" size={18} color={colors.success} />
+              <Text style={[st.ccLabel, { color: colors.success }]}>Caisse du jour</Text>
+              <Text style={[st.ccValue, { color: colors.success }]} numberOfLines={1}>{money(statsJour?.soldeNetPeriode || 0)}</Text>
+              <Text style={[st.ccSub, { color: colors.success }]}>↑ {money(statsJour?.totalEntrees || 0)} · ↓ {money(statsJour?.totalSorties || 0)}</Text>
             </View>
-            <View style={[st.colorCard, { backgroundColor: isPerteMois ? '#fee2e2' : '#ede9fe' }]}>
-              <MaterialCommunityIcons name={isPerteMois ? 'trending-down' : 'trending-up'} size={18} color={isPerteMois ? '#b91c1c' : '#6d28d9'} />
-              <Text style={[st.ccLabel, { color: isPerteMois ? '#b91c1c' : '#6d28d9' }]} numberOfLines={1}>{labelBilanceMois} · {nomMoisCourant}</Text>
-              <Text style={[st.ccValue, { color: isPerteMois ? '#b91c1c' : '#6d28d9' }]} numberOfLines={1}>{isPerteMois ? '-' : '+'}{money(Math.abs(profitNetMois))}</Text>
-              <Text style={[st.ccSub, { color: isPerteMois ? '#b91c1c' : '#6d28d9' }]}>Mois clôturé</Text>
+            <View style={[st.colorCard, { backgroundColor: isPerteMois ? colors.dangerBg : colors.infoBg }]}>
+              <MaterialCommunityIcons name={isPerteMois ? 'trending-down' : 'trending-up'} size={18} color={isPerteMois ? colors.danger : colors.primary} />
+              <Text style={[st.ccLabel, { color: isPerteMois ? colors.danger : colors.primary }]} numberOfLines={1}>{labelBilanceMois} · {nomMoisCourant}</Text>
+              <Text style={[st.ccValue, { color: isPerteMois ? colors.danger : colors.primary }]} numberOfLines={1}>{isPerteMois ? '-' : '+'}{money(Math.abs(profitNetMois))}</Text>
+              <Text style={[st.ccSub, { color: isPerteMois ? colors.danger : colors.primary }]}>Mois clôturé</Text>
             </View>
-            <View style={[st.colorCard, { backgroundColor: '#ffedd5' }]}>
-              <MaterialCommunityIcons name="credit-card-outline" size={18} color="#c2410c" />
-              <Text style={[st.ccLabel, { color: '#c2410c' }]}>Crédits clients</Text>
-              <Text style={[st.ccValue, { color: '#c2410c' }]} numberOfLines={1}>{credits.length}</Text>
-              <Text style={[st.ccSub, { color: '#c2410c' }]} numberOfLines={1}>Reste à payer : {money(montantTotalCredits)}</Text>
+            <View style={[st.colorCard, { backgroundColor: colors.warningBg }]}>
+              <MaterialCommunityIcons name="credit-card-outline" size={18} color={colors.warning} />
+              <Text style={[st.ccLabel, { color: colors.warning }]}>Crédits clients</Text>
+              <Text style={[st.ccValue, { color: colors.warning }]} numberOfLines={1}>{credits.length}</Text>
+              <Text style={[st.ccSub, { color: colors.warning }]} numberOfLines={1}>Reste à payer : {money(montantTotalCredits)}</Text>
             </View>
           </View>
 
@@ -718,7 +736,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   </View>
                 )}
 
-                {!caisseOuverte ? (
+                {isAdmin && (!caisseOuverte ? (
                   <TouchableOpacity
                     style={[st.bigBtn, { backgroundColor: '#16a34a' }]}
                     onPress={() =>
@@ -744,10 +762,11 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                     <MaterialCommunityIcons name="lock-outline" size={18} color="#fff" />
                     <Text style={st.bigBtnText}>{tr('fermer_caisse', lang)}</Text>
                   </TouchableOpacity>
-                )}
+                ))}
               </View>
 
-              {/* Nouvelle opération (intégré, comme .form-panel Ionic) */}
+              {/* Nouvelle opération (intégré, comme .form-panel Ionic) — réservé à l'ADMIN */}
+              {isAdmin && (
               <View style={st.formPanel}>
                 <Text style={st.cardTitleLg}>Nouvelle opération</Text>
 
@@ -811,6 +830,7 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
                   }
                 </TouchableOpacity>
               </View>
+              )}
             </ScrollView>
           )}
 
@@ -1421,13 +1441,13 @@ td{padding:7px 8px;border-bottom:1px solid #f1f5f9}
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const st = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#f0f4f8' },
+const createStyles = (colors: ReturnType<typeof useColors>) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.background },
 
   // Cartes couleur (haut de page, toujours visibles)
   // STYLE (2026-08-16) : coins plus arrondis + ombre douce (au lieu de la
   // simple élévation Android, invisible sur iOS) pour un rendu plus premium.
-  colorCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 12, backgroundColor: '#fff' },
+  colorCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 12, backgroundColor: colors.card },
   colorCard: {
     flexBasis: '47%', flexGrow: 1, borderRadius: 16, padding: 14, alignItems: 'flex-start',
     elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
@@ -1441,37 +1461,37 @@ const st = StyleSheet.create({
   ccSub: { fontSize: 10, marginTop: 2, opacity: 0.8 },
 
   // Onglets
-  tabs: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
+  tabs: { flexDirection: 'row', backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
   tab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabActive: { borderBottomColor: '#1a56db' },
-  tabText: { fontSize: 13, color: '#888', fontWeight: '600' },
-  tabTextActive: { color: '#1a56db' },
+  tabActive: { borderBottomColor: colors.primary },
+  tabText: { fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
+  tabTextActive: { color: colors.primary },
 
   // Offline banner
-  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#fef3c7', paddingHorizontal: 12, paddingVertical: 6 },
-  offlineTxt: { color: '#92400e', fontSize: 12, flex: 1 },
+  offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: colors.warningBg, paddingHorizontal: 12, paddingVertical: 6 },
+  offlineTxt: { color: colors.warning, fontSize: 12, flex: 1 },
 
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.background },
 
   // Carte mobile / form-panel (État)
   mobileCard: {
-    backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 16,
+    backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 16,
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
   },
   formPanel: {
-    backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 16,
+    backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 16,
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
   },
-  cardTitleLg: { fontWeight: 'bold', fontSize: 15, color: '#1e293b' },
-  cardSubtitle: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  cardTitleLg: { fontWeight: 'bold', fontSize: 15, color: colors.text },
+  cardSubtitle: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowStart: { flexDirection: 'row', alignItems: 'center' },
   badgeEtat: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   badgeEtatText: { fontSize: 11, fontWeight: 'bold' },
 
   twoCols: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  statCard: { flex: 1, backgroundColor: '#f8fafc', borderRadius: 12, padding: 10, alignItems: 'center' },
-  statLabel: { fontSize: 11, color: '#64748b' },
+  statCard: { flex: 1, backgroundColor: colors.inputBg, borderRadius: 12, padding: 10, alignItems: 'center' },
+  statLabel: { fontSize: 11, color: colors.textSecondary },
   statValue: { fontSize: 14, fontWeight: 'bold', marginTop: 3 },
 
   bigBtn: {
@@ -1480,89 +1500,89 @@ const st = StyleSheet.create({
   },
   bigBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 
-  sectionTitle: { fontWeight: 'bold', fontSize: 14, color: '#333', marginBottom: 8, marginTop: 8 },
+  sectionTitle: { fontWeight: 'bold', fontSize: 14, color: colors.text, marginBottom: 8, marginTop: 8 },
 
   // Toggle entrée/sortie
   toggleRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
-  toggleBtn: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingVertical: 10, alignItems: 'center', backgroundColor: '#f9f9f9' },
-  toggleBtnText: { fontWeight: '700', fontSize: 14, color: '#555' },
+  toggleBtn: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingVertical: 10, alignItems: 'center', backgroundColor: colors.inputBg },
+  toggleBtnText: { fontWeight: '700', fontSize: 14, color: colors.textSecondary },
 
   // Formulaire
-  fieldLabel: { color: '#666', fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
-  fieldInput: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#333', backgroundColor: '#fafafa' },
+  fieldLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 6, marginTop: 14 },
+  fieldInput: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fafafa' },
-  chipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  chipText: { fontSize: 13, color: '#555' },
+  chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.inputBg },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: { fontSize: 13, color: colors.textSecondary },
   chipTextActive: { color: '#fff', fontWeight: '600' },
 
   // Select box (remplace ion-select)
-  selectBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#fafafa' },
-  selectBoxText: { fontSize: 14, color: '#333', flex: 1 },
-  selectBoxPlaceholder: { fontSize: 14, color: '#999', flex: 1 },
-  pickerOption: { paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  pickerOptionLabel: { fontSize: 14, color: '#333', flex: 1 },
-  pickerOptionSub: { fontSize: 13, color: '#1a56db', fontWeight: '600' },
+  selectBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: colors.inputBg },
+  selectBoxText: { fontSize: 14, color: colors.text, flex: 1 },
+  selectBoxPlaceholder: { fontSize: 14, color: colors.placeholder, flex: 1 },
+  pickerOption: { paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  pickerOptionLabel: { fontSize: 14, color: colors.text, flex: 1 },
+  pickerOptionSub: { fontSize: 13, color: colors.primary, fontWeight: '600' },
 
   // Chip bar credits (inline avec bouton imprimer)
   chipBarInline: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 12 },
-  filterChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#fff' },
-  filterChipActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  filterChipText: { fontSize: 13, color: '#555', fontWeight: '600' },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  filterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  filterChipText: { fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
   filterChipTextActive: { color: '#fff' },
-  pdfBtnOutline: { flexDirection: 'row', gap: 4, alignItems: 'center', borderWidth: 1, borderColor: '#d97706', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginLeft: 'auto' },
-  pdfBtnOutlineText: { color: '#d97706', fontWeight: '700', fontSize: 12 },
+  pdfBtnOutline: { flexDirection: 'row', gap: 4, alignItems: 'center', borderWidth: 1, borderColor: colors.warning, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginLeft: 'auto' },
+  pdfBtnOutlineText: { color: colors.warning, fontWeight: '700', fontSize: 12 },
 
-  retardBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 12 },
-  retardBannerText: { color: '#64748b', fontSize: 13 },
-  retardBannerBadge: { backgroundColor: '#dc2626', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  retardBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: colors.card, borderRadius: 12, padding: 12, marginBottom: 12 },
+  retardBannerText: { color: colors.textSecondary, fontSize: 13 },
+  retardBannerBadge: { backgroundColor: colors.danger, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   retardBannerBadgeText: { color: '#fff', fontWeight: 'bold', fontSize: 11 },
 
   // Groupe règlement
-  groupBar: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 12, gap: 8 },
-  groupBtnOutline: { borderWidth: 1, borderColor: '#1a56db', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
-  groupBtnOutlineText: { color: '#1a56db', fontSize: 12, fontWeight: '600' },
+  groupBar: { backgroundColor: colors.card, borderRadius: 12, padding: 12, marginBottom: 12, gap: 8 },
+  groupBtnOutline: { borderWidth: 1, borderColor: colors.primary, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
+  groupBtnOutlineText: { color: colors.primary, fontSize: 12, fontWeight: '600' },
   groupBtnClear: { paddingHorizontal: 10, paddingVertical: 6 },
-  groupBtnClearText: { color: '#64748b', fontSize: 12, fontWeight: '600' },
-  groupBtnConfirm: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#16a34a', borderRadius: 8, paddingVertical: 9 },
+  groupBtnClearText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
+  groupBtnConfirm: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.success, borderRadius: 8, paddingVertical: 9 },
   groupBtnConfirmText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 
   // Paper card rows
-  opCardPaper: { marginBottom: 8, borderRadius: 14, elevation: 1 },
-  creditCardPaper: { marginBottom: 10, borderRadius: 16, elevation: 2 },
+  opCardPaper: { marginBottom: 8, borderRadius: 14, elevation: 1, backgroundColor: colors.card },
+  creditCardPaper: { marginBottom: 10, borderRadius: 16, elevation: 2, backgroundColor: colors.card },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontWeight: '600', fontSize: 14, color: '#1e293b' },
-  cardSub: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  muted: { color: '#64748b', fontSize: 12 },
+  cardName: { fontWeight: '600', fontSize: 14, color: colors.text },
+  cardSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  muted: { color: colors.textSecondary, fontSize: 12 },
 
   // Crédit
-  creditRestant: { fontWeight: 'bold', fontSize: 14, color: '#1a56db' },
+  creditRestant: { fontWeight: 'bold', fontSize: 14, color: colors.primary },
   progressWrap: { marginTop: 8 },
-  progressBg: { height: 6, backgroundColor: '#f0f0f0', borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: 6, backgroundColor: '#1a56db', borderRadius: 3 },
+  progressBg: { height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: 6, backgroundColor: colors.primary, borderRadius: 3 },
 
   badge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 10, fontWeight: '700' },
 
   // Opérations
-  periodBar: { flexDirection: 'row', gap: 6, padding: 12, backgroundColor: '#fff' },
-  periodBtn: { flex: 1, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f0f4f8', borderWidth: 1, borderColor: '#dde3ed', alignItems: 'center' },
-  periodBtnActive: { backgroundColor: '#1a56db', borderColor: '#1a56db' },
-  periodBtnText: { fontSize: 12, color: '#666', fontWeight: '600' },
+  periodBar: { flexDirection: 'row', gap: 6, padding: 12, backgroundColor: colors.card },
+  periodBtn: { flex: 1, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
+  periodBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  periodBtnText: { fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
   periodBtnTextActive: { color: '#fff' },
 
-  opFilters: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#fff' },
-  opSearchInput: { flex: 1.3, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, fontSize: 13, backgroundColor: '#fafafa' },
-  opTypeSelect: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, backgroundColor: '#fafafa' },
-  opTypeSelectText: { fontSize: 12, color: '#555', flex: 1 },
+  opFilters: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: colors.card },
+  opSearchInput: { flex: 1.3, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, fontSize: 13, backgroundColor: colors.inputBg, color: colors.text },
+  opTypeSelect: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, backgroundColor: colors.inputBg },
+  opTypeSelectText: { fontSize: 12, color: colors.textSecondary, flex: 1 },
 
-  opSummary: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff' },
+  opSummary: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.card },
   opSummaryVal: { fontWeight: 'bold', fontSize: 13 },
 
   opIndicator: { width: 4, height: 40, borderRadius: 2 },
   opMontant: { fontWeight: 'bold', fontSize: 14 },
-  opSoldes: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+  opSoldes: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
 
   // Stats
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
@@ -1571,51 +1591,51 @@ const st = StyleSheet.create({
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
   },
   statsVal: { fontSize: 16, fontWeight: 'bold', marginTop: 6 },
-  statsLabel: { fontSize: 11, color: '#666', marginTop: 2 },
+  statsLabel: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
 
   // Réconciliation par vendeur (sélecteur de date + mise en avant du total à remettre)
   dateNavBar: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 14,
     paddingVertical: 8, paddingHorizontal: 4, marginBottom: 14,
     elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   dateNavBtn: { padding: 8 },
-  dateNavLabel: { fontSize: 13, fontWeight: '700', color: '#1e293b', textTransform: 'capitalize' },
-  dateNavToday: { fontSize: 11, color: '#1a56db', fontWeight: '600', marginTop: 2 },
+  dateNavLabel: { fontSize: 13, fontWeight: '700', color: colors.text, textTransform: 'capitalize' },
+  dateNavToday: { fontSize: 11, color: colors.primary, fontWeight: '600', marginTop: 2 },
   reconciliationTotalBox: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: '#eff6ff', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10,
+    backgroundColor: colors.infoBg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10,
   },
-  reconciliationTotalLabel: { fontSize: 13, fontWeight: '700', color: '#1d4ed8' },
-  reconciliationTotalValue: { fontSize: 18, fontWeight: '900', color: '#1d4ed8' },
+  reconciliationTotalLabel: { fontSize: 13, fontWeight: '700', color: colors.info },
+  reconciliationTotalValue: { fontSize: 18, fontWeight: '900', color: colors.info },
 
   // Empty state
   emptyState: { alignItems: 'center', marginTop: 40, paddingHorizontal: 20 },
-  emptyText: { textAlign: 'center', color: '#94a3b8', marginTop: 12, fontSize: 14 },
+  emptyText: { textAlign: 'center', color: colors.textSecondary, marginTop: 12, fontSize: 14 },
 
   // Modal commun
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
-  handle: { width: 36, height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, alignSelf: 'center', marginTop: 10 },
-  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  modalTitle: { fontWeight: 'bold', fontSize: 16, color: '#1a1a1a', flex: 1, marginRight: 8 },
+  overlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
+  sheet: { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%' },
+  handle: { width: 36, height: 4, backgroundColor: colors.border, borderRadius: 2, alignSelf: 'center', marginTop: 10 },
+  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalTitle: { fontWeight: 'bold', fontSize: 16, color: colors.text, flex: 1, marginRight: 8 },
   modalBody: { padding: 16, maxHeight: 440 },
-  modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
-  btnCancel: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
-  btnCancelText: { color: '#666', fontWeight: '600' },
-  btnConfirm: { flex: 2, backgroundColor: '#1a56db', borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  modalFoot: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: colors.border },
+  btnCancel: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  btnCancelText: { color: colors.textSecondary, fontWeight: '600' },
+  btnConfirm: { flex: 2, backgroundColor: colors.primary, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
   btnConfirmText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 
   // Info card modal
-  infoCard: { backgroundColor: '#fafafa', borderRadius: 14, padding: 12, marginTop: 10, marginBottom: 10 },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
-  infoLabel: { color: '#888', fontSize: 13 },
-  infoVal: { color: '#333', fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },
+  infoCard: { backgroundColor: colors.inputBg, borderRadius: 14, padding: 12, marginTop: 10, marginBottom: 10 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: colors.border },
+  infoLabel: { color: colors.textSecondary, fontSize: 13 },
+  infoVal: { color: colors.text, fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },
 
   // Versements
-  versRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  versDate: { flex: 1, fontSize: 12, color: '#64748b' },
-  versMontant: { fontWeight: '700', color: '#16a34a', fontSize: 13 },
-  versMode: { fontSize: 11, color: '#888', marginTop: 2 },
-  versSub: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+  versRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
+  versDate: { flex: 1, fontSize: 12, color: colors.textSecondary },
+  versMontant: { fontWeight: '700', color: colors.success, fontSize: 13 },
+  versMode: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
+  versSub: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
 });

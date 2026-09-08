@@ -6,6 +6,7 @@ import api from '../services/api.service';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
+import { useColors } from '../theme/colors';
 
 // Modèle réel (TransfertController + transfert.service.ts Ionic) : une
 // "config transferts" est un registre de boutiques PARTENAIRES (nom + URL de
@@ -23,6 +24,7 @@ const FORM_INITIAL: BoutiquePartenaire = { nom: '', url: '', actif: true };
 
 export default function ConfigTransfertsScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [partenaires, setPartenaires] = useState<BoutiquePartenaire[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,53 +102,53 @@ export default function ConfigTransfertsScreen() {
     ]);
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList
         data={partenaires}
         keyExtractor={(c, i) => String(c.id ?? i)}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={[colors.primary]} />}
         contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
         renderItem={({ item }) => (
           <Card style={styles.card}>
             <Card.Content style={styles.row}>
               <View style={{ flex: 1 }}>
-                <Text variant="titleMedium">{item.nom}</Text>
-                <Text style={styles.sub} numberOfLines={1}>{item.url}</Text>
-                <View style={[styles.badge, { backgroundColor: item.actif ? '#4caf5022' : '#9e9e9e22' }]}>
-                  <Text style={[styles.badgeText, { color: item.actif ? '#4caf50' : '#9e9e9e' }]}>
+                <Text variant="titleMedium" style={{ color: colors.text }}>{item.nom}</Text>
+                <Text style={[styles.sub, { color: colors.textSecondary }]} numberOfLines={1}>{item.url}</Text>
+                <View style={[styles.badge, { backgroundColor: item.actif ? colors.successBg : colors.border }]}>
+                  <Text style={[styles.badgeText, { color: item.actif ? colors.success : colors.textSecondary }]}>
                     {item.actif ? 'Actif' : 'Inactif'}
                   </Text>
                 </View>
               </View>
               <View style={{ flexDirection: 'row' }}>
-                <IconButton icon="pencil-outline" size={18} iconColor="#1a56db" onPress={() => ouvrirModif(item)} />
-                <IconButton icon="delete-outline" size={18} iconColor="#e53935" onPress={() => supprimer(item)} />
+                <IconButton icon="pencil-outline" size={18} iconColor={colors.primary} onPress={() => ouvrirModif(item)} />
+                <IconButton icon="delete-outline" size={18} iconColor={colors.danger} onPress={() => supprimer(item)} />
               </View>
             </Card.Content>
           </Card>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Aucune boutique partenaire configurée</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, { color: colors.textSecondary }]}>Aucune boutique partenaire configurée</Text>}
       />
-      <FAB icon="plus" style={styles.fab} onPress={ouvrirCreation} />
+      <FAB icon="plus" style={[styles.fab, { backgroundColor: colors.primary }]} color="#fff" onPress={ouvrirCreation} />
       <Portal>
-        <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={styles.modal}>
-          <Text variant="titleLarge" style={{ marginBottom: 16 }}>
+        <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}>
+          <Text variant="titleLarge" style={{ marginBottom: 16, color: colors.text }}>
             {editing ? 'Modifier la boutique partenaire' : 'Nouvelle boutique partenaire'}
           </Text>
           <TextInput label="Nom *" value={form.nom} onChangeText={t => setForm({ ...form, nom: t })} mode="outlined" style={styles.input} />
           <TextInput label="URL du backend *" value={form.url} onChangeText={t => setForm({ ...form, url: t })} mode="outlined" autoCapitalize="none" keyboardType="url" placeholder="https://..." style={styles.input} />
           <View style={styles.switchRow}>
-            <Text>Actif</Text>
-            <Switch value={form.actif} onValueChange={v => setForm({ ...form, actif: v })} />
+            <Text style={{ color: colors.text }}>Actif</Text>
+            <Switch value={form.actif} onValueChange={v => setForm({ ...form, actif: v })} color={colors.primary} />
           </View>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Button mode="outlined" onPress={() => setShowModal(false)} style={{ flex: 1 }}>
               {tr('annuler', lang)}
             </Button>
-            <Button mode="contained" onPress={sauvegarder} loading={saving} disabled={saving} style={{ flex: 1 }}>
+            <Button mode="contained" onPress={sauvegarder} loading={saving} disabled={saving} style={{ flex: 1 }} buttonColor={colors.primary}>
               {tr('enregistrer', lang)}
             </Button>
           </View>

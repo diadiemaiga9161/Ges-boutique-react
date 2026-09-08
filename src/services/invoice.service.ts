@@ -381,6 +381,151 @@ export async function partagerRapportPdfRN(r: RapportPdfData, design: DesignFact
   await partagerDocumentPdfRN(rapportToDocumentConfig(r), design);
 }
 
+// ─── Export PDF rapport COMPLET (jour/semaine/mois/année/personnalisé) ───────
+// Enrichit le rapport ci-dessus avec les données de GET /rapports/complet :
+// liste des ventes, top produits, répartition par mode de paiement, résumé des
+// crédits et nombre de clients servis — chacune dans une section clairement
+// séparée (titre de section). Gabarit dédié (ne modifie pas
+// buildDocumentPdfHtml / DocumentPdfConfig utilisés par d'autres écrans).
+
+export interface RapportCompletVente {
+  date?: string;
+  numeroVente?: string;
+  clientNom?: string;
+  modePaiement?: string;
+  montantTotal: number;
+}
+
+export interface RapportCompletTopProduit {
+  produitNom: string;
+  quantiteVendue: number;
+  ca: number;
+}
+
+export interface RapportCompletModePaiement {
+  mode: string;
+  montant: number;
+  nombre: number;
+}
+
+export interface RapportCompletCredits {
+  nombreCredits: number;
+  totalCredits: number;
+  totalVerse: number;
+  totalRestant: number;
+}
+
+export interface RapportCompletPdfData {
+  titre: string;
+  dateDebut: string;
+  dateFin: string;
+  nombreVentes: number;
+  totalVentes: number;
+  ventes: RapportCompletVente[];
+  topProduits: RapportCompletTopProduit[];
+  repartitionModePaiement: RapportCompletModePaiement[];
+  resumeCredits?: RapportCompletCredits | null;
+  nombreClients: number;
+}
+
+function buildRapportCompletPdfHtml(r: RapportCompletPdfData, design: DesignFacture = 1): string {
+  const couleur = design === 2 ? '#b8860b' : design === 3 ? '#1a1a1a' : '#1a56db';
+  const fond = design === 2 ? '#1a1a2e' : design === 3 ? '#f8f8f8' : '#1e3a5f';
+
+  const sectionTitle = (t: string) =>
+    `<h2 style="font-size:14px;color:${couleur};border-bottom:2px solid ${couleur};padding-bottom:4px;margin:22px 0 10px">${t}</h2>`;
+
+  const tableHtml = (colonnes: string[], lignes: string[][]) => {
+    if (!lignes.length) return `<p style="font-size:12px;color:#94a3b8;font-style:italic">Aucune donnée pour cette période</p>`;
+    const entetes = colonnes.map(c => `<th style="background:${couleur};color:#fff;padding:7px 8px;text-align:left;border:1px solid #ddd;font-size:11px">${c}</th>`).join('');
+    const rows = lignes.map((row, i) =>
+      `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">${row.map(cell => `<td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${cell}</td>`).join('')}</tr>`
+    ).join('');
+    return `<table style="width:100%;border-collapse:collapse;margin-top:4px"><thead><tr>${entetes}</tr></thead><tbody>${rows}</tbody></table>`;
+  };
+
+  const ventesLignes = r.ventes.map(v => [
+    formatDate(v.date), v.numeroVente || '—', v.clientNom || 'Client divers',
+    getModePaiementLabel(v.modePaiement), formatPrice(v.montantTotal),
+  ]);
+  const topLignes = r.topProduits.map(p => [p.produitNom, String(p.quantiteVendue), formatPrice(p.ca)]);
+  const modeLignes = r.repartitionModePaiement.map(m => [getModePaiementLabel(m.mode), String(m.nombre), formatPrice(m.montant)]);
+
+  const c = r.resumeCredits;
+  const creditsHtml = c
+    ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <div style="flex:1;min-width:120px;background:#f8fafc;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:#64748b">Nombre de crédits</div>
+          <div style="font-size:16px;font-weight:700;color:${couleur}">${c.nombreCredits}</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:#f8fafc;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:#64748b">Total crédits</div>
+          <div style="font-size:14px;font-weight:700;color:${couleur}">${formatPrice(c.totalCredits)}</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:#f8fafc;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:#64748b">Total versé</div>
+          <div style="font-size:14px;font-weight:700;color:#0e9f6e">${formatPrice(c.totalVerse)}</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:#f8fafc;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:#64748b">Reste dû</div>
+          <div style="font-size:14px;font-weight:700;color:#d97706">${formatPrice(c.totalRestant)}</div>
+        </div>
+      </div>`
+    : `<p style="font-size:12px;color:#94a3b8;font-style:italic">Aucun crédit sur cette période</p>`;
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${r.titre}</title>
+    <style>
+      body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f0f4f8}
+      .doc{background:#fff;border-radius:8px;padding:24px;max-width:900px;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+      .header{background:${fond};color:#fff;padding:16px 24px;border-radius:6px;margin-bottom:12px}
+      .header h1{margin:0;font-size:20px;color:${couleur}}
+      .header p{margin:4px 0 0;font-size:12px;opacity:.85}
+      .kpis{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+      .kpi{flex:1;min-width:130px;background:#eff6ff;border-radius:8px;padding:10px 12px;text-align:center}
+      .kpi-val{font-size:16px;font-weight:800;color:${couleur}}
+      .kpi-lbl{font-size:10px;color:#64748b;margin-top:2px}
+      @media print{@page{size:A4 portrait;margin:8mm}body{background:#fff;padding:0}.doc{box-shadow:none}}
+    </style></head><body>
+    <div class="doc">
+      <div class="header">
+        <h1>${r.titre}</h1>
+        <p>Période du ${formatDate(r.dateDebut)} au ${formatDate(r.dateFin)}</p>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-val">${formatPrice(r.totalVentes)}</div><div class="kpi-lbl">Chiffre d'affaires</div></div>
+        <div class="kpi"><div class="kpi-val">${r.nombreVentes}</div><div class="kpi-lbl">Ventes</div></div>
+        <div class="kpi"><div class="kpi-val">${r.nombreClients}</div><div class="kpi-lbl">Clients servis</div></div>
+      </div>
+
+      ${sectionTitle('Liste des ventes')}
+      ${tableHtml(['Date', 'N° vente', 'Client', 'Mode', 'Montant'], ventesLignes)}
+
+      ${sectionTitle('Produits les plus vendus')}
+      ${tableHtml(['Produit', 'Quantité vendue', "Chiffre d'affaires"], topLignes)}
+
+      ${sectionTitle('Répartition par mode de paiement')}
+      ${tableHtml(['Mode', 'Nb transactions', 'Montant'], modeLignes)}
+
+      ${sectionTitle('Résumé des crédits')}
+      ${creditsHtml}
+
+      <p style="font-size:11px;color:#aaa;text-align:right;margin-top:16px">Généré le ${new Date().toLocaleDateString('fr-FR')} · Ges-Boutique</p>
+    </div>
+    </body></html>`;
+}
+
+export async function imprimerRapportCompletPdfRN(r: RapportCompletPdfData, design: DesignFacture = 1): Promise<void> {
+  const html = buildRapportCompletPdfHtml(r, design);
+  await Print.printAsync({ html });
+}
+
+export async function partagerRapportCompletPdfRN(r: RapportCompletPdfData, design: DesignFacture = 1): Promise<void> {
+  const html = buildRapportCompletPdfHtml(r, design);
+  const { uri } = await Print.printToFileAsync({ html });
+  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: r.titre, UTI: 'com.adobe.pdf' });
+}
+
 // ─── Reçus paiement fournisseur & règlement crédit ───────────────────────────
 
 export function buildRecuPaiementFournisseurHtml(

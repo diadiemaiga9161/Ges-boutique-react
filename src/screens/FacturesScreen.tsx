@@ -5,12 +5,14 @@ import {
 } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { getFactures, creerFactureProforma, changerStatutFacture, getBackendRootUrl, getProduits } from '../services/api.service';
+import { getFactures, creerFactureProforma, modifierFacture, supprimerFacture, changerStatutFacture, getBackendRootUrl, getProduits } from '../services/api.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useAuth } from '../hooks/useAuth';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
+import { SkeletonCard } from '../components/SkeletonLoader';
 
 const money = (v?: number) => `${(v || 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} FCFA`;
 const fdate = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
@@ -18,14 +20,21 @@ const fdate = (d?: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—
 const STATUTS = ['BROUILLON', 'VALIDE', 'PAYEE', 'ANNULEE'] as const;
 type Statut = typeof STATUTS[number];
 const STATUT_LABEL: Record<Statut, string> = { BROUILLON: 'Brouillon', VALIDE: 'Validée', PAYEE: 'Payée', ANNULEE: 'Annulée' };
-const STATUT_COLOR: Record<Statut, string> = { BROUILLON: '#94a3b8', VALIDE: '#1a56db', PAYEE: '#16a34a', ANNULEE: '#dc2626' };
 
-interface LigneProforma { designation: string; quantite: string; prixUnitaire: number; }
+interface LigneProforma { designation: string; quantite: string; prixUnitaire: number; remisePourcentage: number; }
 
 export default function FacturesScreen() {
   const { lang } = useLang();
   const { user } = useAuth();
+  const colors = useColors();
   const isAdmin = user?.role !== 'VENDEUR';
+
+  const STATUT_COLOR: Record<Statut, string> = {
+    BROUILLON: colors.textSecondary,
+    VALIDE: colors.primary,
+    PAYEE: colors.success,
+    ANNULEE: colors.danger,
+  };
 
   const [factures, setFactures] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,14 +51,19 @@ export default function FacturesScreen() {
   // Modal QR
   const [showQr, setShowQr] = useState(false);
 
-  // Modal création pro forma
+  // Modal création / modification pro forma — même modale pour les deux
+  // (parité avec resources.page.ts sur Ionic : saveFacture() bascule création/
+  // modification selon isEdit, seule interface Ionic à proposer l'édition —
+  // le lien menu "Factures" pointe vers /resources/factures, pas /tabs/factures).
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [clientNom, setClientNom] = useState('');
   const [clientTelephone, setClientTelephone] = useState('');
   const [notes, setNotes] = useState('');
   const [lignes, setLignes] = useState<LigneProforma[]>([]);
-  const [newLigne, setNewLigne] = useState<LigneProforma>({ designation: '', quantite: '1', prixUnitaire: 0 });
+  const [newLigne, setNewLigne] = useState<LigneProforma>({ designation: '', quantite: '1', prixUnitaire: 0, remisePourcentage: 0 });
   const [produits, setProduits] = useState<any[]>([]);
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitSearch, setShowProduitSearch] = useState(false);
@@ -93,10 +107,33 @@ export default function FacturesScreen() {
   const nbValides = factures.filter(f => f.statut === 'VALIDE').length;
   const nbPayees = factures.filter(f => f.statut === 'PAYEE').length;
 
-  // ─── Création pro forma ───────────────────────────────────────────────────
+  // ─── Création / modification pro forma ────────────────────────────────────
   const ouvrirCreation = async () => {
+    setEditingId(null);
     setClientNom(''); setClientTelephone(''); setNotes(''); setLignes([]);
-    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0 });
+    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0, remisePourcentage: 0 });
+    setShowCreate(true);
+    try {
+      const res = await getProduits();
+      setProduits(res.data?.data || res.data || []);
+    } catch { setProduits([]); }
+  };
+
+  // Édition d'une facture existante — parité avec resources.page.ts:edit()/fillFacture()
+  // (seule interface Ionic proposant la modification d'une facture).
+  const ouvrirEdition = async (f: any) => {
+    setEditingId(f.id);
+    setClientNom(f.clientNom || '');
+    setClientTelephone(f.clientTelephone || '');
+    setNotes(f.notes || '');
+    setLignes((f.lignes || []).map((l: any) => ({
+      designation: l.designation || l.produitNom || 'Article',
+      quantite: String(l.quantite || 1),
+      prixUnitaire: l.prixUnitaire || 0,
+      remisePourcentage: l.remisePourcentage || 0,
+    })));
+    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0, remisePourcentage: 0 });
+    setShowDetail(false);
     setShowCreate(true);
     try {
       const res = await getProduits();
@@ -109,7 +146,7 @@ export default function FacturesScreen() {
     : [];
 
   const selectProduit = (p: any) => {
-    setNewLigne({ designation: p.nom, quantite: '1', prixUnitaire: p.prixVente || 0 });
+    setNewLigne({ designation: p.nom, quantite: '1', prixUnitaire: p.prixVente || 0, remisePourcentage: 0 });
     setProduitSearch('');
     setShowProduitSearch(false);
   };
@@ -119,12 +156,20 @@ export default function FacturesScreen() {
       Alert.alert(tr('erreur', lang), 'Désignation, quantité et prix requis'); return;
     }
     setLignes(prev => [...prev, newLigne]);
-    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0 });
+    setNewLigne({ designation: '', quantite: '1', prixUnitaire: 0, remisePourcentage: 0 });
   };
 
   const removeLigne = (i: number) => setLignes(prev => prev.filter((_, idx) => idx !== i));
 
-  const proformaTotal = lignes.reduce((s, l) => s + (parseFloat(l.quantite) || 0) * (l.prixUnitaire || 0), 0);
+  // Total avec remise par ligne — parité avec resources.page.ts:getTotalFacture()
+  // (prixUnitaire - remise%) * quantité ; ni factures.page.ts ni la version RN
+  // d'origine ne géraient de remise par ligne.
+  const ligneTotal = (l: LigneProforma) => {
+    const prix = l.prixUnitaire || 0;
+    const remise = l.remisePourcentage ? prix * (l.remisePourcentage / 100) : 0;
+    return (prix - remise) * (parseFloat(l.quantite) || 0);
+  };
+  const proformaTotal = lignes.reduce((s, l) => s + ligneTotal(l), 0);
 
   const submitProforma = async () => {
     if (!lignes.length) return;
@@ -132,7 +177,7 @@ export default function FacturesScreen() {
     try {
       const raw = await AsyncStorage.getItem('user');
       const utilisateurId = raw ? JSON.parse(raw)?.id : undefined;
-      await creerFactureProforma({
+      const payload = {
         clientNom: clientNom.trim() || undefined,
         clientTelephone: clientTelephone.trim() || undefined,
         notes: notes.trim() || undefined,
@@ -141,15 +186,46 @@ export default function FacturesScreen() {
           designation: l.designation,
           quantite: parseInt(l.quantite, 10) || 1,
           prixUnitaire: l.prixUnitaire || 0,
+          remisePourcentage: l.remisePourcentage || 0,
         })),
-      });
+      };
+      if (editingId) {
+        await modifierFacture(editingId, payload);
+      } else {
+        await creerFactureProforma(payload);
+      }
       setShowCreate(false);
       await charger();
-      Alert.alert(tr('succes', lang), 'Facture pro forma créée');
+      Alert.alert(tr('succes', lang), editingId ? 'Facture modifiée' : 'Facture pro forma créée');
     } catch (e: any) {
-      Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Impossible de créer la facture');
+      Alert.alert(tr('erreur', lang), e.response?.data?.message || (editingId ? 'Impossible de modifier la facture' : 'Impossible de créer la facture'));
     }
     setCreating(false);
+  };
+
+  // Suppression — parité avec resources.page.ts action('delete-facture') +
+  // confirmDelete() (seule interface Ionic proposant la suppression d'une facture).
+  const supprimerFactureAction = (f: any) => {
+    Alert.alert(
+      'Supprimer la facture',
+      `Supprimer définitivement la facture ${f.numeroFacture} ?`,
+      [
+        { text: tr('annuler', lang), style: 'cancel' },
+        {
+          text: 'Supprimer', style: 'destructive', onPress: async () => {
+            setDeleting(true);
+            try {
+              await supprimerFacture(f.id);
+              setShowDetail(false);
+              await charger();
+            } catch (e: any) {
+              Alert.alert(tr('erreur', lang), e.response?.data?.message || 'Suppression impossible');
+            }
+            setDeleting(false);
+          }
+        },
+      ]
+    );
   };
 
   // ─── Actions carte ─────────────────────────────────────────────────────────
@@ -172,10 +248,16 @@ export default function FacturesScreen() {
     setChangingStatut(false);
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+  if (loading) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, padding: 12 }]}>
+        <SkeletonCard count={5} />
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Hero stats */}
       <View style={styles.hero}>
         <View style={styles.heroStat}>
@@ -200,10 +282,11 @@ export default function FacturesScreen() {
       {/* Filtres */}
       <View style={styles.filterZone}>
         <RNTextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
           value={search}
           onChangeText={setSearch}
           placeholder="N° facture ou client..."
+          placeholderTextColor={colors.placeholder}
         />
         <View style={styles.statutChips}>
           {STATUTS.map(s => (
@@ -218,7 +301,7 @@ export default function FacturesScreen() {
         </View>
       </View>
 
-      <TouchableOpacity style={styles.btnCreer} onPress={ouvrirCreation}>
+      <TouchableOpacity style={[styles.btnCreer, { backgroundColor: colors.primary }]} onPress={ouvrirCreation}>
         <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#fff" />
         <Text style={styles.btnCreerText}>Nouvelle facture pro forma</Text>
       </TouchableOpacity>
@@ -228,32 +311,38 @@ export default function FacturesScreen() {
         keyExtractor={f => String(f.id)}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
         contentContainerStyle={{ padding: 12, paddingBottom: 30 }}
-        ListEmptyComponent={<Text style={styles.empty}>{tr('aucune_facture', lang)}</Text>}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <MaterialCommunityIcons name="file-document-outline" size={64} color={colors.border} />
+            <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{tr('aucune_facture', lang)}</Text>
+            <Text style={[styles.emptySub, { color: colors.placeholder }]}>Les factures pro forma créées apparaîtront ici</Text>
+          </View>
+        }
         renderItem={({ item }) => (
-          <TouchableOpacity style={styles.card} onPress={() => ouvrirDetail(item)} activeOpacity={0.8}>
+          <TouchableOpacity style={[styles.card, { backgroundColor: colors.card }]} onPress={() => ouvrirDetail(item)} activeOpacity={0.8}>
             <View style={styles.cardTop}>
-              <Text style={styles.factNum}>{item.numeroFacture}</Text>
-              <Text style={styles.factMontant}>{money(item.montantTotal)}</Text>
+              <Text style={[styles.factNum, { color: colors.text }]}>{item.numeroFacture}</Text>
+              <Text style={[styles.factMontant, { color: colors.primary }]}>{money(item.montantTotal)}</Text>
             </View>
             <View style={styles.cardMid}>
-              <Text style={styles.factClient}>
+              <Text style={[styles.factClient, { color: colors.textSecondary }]}>
                 <MaterialCommunityIcons name="account-outline" size={12} /> {item.clientNom || 'Client divers'}
               </Text>
-              <Text style={styles.factDate}>{fdate(item.dateCreation)}</Text>
+              <Text style={[styles.factDate, { color: colors.placeholder }]}>{fdate(item.dateCreation)}</Text>
             </View>
             <View style={styles.cardActions}>
-              <View style={[styles.statutBadge, { backgroundColor: (STATUT_COLOR[item.statut as Statut] || '#94a3b8') + '22' }]}>
-                <Text style={[styles.statutBadgeText, { color: STATUT_COLOR[item.statut as Statut] || '#94a3b8' }]}>
+              <View style={[styles.statutBadge, { backgroundColor: (STATUT_COLOR[item.statut as Statut] || colors.textSecondary) + '22' }]}>
+                <Text style={[styles.statutBadgeText, { color: STATUT_COLOR[item.statut as Statut] || colors.textSecondary }]}>
                   {STATUT_LABEL[item.statut as Statut] || item.statut}
                 </Text>
               </View>
-              <TouchableOpacity style={styles.actBtn} onPress={() => voirPdf(item)}>
-                <MaterialCommunityIcons name="eye-outline" size={16} color="#1a56db" />
+              <TouchableOpacity style={[styles.actBtn, { backgroundColor: colors.inputBg }]} onPress={() => voirPdf(item)}>
+                <MaterialCommunityIcons name="eye-outline" size={16} color={colors.primary} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.actBtn} onPress={() => ouvrirQr(item)}>
+              <TouchableOpacity style={[styles.actBtn, { backgroundColor: colors.inputBg }]} onPress={() => ouvrirQr(item)}>
                 <MaterialCommunityIcons name="qrcode" size={16} color="#7c3aed" />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actBtn, styles.actBtnPdf]} onPress={() => telechargerPdf(item)}>
+              <TouchableOpacity style={[styles.actBtn, styles.actBtnPdf, { backgroundColor: colors.primary }]} onPress={() => telechargerPdf(item)}>
                 <MaterialCommunityIcons name="file-pdf-box" size={14} color="#fff" />
                 <Text style={styles.actBtnPdfText}>PDF</Text>
               </TouchableOpacity>
@@ -264,62 +353,74 @@ export default function FacturesScreen() {
 
       {/* ── Modal détail + actions admin ─────────────────────────────────────── */}
       <Modal visible={showDetail} animationType="slide" transparent onRequestClose={() => setShowDetail(false)}>
-        <View style={styles.overlay}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
+        <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.sheet, { backgroundColor: colors.card }]}>
+            <View style={[styles.handle, { backgroundColor: colors.border }]} />
             {selected && (
               <>
-                <View style={styles.detailHeader}>
+                <View style={[styles.detailHeader, { borderBottomColor: colors.border }]}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.detailNom}>{selected.numeroFacture}</Text>
-                    <Text style={styles.detailSub}>{selected.clientNom || 'Client divers'} · {fdate(selected.dateCreation)}</Text>
+                    <Text style={[styles.detailNom, { color: colors.text }]}>{selected.numeroFacture}</Text>
+                    <Text style={[styles.detailSub, { color: colors.textSecondary }]}>{selected.clientNom || 'Client divers'} · {fdate(selected.dateCreation)}</Text>
                   </View>
                   <TouchableOpacity onPress={() => setShowDetail(false)} style={styles.closeBtn}>
-                    <Text style={styles.closeBtnText}>✕</Text>
+                    <Text style={[styles.closeBtnText, { color: colors.textSecondary }]}>✕</Text>
                   </TouchableOpacity>
                 </View>
                 <ScrollView style={{ padding: 16 }}>
-                  <View style={[styles.statutBadge, { alignSelf: 'flex-start', backgroundColor: (STATUT_COLOR[selected.statut as Statut] || '#94a3b8') + '22', marginBottom: 12 }]}>
-                    <Text style={[styles.statutBadgeText, { color: STATUT_COLOR[selected.statut as Statut] || '#94a3b8' }]}>
+                  <View style={[styles.statutBadge, { alignSelf: 'flex-start', backgroundColor: (STATUT_COLOR[selected.statut as Statut] || colors.textSecondary) + '22', marginBottom: 12 }]}>
+                    <Text style={[styles.statutBadgeText, { color: STATUT_COLOR[selected.statut as Statut] || colors.textSecondary }]}>
                       {STATUT_LABEL[selected.statut as Statut] || selected.statut}
                     </Text>
                   </View>
                   {(selected.lignes || []).map((l: any, i: number) => (
-                    <View key={i} style={styles.detailLigne}>
-                      <Text style={{ flex: 1, fontSize: 13 }}>{l.designation || l.produitNom}</Text>
-                      <Text style={{ fontSize: 12, color: '#64748b', marginRight: 8 }}>×{l.quantite}</Text>
-                      <Text style={{ fontWeight: '700', fontSize: 13 }}>{money(l.sousTotal || l.quantite * l.prixUnitaire)}</Text>
+                    <View key={i} style={[styles.detailLigne, { borderBottomColor: colors.border }]}>
+                      <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>{l.designation || l.produitNom}</Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, marginRight: 8 }}>×{l.quantite}</Text>
+                      <Text style={{ fontWeight: '700', fontSize: 13, color: colors.text }}>{money(l.sousTotal || l.quantite * l.prixUnitaire)}</Text>
                     </View>
                   ))}
-                  <View style={[styles.detailLigne, { borderTopWidth: 2, borderTopColor: '#1a56db', marginTop: 6, paddingTop: 10 }]}>
-                    <Text style={{ flex: 1, fontWeight: 'bold' }}>Total</Text>
-                    <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{money(selected.montantTotal)}</Text>
+                  <View style={[styles.detailLigne, { borderTopWidth: 2, borderTopColor: colors.primary, borderBottomWidth: 0, marginTop: 6, paddingTop: 10 }]}>
+                    <Text style={{ flex: 1, fontWeight: 'bold', color: colors.text }}>Total</Text>
+                    <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>{money(selected.montantTotal)}</Text>
                   </View>
 
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
-                    <TouchableOpacity style={styles.btnPdfLarge} onPress={() => telechargerPdf(selected)}>
-                      <MaterialCommunityIcons name="download-outline" size={16} color="#1a56db" />
-                      <Text style={styles.btnPdfLargeText}>PDF</Text>
+                    <TouchableOpacity style={[styles.btnPdfLarge, { borderColor: colors.primary }]} onPress={() => telechargerPdf(selected)}>
+                      <MaterialCommunityIcons name="download-outline" size={16} color={colors.primary} />
+                      <Text style={[styles.btnPdfLargeText, { color: colors.primary }]}>PDF</Text>
                     </TouchableOpacity>
                   </View>
 
                   {isAdmin && (
                     <View style={{ marginTop: 16, gap: 8 }}>
                       {selected.statut === 'BROUILLON' && (
-                        <TouchableOpacity style={[styles.adminBtn, { backgroundColor: '#1a56db' }]} disabled={changingStatut} onPress={() => changerStatut('VALIDE')}>
+                        <TouchableOpacity style={[styles.adminBtn, { backgroundColor: colors.primary }]} disabled={changingStatut} onPress={() => changerStatut('VALIDE')}>
                           <Text style={styles.adminBtnText}>✓ Valider</Text>
                         </TouchableOpacity>
                       )}
                       {selected.statut === 'VALIDE' && (
-                        <TouchableOpacity style={[styles.adminBtn, { backgroundColor: '#16a34a' }]} disabled={changingStatut} onPress={() => changerStatut('PAYEE')}>
+                        <TouchableOpacity style={[styles.adminBtn, { backgroundColor: colors.success }]} disabled={changingStatut} onPress={() => changerStatut('PAYEE')}>
                           <Text style={styles.adminBtnText}>✓ Marquer payée</Text>
                         </TouchableOpacity>
                       )}
                       {selected.statut !== 'ANNULEE' && selected.statut !== 'PAYEE' && (
-                        <TouchableOpacity style={[styles.adminBtn, { backgroundColor: '#dc2626' }]} disabled={changingStatut} onPress={() => changerStatut('ANNULEE')}>
-                          <Text style={styles.adminBtnText}>✕ Annuler</Text>
+                        <TouchableOpacity style={[styles.adminBtn, { backgroundColor: colors.danger }]} disabled={changingStatut} onPress={() => changerStatut('ANNULEE')}>
+                          <Text style={styles.adminBtnText}>✕ Annuler la facture</Text>
                         </TouchableOpacity>
                       )}
+                      {/* Modifier/Supprimer — parité avec resources.page.ts:edit()/action('delete-facture')
+                          (seule interface Ionic à proposer ces deux actions sur une facture). */}
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity style={[styles.adminBtn, { flex: 1, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent' }]} onPress={() => ouvrirEdition(selected)}>
+                          <MaterialCommunityIcons name="pencil-outline" size={16} color={colors.text} />
+                          <Text style={[styles.adminBtnText, { color: colors.text }]}>Modifier</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.adminBtn, { flex: 1, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.danger, backgroundColor: 'transparent' }]} disabled={deleting} onPress={() => supprimerFactureAction(selected)}>
+                          <MaterialCommunityIcons name="trash-can-outline" size={16} color={colors.danger} />
+                          <Text style={[styles.adminBtnText, { color: colors.danger }]}>Supprimer</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   )}
                 </ScrollView>
@@ -331,25 +432,25 @@ export default function FacturesScreen() {
 
       {/* ── Modal QR ──────────────────────────────────────────────────────────── */}
       <Modal visible={showQr} animationType="slide" transparent onRequestClose={() => setShowQr(false)}>
-        <View style={styles.overlay}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-            <View style={styles.detailHeader}>
+        <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.sheet, { backgroundColor: colors.card }]}>
+            <View style={[styles.handle, { backgroundColor: colors.border }]} />
+            <View style={[styles.detailHeader, { borderBottomColor: colors.border }]}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.detailNom}>QR · {selected?.numeroFacture}</Text>
+                <Text style={[styles.detailNom, { color: colors.text }]}>QR · {selected?.numeroFacture}</Text>
               </View>
               <TouchableOpacity onPress={() => setShowQr(false)} style={styles.closeBtn}>
-                <Text style={styles.closeBtnText}>✕</Text>
+                <Text style={[styles.closeBtnText, { color: colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
             </View>
             <View style={{ padding: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#64748b', fontSize: 12, textAlign: 'center', marginBottom: 16 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginBottom: 16 }}>
                 Scanner pour obtenir la facture PDF
               </Text>
               {selected?.id ? (
                 <Image
                   source={{ uri: `${getBackendRootUrl()}/api/caisse/factures/${selected.id}/qrcode` }}
-                  style={{ width: 200, height: 200, borderRadius: 12, borderWidth: 2, borderColor: '#e2e8f0' }}
+                  style={[styles.qrImage, { borderColor: colors.border }]}
                   resizeMode="contain"
                 />
               ) : null}
@@ -361,100 +462,118 @@ export default function FacturesScreen() {
       {/* ── Modal création pro forma ──────────────────────────────────────────── */}
       <Modal visible={showCreate} animationType="slide" transparent onRequestClose={() => setShowCreate(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <View style={styles.overlay}>
-            <View style={styles.sheet}>
-              <View style={styles.handle} />
-              <View style={styles.detailHeader}>
+          <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+            <View style={[styles.sheet, { backgroundColor: colors.card }]}>
+              <View style={[styles.handle, { backgroundColor: colors.border }]} />
+              <View style={[styles.detailHeader, { borderBottomColor: colors.border }]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.detailNom}>Nouvelle facture pro forma</Text>
+                  <Text style={[styles.detailNom, { color: colors.text }]}>{editingId ? 'Modifier la facture' : 'Nouvelle facture pro forma'}</Text>
                 </View>
                 <TouchableOpacity onPress={() => setShowCreate(false)} style={styles.closeBtn}>
-                  <Text style={styles.closeBtnText}>✕</Text>
+                  <Text style={[styles.closeBtnText, { color: colors.textSecondary }]}>✕</Text>
                 </TouchableOpacity>
               </View>
               <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 20 }}>
-                <Text style={styles.pfSectionTitle}>Client (optionnel)</Text>
-                <RNTextInput style={styles.pfInput} value={clientNom} onChangeText={setClientNom} placeholder="Nom du client..." />
-                <RNTextInput style={styles.pfInput} value={clientTelephone} onChangeText={setClientTelephone} placeholder="Téléphone..." keyboardType="phone-pad" />
+                <Text style={[styles.pfSectionTitle, { color: colors.textSecondary }]}>Client (optionnel)</Text>
+                <RNTextInput style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]} value={clientNom} onChangeText={setClientNom} placeholder="Nom du client..." placeholderTextColor={colors.placeholder} />
+                <RNTextInput style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]} value={clientTelephone} onChangeText={setClientTelephone} placeholder="Téléphone..." placeholderTextColor={colors.placeholder} keyboardType="phone-pad" />
 
-                <Text style={styles.pfSectionTitle}>Articles</Text>
+                <Text style={[styles.pfSectionTitle, { color: colors.textSecondary }]}>Articles</Text>
                 <RNTextInput
-                  style={styles.pfInput}
+                  style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
                   value={produitSearch}
                   onChangeText={t => { setProduitSearch(t); setShowProduitSearch(true); }}
                   onFocus={() => setShowProduitSearch(true)}
                   placeholder="Chercher un produit du catalogue..."
+                  placeholderTextColor={colors.placeholder}
                 />
                 {showProduitSearch && produitsFiltres.length > 0 && (
-                  <View style={styles.pfCatalogList}>
+                  <View style={[styles.pfCatalogList, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                     {produitsFiltres.map(p => (
-                      <TouchableOpacity key={p.id} style={styles.pfCatalogItem} onPress={() => selectProduit(p)}>
-                        <Text style={{ fontSize: 13 }}>{p.nom}</Text>
-                        <Text style={{ fontSize: 12, color: '#1a56db', fontWeight: '600' }}>{money(p.prixVente)}</Text>
+                      <TouchableOpacity key={p.id} style={[styles.pfCatalogItem, { borderBottomColor: colors.border }]} onPress={() => selectProduit(p)}>
+                        <Text style={{ fontSize: 13, color: colors.text }}>{p.nom}</Text>
+                        <Text style={{ fontSize: 12, color: colors.primary, fontWeight: '600' }}>{money(p.prixVente)}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 )}
 
                 <RNTextInput
-                  style={styles.pfInput}
+                  style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
                   value={newLigne.designation}
                   onChangeText={t => setNewLigne(l => ({ ...l, designation: t }))}
                   placeholder="Désignation (modifiable) *"
+                  placeholderTextColor={colors.placeholder}
                 />
                 <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-end' }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.pfLabel}>Qté</Text>
-                    <RNTextInput style={styles.pfInput} value={newLigne.quantite} onChangeText={t => setNewLigne(l => ({ ...l, quantite: t }))} keyboardType="numeric" />
+                    <Text style={[styles.pfLabel, { color: colors.textSecondary }]}>Qté</Text>
+                    <RNTextInput style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]} value={newLigne.quantite} onChangeText={t => setNewLigne(l => ({ ...l, quantite: t }))} keyboardType="numeric" />
                   </View>
                   <View style={{ flex: 2 }}>
-                    <Text style={styles.pfLabel}>Prix unitaire (FCFA)</Text>
-                    <MontantInput style={styles.pfInput} value={newLigne.prixUnitaire} onChangeValue={v => setNewLigne(l => ({ ...l, prixUnitaire: v }))} />
+                    <Text style={[styles.pfLabel, { color: colors.textSecondary }]}>Prix unitaire (FCFA)</Text>
+                    <MontantInput style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]} value={newLigne.prixUnitaire} onChangeValue={v => setNewLigne(l => ({ ...l, prixUnitaire: v }))} />
                   </View>
-                  <TouchableOpacity style={styles.pfAddBtn} onPress={addLigne}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pfLabel, { color: colors.textSecondary }]}>Remise %</Text>
+                    <RNTextInput
+                      style={[styles.pfInput, { borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
+                      value={newLigne.remisePourcentage ? String(newLigne.remisePourcentage) : ''}
+                      onChangeText={t => setNewLigne(l => ({ ...l, remisePourcentage: parseFloat(t) || 0 }))}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      placeholderTextColor={colors.placeholder}
+                    />
+                  </View>
+                  <TouchableOpacity style={[styles.pfAddBtn, { backgroundColor: colors.primary }]} onPress={addLigne}>
                     <MaterialCommunityIcons name="plus" size={20} color="#fff" />
                   </TouchableOpacity>
                 </View>
 
                 {lignes.length === 0 ? (
-                  <Text style={styles.pfEmpty}>Aucun article ajouté</Text>
+                  <Text style={[styles.pfEmpty, { color: colors.placeholder }]}>Aucun article ajouté</Text>
                 ) : (
                   lignes.map((l, i) => (
-                    <View key={i} style={styles.pfLigne}>
-                      <Text style={{ flex: 1, fontSize: 13 }} numberOfLines={1}>{l.designation}</Text>
-                      <Text style={{ fontSize: 12, color: '#64748b' }}>×{l.quantite}</Text>
-                      <Text style={{ fontWeight: '700', fontSize: 13, marginLeft: 8 }}>
-                        {money((parseFloat(l.quantite) || 0) * (l.prixUnitaire || 0))}
+                    <View key={i} style={[styles.pfLigne, { borderBottomColor: colors.border }]}>
+                      <Text style={{ flex: 1, fontSize: 13, color: colors.text }} numberOfLines={1}>
+                        {l.designation}{l.remisePourcentage ? ` (-${l.remisePourcentage}%)` : ''}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>×{l.quantite}</Text>
+                      <Text style={{ fontWeight: '700', fontSize: 13, marginLeft: 8, color: colors.text }}>
+                        {money(ligneTotal(l))}
                       </Text>
                       <TouchableOpacity onPress={() => removeLigne(i)} style={{ marginLeft: 8 }}>
-                        <MaterialCommunityIcons name="trash-can-outline" size={16} color="#dc2626" />
+                        <MaterialCommunityIcons name="trash-can-outline" size={16} color={colors.danger} />
                       </TouchableOpacity>
                     </View>
                   ))
                 )}
                 {lignes.length > 0 && (
-                  <View style={styles.pfTotal}>
-                    <Text style={{ fontWeight: 'bold' }}>Total</Text>
-                    <Text style={{ fontWeight: 'bold', color: '#1a56db', fontSize: 15 }}>{money(proformaTotal)}</Text>
+                  <View style={[styles.pfTotal, { borderTopColor: colors.primary }]}>
+                    <Text style={{ fontWeight: 'bold', color: colors.text }}>Total</Text>
+                    <Text style={{ fontWeight: 'bold', color: colors.primary, fontSize: 15 }}>{money(proformaTotal)}</Text>
                   </View>
                 )}
 
-                <Text style={styles.pfSectionTitle}>Notes</Text>
+                <Text style={[styles.pfSectionTitle, { color: colors.textSecondary }]}>Notes</Text>
                 <RNTextInput
-                  style={[styles.pfInput, { height: 70, textAlignVertical: 'top' }]}
+                  style={[styles.pfInput, { height: 70, textAlignVertical: 'top', borderColor: colors.border, backgroundColor: colors.card, color: colors.text }]}
                   value={notes}
                   onChangeText={setNotes}
                   placeholder="Informations complémentaires..."
+                  placeholderTextColor={colors.placeholder}
                   multiline
                 />
 
                 <TouchableOpacity
-                  style={[styles.pfSubmit, (creating || !lignes.length) && { opacity: 0.5 }]}
+                  style={[styles.pfSubmit, { backgroundColor: colors.primary }, (creating || !lignes.length) && { opacity: 0.5 }]}
                   disabled={creating || !lignes.length}
                   onPress={submitProforma}
                 >
                   {creating ? <ActivityIndicator size="small" color="#fff" /> : <MaterialCommunityIcons name="check" size={18} color="#fff" />}
-                  <Text style={styles.pfSubmitText}>{creating ? 'Création...' : 'Créer la facture'}</Text>
+                  <Text style={styles.pfSubmitText}>
+                    {creating ? (editingId ? 'Modification...' : 'Création...') : (editingId ? 'Enregistrer les modifications' : 'Créer la facture')}
+                  </Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>
@@ -499,7 +618,11 @@ const styles = StyleSheet.create({
   actBtnPdf: { flexDirection: 'row', gap: 3, width: 'auto', paddingHorizontal: 10, backgroundColor: '#1a56db' },
   actBtnPdfText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
-  empty: { textAlign: 'center', marginTop: 40, color: '#94a3b8' },
+  empty: { alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyTitle: { fontSize: 15, fontWeight: '600', marginTop: 12 },
+  emptySub: { fontSize: 12, textAlign: 'center', marginTop: 4 },
+
+  qrImage: { width: 200, height: 200, borderRadius: 12, borderWidth: 2 },
 
   // Sheets
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, Linking, Text, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '../theme/colors';
 import { getNotifications } from '../services/api.service';
@@ -33,6 +34,38 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
   const insets = useSafeAreaInsets();
   const colors = useColors();
   const [notifCount, setNotifCount] = useState(0);
+  // Fonctionnalité désactivable par le super admin (Boutique > Paramètres) —
+  // masque la section ; le vrai blocage est fait côté serveur. Lu depuis le
+  // cache local (mis à jour par BoutiqueSettingsScreen/getBoutique) plutôt que
+  // par un appel réseau dédié, pour rester rapide à l'ouverture du tiroir.
+  const [featureTransfertsActif, setFeatureTransfertsActif] = useState(true);
+
+  // Fonctionnalités avancées (système séparé) — clés désactivées, mises en cache au
+  // login (voir LoginScreen.tsx) pour rester rapide à l'ouverture du tiroir.
+  const [fonctionnalitesDesactivees, setFonctionnalitesDesactivees] = useState<Set<string>>(new Set());
+
+  // Permissions vendeur (système générique, séparé des fonctionnalités avancées
+  // ci-dessus) — clés ACTIVES accordées par un admin normal au vendeur (ex:
+  // INVENTAIRE_LECTURE), mises en cache au login (voir LoginScreen.tsx).
+  const [permissionsVendeurActives, setPermissionsVendeurActives] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    AsyncStorage.getItem('boutique_info').then(raw => {
+      if (!raw) return;
+      try {
+        const info = JSON.parse(raw);
+        setFeatureTransfertsActif(info.featureTransfertsActif !== false);
+      } catch { /* ignore */ }
+    });
+    AsyncStorage.getItem('fonctionnalites_avancees_desactivees').then(raw => {
+      if (!raw) return;
+      try { setFonctionnalitesDesactivees(new Set(JSON.parse(raw))); } catch { /* ignore */ }
+    });
+    AsyncStorage.getItem('permissions_vendeur_actives').then(raw => {
+      if (!raw) return;
+      try { setPermissionsVendeurActives(new Set(JSON.parse(raw))); } catch { /* ignore */ }
+    });
+  }, []);
 
   // Compte des notifications non lues, comme la cloche du menu Ionic (notifService.count$).
   const chargerNotifCount = () => {
@@ -41,7 +74,10 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
       .then(res => {
         const data = res.data?.data || res.data;
         const liste = Array.isArray(data) ? data : [];
-        setNotifCount(liste.filter((n: any) => !n.lue).length);
+        // BUG FIX (parité Ionic) : le backend renvoie le champ booléen "lu"
+        // (entité Notification.java), pas "lue" — le filtre ne matchait
+        // jamais et le badge comptait toujours TOUTES les notifications.
+        setNotifCount(liste.filter((n: any) => !n.lu).length);
       })
       .catch(() => {});
   };
@@ -73,14 +109,20 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
     { icon: 'cart-outline', label: 'Nouvelle vente', navigate: go('Vente') },
     { icon: 'people-outline', label: 'Clients', navigate: go('Clients') },
     { icon: 'time-outline', label: 'Crédits', navigate: go('Credits') },
-    { icon: 'clipboard-outline', label: 'Inventaire', navigate: goTab('Inventaire') },
+    // Inventaire : visible pour l'admin, ou pour le vendeur si un admin lui a
+    // accordé la permission INVENTAIRE_LECTURE (accès lecture seule côté serveur).
+    ...((isAdmin || permissionsVendeurActives.has('INVENTAIRE_LECTURE')) ? [{ icon: 'clipboard-outline' as const, label: 'Inventaire', navigate: goTab('Inventaire') }] : []),
     ...(isAdmin ? [{ icon: 'arrow-down-circle-outline' as const, label: 'Sorties Stock', navigate: go('Sorties') }] : []),
   ];
 
+  // Fonctionnalités avancées (système séparé) — masque les entrées désactivées par le
+  // super admin ; le vrai blocage est fait côté serveur (voir @RequireFeature).
+  const actif = (cle: string) => !fonctionnalitesDesactivees.has(cle);
+
   const financeItems: MenuItem[] = [
     { icon: 'document-text-outline', label: 'Factures', navigate: go('Factures') },
-    { icon: 'card-outline', label: 'Comptes bancaires', navigate: go('Comptes') },
-    { icon: 'alert-circle-outline', label: 'Dettes', navigate: go('DettesAnciennes') },
+    ...(actif('COMPTES_BANCAIRES') ? [{ icon: 'card-outline' as const, label: 'Comptes bancaires', navigate: go('Comptes') }] : []),
+    ...(actif('DETTES_ANCIENNES') ? [{ icon: 'alert-circle-outline' as const, label: 'Dettes', navigate: go('DettesAnciennes') }] : []),
   ];
 
   const rhItems: MenuItem[] = [
@@ -88,16 +130,21 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
     { icon: 'wallet-outline', label: 'Paiements employé', navigate: go('PaiementsEmploye') },
   ];
 
+  // Flag superAdmin sur le compte (pas un rôle séparé — voir Utilisateur.java côté
+  // backend) : le serveur revérifie systématiquement le privilège sur
+  // PUT /api/boutique/fonctionnalites, ceci ne contrôle que l'affichage du lien.
+  const isSuperAdmin = isAdmin && user?.superAdmin === true;
+
   const boutiqueItems: MenuItem[] = [
     { icon: 'business-outline', label: 'Fournisseurs', navigate: go('Fournisseurs') },
-    { icon: 'lock-closed-outline', label: 'Coffre / Dépôts garde', navigate: go('Depots') },
-    { icon: 'trophy-outline', label: 'Objectifs fournisseurs', navigate: go('ObjectifsFournisseur') },
-    { icon: 'cash-outline', label: 'Primes vendeurs', navigate: go('ObjectifsVendeur') },
+    ...(actif('DEPOT_GARDE') ? [{ icon: 'lock-closed-outline' as const, label: 'Coffre / Dépôts garde', navigate: go('Depots') }] : []),
+    ...(actif('OBJECTIFS_FOURNISSEUR') ? [{ icon: 'trophy-outline' as const, label: 'Objectifs fournisseurs', navigate: go('ObjectifsFournisseur') }] : []),
+    ...(actif('OBJECTIFS_VENDEUR') ? [{ icon: 'cash-outline' as const, label: 'Primes vendeurs', navigate: go('ObjectifsVendeur') }] : []),
     { icon: 'people-circle-outline', label: 'Vendeurs', navigate: go('Vendeurs') },
-    { icon: 'bar-chart-outline', label: 'Historique vendeur', navigate: go('HistoriqueVendeur') },
     { icon: 'storefront-outline', label: 'Boutique', navigate: go('BoutiqueSettings') },
     { icon: 'color-palette-outline', label: 'Modèle de facture', navigate: go('FactureDesign') },
     { icon: 'language-outline', label: 'Langue', navigate: go('Langue') },
+    ...(isSuperAdmin ? [{ icon: 'shield-checkmark-outline' as const, label: 'Fonctionnalités (super admin)', navigate: go('SuperAdminFonctionnalites') }] : []),
   ];
 
   const transfertItems: MenuItem[] = [
@@ -106,13 +153,18 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
   ];
 
   const analyseItems: MenuItem[] = [
-    { icon: 'stats-chart-outline', label: 'Rapports', navigate: goTab('Rapports') },
-    { icon: 'sparkles-outline', label: 'IA Boutique', navigate: go('IA') },
+    ...(actif('RAPPORTS') ? [{ icon: 'stats-chart-outline' as const, label: 'Rapports', navigate: goTab('Rapports') }] : []),
+    ...(actif('IA') ? [{ icon: 'sparkles-outline' as const, label: 'IA Boutique', navigate: go('IA') }] : []),
+    // Assistant IA (chat) : écran déjà construit mais resté orphelin après le
+    // remplacement de l'ancien MenuScreen par ce tiroir — aucun lien n'y menait
+    // plus nulle part. Même clé de fonctionnalité que "IA Boutique" ci-dessus.
+    ...(actif('IA') ? [{ icon: 'chatbubble-ellipses-outline' as const, label: 'Assistant IA (chat)', navigate: go('AssistantIA') }] : []),
     { icon: 'trending-up-outline', label: 'Bénéfices', navigate: go('Benefices') },
-    { icon: 'gift-outline', label: 'Bonus fournisseurs', navigate: go('BonusFournisseurs') },
+    ...(actif('BONUS_FOURNISSEURS') ? [{ icon: 'gift-outline' as const, label: 'Bonus fournisseurs', navigate: go('BonusFournisseurs') }] : []),
     { icon: 'trending-down-outline', label: 'Dépenses', navigate: go('Depenses') },
-    { icon: 'pricetag-outline', label: 'Promotions', navigate: go('Promotions') },
-    { icon: 'analytics-outline', label: 'Résultat net', navigate: go('ResultatNet') },
+    ...(actif('PROMOTIONS') ? [{ icon: 'pricetag-outline' as const, label: 'Promotions', navigate: go('Promotions') }] : []),
+    ...(actif('RESULTAT_NET') ? [{ icon: 'analytics-outline' as const, label: 'Résultat net', navigate: go('ResultatNet') }] : []),
+    { icon: 'bar-chart-outline', label: 'Historique vendeur', navigate: go('HistoriqueVendeur') },
     { icon: 'close-circle-outline', label: 'Annulation paiements', navigate: go('AnnulationPaiements'), danger: true },
     { icon: 'settings-outline', label: 'Paramètres', navigate: go('Parametres') },
     { icon: 'download-outline', label: 'Export de données', navigate: go('ExportDonnees') },
@@ -184,8 +236,12 @@ export default function DrawerContent({ navigation, isAdmin, user, boutiqueNom, 
             {renderSection('RESSOURCES HUMAINES', rhItems)}
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             {renderSection('PARAMÈTRES BOUTIQUE', boutiqueItems)}
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-            {renderSection('TRANSFERTS', transfertItems)}
+            {featureTransfertsActif && (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                {renderSection('TRANSFERTS', transfertItems)}
+              </>
+            )}
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             {renderSection('ANALYSES', analyseItems)}
           </>

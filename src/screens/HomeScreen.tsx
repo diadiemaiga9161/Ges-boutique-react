@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   ScrollView,
@@ -6,18 +6,20 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  Text,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Text, Card, Divider } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
 import { SkeletonCard } from '../components/SkeletonLoader';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api, { getVentes, getVentesParPeriode, getProduits, getSituationCredits, getCreditsEnRetard } from '../services/api.service';
+import api, { getVentes, getProduits, getSituationCredits, getCreditsEnRetard } from '../services/api.service';
 import { getNombreOperationsPending, getNombreOperationsBloquees, getOperationsBloquees } from '../services/offline.service';
 import { formaterDate, totalVentes } from '../services/rapport.helpers';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
+import { GL, kpiTile, quickTile, sectionLabel, mobileCard } from '../theme/styles';
 
 export default function HomeScreen() {
   const { lang } = useLang();
@@ -163,7 +165,7 @@ export default function HomeScreen() {
 
   return (
     <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
+      style={[styles.container, { backgroundColor: GL.bg }]}
       contentContainerStyle={{ paddingBottom: 32 }}
       refreshControl={
         <RefreshControl
@@ -172,44 +174,53 @@ export default function HomeScreen() {
         />
       }
     >
-      {/* ── Hero — comme home.page.html : avatar boutique + rôle, salutation,
-          date, CA DU JOUR (pas de sélecteur de période sur Ionic) ─────────── */}
-      <View style={[styles.hero, { backgroundColor: colors.hero }]}>
+      <View style={styles.hero}>
+        <View style={styles.heroDeco1} />
+        <View style={styles.heroDeco2} />
+
         <View style={styles.heroTop}>
           <View style={styles.heroAvatar}>
-            <MaterialCommunityIcons name="storefront-outline" size={20} color="#fff" />
+            <Ionicons name="storefront-outline" size={22} color="#fff" />
           </View>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.heroStore}>{boutique.nom || 'Boutique'}</Text>
             <Text style={styles.heroRole}>{roleAffiche}</Text>
           </View>
         </View>
 
-        <Text style={styles.heroName}>{nomAffiche}</Text>
-        <Text style={styles.heroDate}>{dateAujourdhui}</Text>
+        <View style={styles.heroGreeting}>
+          <Text style={styles.heroName}>{nomAffiche}</Text>
+          <Text style={styles.heroDate}>{dateAujourdhui}</Text>
+        </View>
 
         {!isVendeur && (
           <View style={styles.heroCaBox}>
-            <Text style={styles.heroCaLabel}>CA du jour</Text>
+            <Text style={styles.heroCaLabel}>CA DU JOUR</Text>
             <Text style={styles.heroCaVal}>{money(caJour)}</Text>
             <View style={styles.heroCaSub}>
-              <MaterialCommunityIcons name="receipt-outline" size={13} color="rgba(255,255,255,0.75)" />
+              <Ionicons name="receipt-outline" size={13} color="rgba(255,255,255,0.65)" />
               <Text style={styles.heroCaSubTxt}>{nbVentesJour} vente{nbVentesJour > 1 ? 's' : ''} aujourd'hui</Text>
             </View>
           </View>
         )}
       </View>
 
-      {/* Bandeau sync */}
+      {fromCache && (
+        <View style={[styles.syncBanner, { backgroundColor: colors.warningBg }]}>
+          <Ionicons name="cloud-offline-outline" size={14} color={colors.warning} />
+          <Text style={[styles.syncTxt, { color: colors.warning }]}>Hors ligne — chiffres de la dernière synchronisation</Text>
+        </View>
+      )}
+
       {pendingCount > 0 && (
-        <View style={styles.syncBanner}>
-          <MaterialCommunityIcons name="cloud-sync" size={14} color="#1e40af" />
-          <Text style={styles.syncTxt}>{pendingCount} opération{pendingCount > 1 ? 's' : ''} en attente de synchronisation</Text>
+        <View style={[styles.syncBanner, { backgroundColor: colors.infoBg }]}>
+          <Ionicons name="cloud-upload-outline" size={14} color={colors.info} />
+          <Text style={[styles.syncTxt, { color: colors.info }]}>{pendingCount} opération{pendingCount > 1 ? 's' : ''} en attente de synchronisation</Text>
         </View>
       )}
       {blockedCount > 0 && (
         <TouchableOpacity style={styles.blockedBanner} onPress={voirOperationsBloquees}>
-          <MaterialCommunityIcons name="alert-circle" size={14} color="#fff" />
+          <Ionicons name="alert-circle" size={14} color="#fff" />
           <Text style={styles.blockedTxt}>
             {blockedCount} opération{blockedCount > 1 ? 's' : ''} bloquée{blockedCount > 1 ? 's' : ''} — jamais synchronisée{blockedCount > 1 ? 's' : ''}, touchez pour voir
           </Text>
@@ -217,39 +228,44 @@ export default function HomeScreen() {
       )}
 
       {loading ? (
-        <View style={{ padding: 12 }}>
+        <View style={{ padding: 16 }}>
           <SkeletonCard count={6} />
         </View>
       ) : (
-        <View style={{ padding: 12 }}>
-          {/* ── KPI — 3 tuiles comme Ionic (Ventes / Stock faible / Crédits) ── */}
+        <View style={{ padding: 16, gap: 12 }}>
+
           <View style={styles.kpiRow}>
-            <View style={[styles.kpiTile, styles.kpiBlue]}>
-              <MaterialCommunityIcons name="trending-up" size={18} color="#fff" />
-              <Text style={styles.kpiLabel}>Ventes</Text>
-              <Text style={styles.kpiVal}>{totalVentesCount}</Text>
+            <View style={[kpiTile.base, kpiTile.blue]}>
+              <View style={[kpiTile.iconWrap, kpiTile.iconWrapBlue]}>
+                <Ionicons name="trending-up-outline" size={16} color={GL.blue600} />
+              </View>
+              <Text style={kpiTile.label}>Ventes</Text>
+              <Text style={kpiTile.value}>{totalVentesCount}</Text>
             </View>
-            <View style={[styles.kpiTile, styles.kpiOrange]}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#fff" />
-              <Text style={styles.kpiLabel}>Stock faible</Text>
-              <Text style={styles.kpiVal}>{produitsStockFaible}</Text>
+            <View style={[kpiTile.base, kpiTile.orange]}>
+              <View style={[kpiTile.iconWrap, kpiTile.iconWrapOrange]}>
+                <Ionicons name="alert-circle-outline" size={16} color={GL.orange600} />
+              </View>
+              <Text style={kpiTile.label}>Stock faible</Text>
+              <Text style={kpiTile.value}>{produitsStockFaible}</Text>
             </View>
             {!isVendeur && (
-              <View style={[styles.kpiTile, styles.kpiRed]}>
-                <MaterialCommunityIcons name="credit-card-outline" size={18} color="#fff" />
-                <Text style={styles.kpiLabel}>Crédits</Text>
-                <Text style={styles.kpiVal} numberOfLines={1}>{money(montantTotalCredits)}</Text>
+              <View style={[kpiTile.base, kpiTile.red]}>
+                <View style={[kpiTile.iconWrap, kpiTile.iconWrapRed]}>
+                  <Ionicons name="card-outline" size={16} color={GL.red600} />
+                </View>
+                <Text style={kpiTile.label}>Crédits</Text>
+                <Text style={[kpiTile.value, { fontSize: 12 }]} numberOfLines={1}>{money(montantTotalCredits)}</Text>
               </View>
             )}
           </View>
 
-          {/* ── Transferts en attente ── */}
           {nbTransferts > 0 && (
             <TouchableOpacity
-              style={[styles.transfertCardOuter, { backgroundColor: colors.card }]}
+              style={styles.transfertCard}
               onPress={() => navigation.navigate('Transferts')}
             >
-              <MaterialCommunityIcons name="swap-horizontal" size={22} color="#dc2626" />
+              <Ionicons name="swap-horizontal-outline" size={22} color={GL.red600} />
               <Text style={styles.transfertCardLabel}>{nbTransferts} transfert(s) en attente de confirmation</Text>
               <View style={styles.transfertBadge}>
                 <Text style={styles.transfertBadgeText}>{nbTransferts}</Text>
@@ -257,23 +273,33 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
 
-          {/* ── Alertes rupture IA ── */}
           {alertesStock.length > 0 && (
-            <View style={styles.alertesSection}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Alertes stock</Text>
+            <View>
+              <Text style={sectionLabel.text}>Alertes stock</Text>
               {alertesStock.slice(0, 3).map((a: any, i: number) => (
-                <View key={i} style={[styles.alerteCard, a.ruptureImminente && styles.alerteCardRupture]}>
+                <View
+                  key={i}
+                  style={[
+                    styles.alerteCard,
+                    { borderLeftColor: a.ruptureImminente ? GL.red600 : GL.orange500 },
+                    a.ruptureImminente ? styles.alerteCardRupture : styles.alerteCardWarn,
+                  ]}
+                >
                   <View style={styles.alerteHeader}>
-                    <View style={[styles.alerteBadge, { backgroundColor: a.ruptureImminente ? '#dc2626' : '#f59e0b' }]}>
+                    <View style={[styles.alerteBadge, { backgroundColor: a.ruptureImminente ? GL.red600 : GL.orange500 }]}>
                       <Text style={styles.alerteBadgeText}>
                         {a.ruptureImminente ? 'Rupture imminente' : 'Stock bas'}
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.alerteIANom}>{a.produitNom}</Text>
+                  <Text style={styles.alerteNom}>{a.produitNom}</Text>
+                  {a.joursAvantRupture >= 0 && (
+                    <Text style={styles.alerteDetail}>
+                      {a.joursAvantRupture === 0 ? 'En rupture actuellement' : `Rupture dans ${a.joursAvantRupture} jour(s)`}
+                    </Text>
+                  )}
                   <Text style={styles.alerteDetail}>
-                    Stock : {a.stockActuel}
-                    {a.joursAvantRupture >= 0 && ` — ${a.joursAvantRupture === 0 ? 'En rupture actuellement' : `Rupture dans ${a.joursAvantRupture} jour(s)`}`}
+                    Stock : <Text style={{ fontWeight: '700' }}>{a.stockActuel}</Text>
                     {a.quantiteReappro > 0 && ` — Commander ${a.quantiteReappro} unités`}
                   </Text>
                 </View>
@@ -281,31 +307,30 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Ventes récentes (aperçu — pas sur Ionic home, gardé car utile hors-ligne) */}
           {ventes.length > 0 && (
-            <Card style={styles.card}>
-              <Card.Content>
-                <Text variant="titleMedium" style={styles.cardTitle}>Ventes récentes</Text>
-                {ventes.map((v: any, i: number) => (
-                  <View key={v.id || i}>
-                    <View style={styles.venteRow}>
-                      <View>
-                        <Text style={[styles.venteHeure, { color: colors.textSecondary }]}>
-                          {v.date
-                            ? new Date(v.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-                            : v.heure || '—'}
-                        </Text>
-                        <Text style={[styles.venteBadge, { color: v.estCredit ? '#ff9800' : '#4caf50' }]}>
+            <View style={mobileCard.base}>
+              <Text style={styles.cardTitle}>Ventes récentes</Text>
+              {ventes.map((v: any, i: number) => (
+                <View key={v.id || i}>
+                  <View style={styles.venteRow}>
+                    <View>
+                      <Text style={styles.venteHeure}>
+                        {v.date
+                          ? new Date(v.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                          : v.heure || '—'}
+                      </Text>
+                      <View style={[styles.venteBadge, { backgroundColor: v.estCredit ? GL.orange50 : GL.green50 }]}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: v.estCredit ? GL.orange600 : GL.green600 }}>
                           {v.estCredit ? 'Crédit' : 'Comptant'}
                         </Text>
                       </View>
-                      <Text style={[styles.venteMontant, { color: colors.text }]}>{money(v.montantTotal ?? v.total)}</Text>
                     </View>
-                    {i < ventes.length - 1 && <Divider />}
+                    <Text style={styles.venteMontant}>{money(v.montantTotal)}</Text>
                   </View>
-                ))}
-              </Card.Content>
-            </Card>
+                  {i < ventes.length - 1 && <View style={styles.venteDivider} />}
+                </View>
+              ))}
+            </View>
           )}
 
           {/* ── Accès rapide — 10 raccourcis, identique à Ionic ── */}
@@ -352,11 +377,14 @@ const styles = StyleSheet.create({
   blockedTxt: { color: '#fff', fontSize: 12, fontWeight: '600', flex: 1 },
 
   // Hero
-  hero: { backgroundColor: '#081648', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 18 },
+  hero: { backgroundColor: '#081648', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 18, position: 'relative', overflow: 'hidden' },
+  heroDeco1: { position: 'absolute', width: 180, height: 180, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.05)', top: -70, right: -50 },
+  heroDeco2: { position: 'absolute', width: 110, height: 110, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.05)', top: 10, left: -40 },
   heroTop: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
   heroAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
   heroStore: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   heroRole: { color: 'rgba(255,255,255,0.65)', fontSize: 11, marginTop: 1 },
+  heroGreeting: {},
   heroName: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
   heroDate: { color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2, textTransform: 'capitalize' },
   heroCaBox: { marginTop: 16, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 14, padding: 14 },
@@ -381,8 +409,9 @@ const styles = StyleSheet.create({
   // Ventes
   venteRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
   venteHeure: { fontSize: 13, color: '#444' },
-  venteBadge: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+  venteBadge: { alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 },
   venteMontant: { fontWeight: 'bold', fontSize: 15, color: '#333' },
+  venteDivider: { height: 1, backgroundColor: '#eef2f7' },
 
   // Boutons rapides
   sectionTitle: { marginTop: 4, marginBottom: 10, fontWeight: 'bold', color: '#444', fontSize: 15 },
@@ -395,15 +424,16 @@ const styles = StyleSheet.create({
   // Alertes rupture IA
   alertesSection: { marginBottom: 12 },
   alerteCard: { backgroundColor: '#fef3c7', borderRadius: 10, padding: 12, marginBottom: 8, borderLeftWidth: 4, borderLeftColor: '#f59e0b' },
+  alerteCardWarn: {},
   alerteCardRupture: { backgroundColor: '#fee2e2', borderLeftColor: '#dc2626' },
   alerteHeader: { flexDirection: 'row', marginBottom: 4 },
   alerteBadge: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
   alerteBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
-  alerteIANom: { fontWeight: '700', fontSize: 13, color: '#1e293b' },
+  alerteNom: { fontWeight: '700', fontSize: 13, color: '#1e293b' },
   alerteDetail: { fontSize: 12, color: '#64748b', marginTop: 2 },
 
   // Transferts badge
-  transfertCardOuter: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, gap: 10, borderLeftWidth: 4, borderLeftColor: '#dc2626', elevation: 2 },
+  transfertCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, gap: 10, borderLeftWidth: 4, borderLeftColor: '#dc2626', elevation: 2 },
   transfertCardLabel: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1e293b' },
   transfertBadge: { backgroundColor: '#dc2626', borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   transfertBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },

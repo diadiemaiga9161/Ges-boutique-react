@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import { LangProvider } from './src/i18n/LangContext';
 import { ThemeProvider, useThemeMode } from './src/theme/ThemeContext';
 import { PaperProvider, MD3LightTheme, MD3DarkTheme, Portal, Snackbar } from 'react-native-paper';
@@ -20,10 +20,10 @@ import LoginScreen from './src/screens/LoginScreen';
 import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import BoutiqueSelectScreen from './src/screens/BoutiqueSelectScreen';
-import AppNavigation from './src/navigation';
+import AppNavigation, { navigationRef } from './src/navigation';
 import { initDatabase } from './src/db/database';
 import { demarrerAutoSync } from './src/services/offline.service';
-import { setOnAuthError, initApiSession, removeStoredToken, clearAuthToken } from './src/services/api.service';
+import { setOnAuthError, initApiSession, removeStoredToken, clearAuthToken, getCommandesVitrineEnAttente, getProfil } from './src/services/api.service';
 import { setToastListener, ToastPayload } from './src/services/toast.service';
 
 // react-native-screens optimise le rendu natif (iOS/Android) en gérant les
@@ -141,6 +141,42 @@ export default function App() {
     return () => { annule = true; };
   }, [user]);
 
+  // Commandes vitrine (en ligne) en attente — pas de WebSocket sur RN (contrairement à
+  // Angular/Ionic), donc on se contente d'un contrôle HTTP à la connexion + toutes les
+  // 90s tant que l'app reste ouverte. Répond au besoin exprimé : même si personne
+  // n'était connecté au moment où le client a commandé, la personne est prévenue dès
+  // qu'elle revient sur l'appli (pas besoin de vraie notification push pour ça).
+  const commandesVitrineVues = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (!user) return;
+    let annule = false;
+    const verifier = async () => {
+      try {
+        const res = await getCommandesVitrineEnAttente();
+        const liste: any[] = res.data || [];
+        if (annule) return;
+        const nouvelles = liste.filter(c => !commandesVitrineVues.current.has(c.id));
+        if (nouvelles.length > 0) {
+          nouvelles.forEach(c => commandesVitrineVues.current.add(c.id));
+          const noms = nouvelles.map(c => `• ${c.numeroCommande} — ${c.clientNom || ''} ${c.clientPrenom || ''}`).join('\n');
+          Alert.alert(
+            nouvelles.length > 1 ? `${nouvelles.length} nouvelles commandes en ligne !` : 'Nouvelle commande en ligne !',
+            `${noms}\n\n${liste.length} commande(s) en attente au total.`,
+            [
+              { text: 'Plus tard', style: 'cancel' },
+              { text: 'Voir', onPress: () => {
+                  if (navigationRef.isReady()) navigationRef.navigate('Commandes' as never);
+                } },
+            ]
+          );
+        }
+      } catch { /* silencieux */ }
+    };
+    verifier();
+    const interval = setInterval(verifier, 90000);
+    return () => { annule = true; clearInterval(interval); };
+  }, [user]);
+
   const handleLogout = useCallback(async () => {
     await AsyncStorage.removeItem('user');
     await removeStoredToken();
@@ -186,7 +222,21 @@ export default function App() {
       await initApiSession();
       const raw = await AsyncStorage.getItem('user');
       if (raw) {
-        try { setUser(JSON.parse(raw)); } catch { await AsyncStorage.removeItem('user'); }
+        try {
+          setUser(JSON.parse(raw));
+          // Rafraîchit le profil stocké localement depuis le serveur au démarrage —
+          // une session ouverte AVANT l'ajout d'un champ (ex: superAdmin) gardait
+          // sinon un objet utilisateur incomplet en cache indéfiniment, sans jamais
+          // redemander de reconnexion à l'utilisateur.
+          getProfil().then(res => {
+            const frais = res.data;
+            if (frais) {
+              const fusion = { ...JSON.parse(raw), ...frais };
+              setUser(fusion);
+              AsyncStorage.setItem('user', JSON.stringify(fusion)).catch(() => {});
+            }
+          }).catch(() => {});
+        } catch { await AsyncStorage.removeItem('user'); }
       }
       const apiUrl = await AsyncStorage.getItem('api_url');
       if (apiUrl) setBoutiqueChoisie(true);

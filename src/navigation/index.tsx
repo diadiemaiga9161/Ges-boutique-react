@@ -1,7 +1,12 @@
 import React from 'react';
 import { TouchableOpacity, Platform, View, Text, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NavigationContainer, useNavigation, DrawerActions } from '@react-navigation/native';
+import { NavigationContainer, useNavigation, DrawerActions, createNavigationContainerRef } from '@react-navigation/native';
+
+// Ref exportée pour naviguer depuis l'extérieur de l'arbre de navigation (ex: App.tsx,
+// popup "commandes vitrine en attente" affiché au login — pas de <NavigationContainer>
+// accessible depuis là autrement, il est créé ici, à l'intérieur de AppNavigation).
+export const navigationRef = createNavigationContainerRef();
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -19,7 +24,6 @@ if (Platform.OS !== 'web') enableScreens();
 import ProduitsScreen from '../screens/ProduitsScreen';
 import VenteScreen from '../screens/VenteScreen';
 import RapportsScreen from '../screens/RapportsScreen';
-import MenuScreen from '../screens/MenuScreen';
 import HistoriqueVentesScreen from '../screens/HistoriqueVentesScreen';
 import ClientsScreen from '../screens/ClientsScreen';
 import InventaireScreen from '../screens/InventaireScreen';
@@ -28,6 +32,7 @@ import NotificationsScreen from '../screens/NotificationsScreen';
 import CreditsScreen from '../screens/CreditsScreen';
 import FournisseursScreen from '../screens/FournisseursScreen';
 import BoutiqueSettingsScreen from '../screens/BoutiqueSettingsScreen';
+import SuperAdminFonctionnalitesScreen from '../screens/SuperAdminFonctionnalitesScreen';
 import CaisseScreen from '../screens/CaisseScreen';
 import BeneficesScreen from '../screens/BeneficesScreen';
 import ProfilScreen from '../screens/ProfilScreen';
@@ -40,7 +45,6 @@ import BonusFournisseursScreen from '../screens/BonusFournisseursScreen';
 import LangueScreen from '../screens/LangueScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import ResetPasswordScreen from '../screens/ResetPasswordScreen';
-import BoutiqueSelectScreen from '../screens/BoutiqueSelectScreen';
 import ConfigTransfertsScreen from '../screens/ConfigTransfertsScreen';
 import AssistantIAScreen from '../screens/AssistantIAScreen';
 import IAScreen from '../screens/IAScreen';
@@ -96,9 +100,9 @@ function TabIcon({ name, focused, color, size, dark }: { name: any; focused: boo
   return (
     <View
       style={{
-        width: 42,
-        height: 30,
-        borderRadius: 15,
+        width: 34,
+        height: 26,
+        borderRadius: 13,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: focused ? (dark ? 'rgba(59,114,246,0.22)' : '#dbeafe') : 'transparent',
@@ -114,9 +118,15 @@ function TabIcon({ name, focused, color, size, dark }: { name: any; focused: boo
 // vers une nouvelle vente). Rendu via tabBarButton pour un onglet factice
 // (voir plus bas) : tabPress est intercepté pour naviguer sur l'écran Vente
 // du Stack parent plutôt que d'activer un vrai onglet.
-function TabFabButton({ onPress }: { onPress?: (e: any) => void }) {
+function TabFabButton({ onPress, style }: { onPress?: (e: any) => void; style?: any }) {
+  // BUG FIX (espace vide à droite de la barre) : cet onglet factice ignorait le "style"
+  // que la librairie calcule et applique aux 4 autres onglets (largeur de flex partagée
+  // entre tous les items) — il imposait son propre flex:1 isolé, ce qui désynchronisait
+  // sa largeur réelle de celle des autres et laissait un espace non réparti en bout de
+  // barre. On fusionne maintenant le style reçu (comme les onglets par défaut) avec les
+  // seuls ajustements propres au FAB (alignement/centrage).
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={{ flex: 1, alignItems: 'center', justifyContent: 'flex-end' }}>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[style, { alignItems: 'center', justifyContent: 'flex-end' }]}>
       <View
         style={{
           width: 52,
@@ -164,7 +174,11 @@ function MainTabs({ isAdmin }: { isAdmin: boolean }) {
     // transparent laisse le texte des écrans se voir à travers la barre.
     bg: dark ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.94)',
     active: dark ? '#3b72f6' : '#1a56db',
-    inactive: dark ? '#64748b' : '#94a3b8',
+    // BUG FIX (libellés inactifs illisibles) : les deux teintes étaient inversées par
+    // rapport à ce qu'il fallait pour chaque fond — un gris clair sur fond quasi blanc
+    // (mode clair) est presque invisible ; il faut la teinte la plus SOMBRE des deux sur
+    // fond clair, et la plus CLAIRE sur fond sombre, pas l'inverse.
+    inactive: dark ? '#94a3b8' : '#64748b',
   };
   return (
     <Tab.Navigator
@@ -185,8 +199,15 @@ function MainTabs({ isAdmin }: { isAdmin: boolean }) {
           shadowRadius: 12,
           elevation: 14,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
-        tabBarItemStyle: { paddingTop: 2 },
+        // BUG FIX (barre à 5 vrais boutons depuis le retour de "Ventes" dans la barre visible) :
+        // fontSize 11 + padding horizontal par défaut de la librairie faisaient déborder/couper
+        // des libellés plus longs ("Inventaire", "Produits") et créaient un espacement inégal
+        // entre les 5 items. paddingHorizontal:0 + police réduite = tout tient sans coupure.
+        tabBarLabelStyle: { fontSize: 10.5, fontWeight: '700', marginTop: 2 },
+        // flex:1 explicite (au lieu de compter sur la valeur par défaut de la librairie) :
+        // garantit que les 5 onglets (dont le FAB, désormais aligné sur ce même style)
+        // se partagent exactement et uniformément toute la largeur de la barre.
+        tabBarItemStyle: { paddingTop: 2, paddingHorizontal: 0, flex: 1 },
         headerLeft: () => <DrawerMenuButton />,
         ...HEADER,
       }}
@@ -199,7 +220,7 @@ function MainTabs({ isAdmin }: { isAdmin: boolean }) {
         options={{ title: 'Produits', tabBarIcon: ({ color, size, focused }) => <TabIcon name="cube-outline" color={color} size={size} focused={focused} dark={dark} /> }} />
       <Tab.Screen name="VenteFAB" component={ProduitsScreen}
         options={{
-          tabBarButton: (props) => <TabFabButton onPress={props.onPress} />,
+          tabBarButton: (props) => <TabFabButton onPress={props.onPress} style={props.style} />,
         }}
         listeners={({ navigation }) => ({
           tabPress: (e) => {
@@ -208,14 +229,15 @@ function MainTabs({ isAdmin }: { isAdmin: boolean }) {
           },
         })}
       />
-      {/* Ventes et Rapports ne sont plus des boutons visibles de la barre — alignement sur
-          la tab bar Ionic (tabs.page.html), qui n'a que 4 vrais onglets : Caisse, Produits,
-          Ventes, Inventaire (+ FAB Vente). Rapports y est uniquement dans le menu latéral
-          (ion-menu → section Analyses), pas dans la tab bar. Les deux restent des onglets
-          enregistrés et accessibles depuis le tiroir latéral (DrawerContent), donc pas de
-          lien cassé : tabBarButton:null les cache juste visuellement de la barre du bas. */}
+      {/* BUG CORRIGÉ : "Ventes" était caché de la barre (tabBarButton:null) alors que
+          tabs.page.html (Ionic) l'affiche bien comme 4e bouton réel, juste après le FAB
+          central, avec l'icône receipt-outline (voir ion-tab-button tab="sales"). Barre
+          Ionic = Caisse, Produits, FAB Vente, Ventes, Inventaire — Rapports n'y figure
+          pas du tout (uniquement dans ion-menu → section Analyses), donc reste caché ici
+          à raison ; les deux restent des onglets enregistrés et accessibles depuis le
+          tiroir latéral (DrawerContent), donc pas de lien cassé. */}
       <Tab.Screen name="Ventes" component={HistoriqueVentesScreen}
-        options={{ title: 'Ventes', tabBarButton: () => null }} />
+        options={{ title: 'Ventes', tabBarIcon: ({ color, size, focused }) => <TabIcon name="receipt-outline" color={color} size={size} focused={focused} dark={dark} /> }} />
       <Tab.Screen name="Inventaire" component={InventaireScreen}
         options={{ title: 'Inventaire', tabBarIcon: ({ color, size, focused }) => <TabIcon name="clipboard-outline" color={color} size={size} focused={focused} dark={dark} /> }} />
       {isAdmin && (
@@ -256,10 +278,6 @@ function MainStack({ onLogout, onChangeBoutique, isAdmin, user }: { onLogout: ()
       <Stack.Screen name="Tabs" options={{ headerShown: false }}>
         {() => <TabsWithDrawer onLogout={onLogout} onChangeBoutique={onChangeBoutique} isAdmin={isAdmin} user={user} />}
       </Stack.Screen>
-      <Stack.Screen name="Menu" options={{ title: 'Menu' }}>
-        {(props: any) => <MenuScreen {...props} onLogout={onLogout} />}
-      </Stack.Screen>
-      <Stack.Screen name="Historique"       component={HistoriqueVentesScreen}   options={{ title: 'Historique ventes' }} />
       <Stack.Screen name="Vente"            component={VenteScreen}              options={{ title: 'Nouvelle vente' }} />
       <Stack.Screen name="Home"             component={HomeScreen}               options={{ title: 'Accueil' }} />
       <Stack.Screen name="Clients"          component={ClientsScreen}            options={{ title: 'Clients' }} />
@@ -268,6 +286,7 @@ function MainStack({ onLogout, onChangeBoutique, isAdmin, user }: { onLogout: ()
       <Stack.Screen name="Credits"          component={CreditsScreen}            options={{ title: 'Crédits clients' }} />
       <Stack.Screen name="Fournisseurs"     component={FournisseursScreen}       options={{ title: 'Fournisseurs' }} />
       <Stack.Screen name="BoutiqueSettings" component={BoutiqueSettingsScreen}   options={{ title: 'Paramètres boutique' }} />
+      <Stack.Screen name="SuperAdminFonctionnalites" component={SuperAdminFonctionnalitesScreen} options={{ title: 'Fonctionnalités (super admin)' }} />
       <Stack.Screen name="Benefices"        component={BeneficesScreen}          options={{ title: 'Bénéfices' }} />
       <Stack.Screen name="Profil"           component={ProfilScreen}             options={{ title: 'Mon profil' }} />
       <Stack.Screen name="Transferts"       component={TransfertsScreen}         options={{ title: 'Transferts' }} />
@@ -281,9 +300,6 @@ function MainStack({ onLogout, onChangeBoutique, isAdmin, user }: { onLogout: ()
       <Stack.Screen name="AssistantIA"      component={AssistantIAScreen}        options={{ title: 'Assistant IA' }} />
       <Stack.Screen name="FactureDesign"    component={FactureDesignScreen}      options={{ title: 'Modèle de facture' }} />
       <Stack.Screen name="Resources"        component={ResourcesScreen}          options={{ title: 'Aide & Ressources' }} />
-      <Stack.Screen name="BoutiqueSelect"   options={{ title: 'Sélectionner boutique' }}>
-        {() => <BoutiqueSelectScreen onSelect={() => {}} />}
-      </Stack.Screen>
       <Stack.Screen name="Promotions"       component={PromotionsScreen}         options={{ title: 'Promotions' }} />
       <Stack.Screen name="Commandes"           component={CommandesScreen}             options={{ title: 'Commandes' }} />
       <Stack.Screen name="Employes"           component={EmployesScreen}              options={{ title: 'Employés' }} />
@@ -325,7 +341,7 @@ export function AuthNavigation({ onLogin }: { onLogin: (user: any) => void }) {
 export default function AppNavigation({ onLogout, onChangeBoutique, user }: { onLogout: () => void; onChangeBoutique: () => void; user?: any }) {
   const isAdmin = user?.role === 'ADMIN';
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <MainStack onLogout={onLogout} onChangeBoutique={onChangeBoutique} isAdmin={isAdmin} user={user} />
     </NavigationContainer>
   );

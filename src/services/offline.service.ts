@@ -83,7 +83,7 @@ function extraireConflitStock(e: any): string | undefined {
 
 // ─── Ventes ─────────────────────────────────────────────────────────────────
 
-export async function enregistrerVente(vente: any): Promise<{ success: boolean; offline: boolean; error?: string }> {
+export async function enregistrerVente(vente: any): Promise<{ success: boolean; offline: boolean; error?: string; venteId?: number }> {
   // Généré une seule fois, avant le tout premier envoi, et réutilisé pour la
   // mise en file / tous les rejeux — c'est ce même identifiant qui est envoyé
   // en X-Client-Request-ID, y compris sur cette première tentative : si elle
@@ -97,8 +97,14 @@ export async function enregistrerVente(vente: any): Promise<{ success: boolean; 
     return { success: true, offline: true };
   }
   try {
-    await createVente(vente, clientRequestId);
-    return { success: true, offline: false };
+    // venteId extrait de la réponse ({success, message, vente:{id,...}} — voir
+    // VenteController.creerVente) uniquement pour permettre au débit des points
+    // fidélité (POST /fidelite/clients/{id}/utiliser) de rattacher le mouvement
+    // à cette vente — ne change rien au comportement existant des autres
+    // appelants, qui ignorent déjà ce champ optionnel.
+    const res = await createVente(vente, clientRequestId);
+    const venteCree = res.data?.vente || res.data?.data || res.data;
+    return { success: true, offline: false, venteId: venteCree?.id };
   } catch (e: any) {
     // Pas de statut HTTP exploitable = le serveur n'a jamais répondu (coupure, timeout) :
     // à ne jamais confondre avec une vraie erreur métier (stock, validation...), sous
@@ -405,7 +411,7 @@ async function executerOperation(type: string, payload: any): Promise<void> {
     case 'promotion_create': await createPromotion(payload); break;
     case 'promotion_update': await updatePromotion(payload.id, payload.data); break;
     // Commandes
-    case 'commande_valider': await validerCommande(payload.id); break;
+    case 'commande_valider': await validerCommande(payload.id, payload.body); break;
     case 'commande_annuler': await annulerCommande(payload.id, payload.utilisateurId); break;
     // Employés
     case 'employe_create': await createEmploye(payload); break;
@@ -515,15 +521,29 @@ export async function getOperationsBloquees(): Promise<{ id: string; type: strin
 }
 
 // ─── Cache générique AsyncStorage ───────────────────────────────────────────
+// Filet de secours hors-ligne (affiche la dernière liste connue si l'API ne
+// répond pas) — jamais la file de synchro (ventes/produits/etc. en attente,
+// stockée à part en SQLite, jamais touchée ici). Sans limite d'âge, une valeur
+// mise en cache avant une mise à jour de l'appli pouvait rester affichée
+// indéfiniment après (RN n'a pas d'équivalent au popup "nouvelle version" web
+// d'Angular/Ionic pour la déclencher) — 1h aligné sur le maxAge déjà utilisé
+// pour /api/produits côté service worker Angular.
+const CACHE_MAX_AGE_MS = 60 * 60 * 1000;
 
 export async function sauvegarderCache(key: string, data: any): Promise<void> {
-  try { await AsyncStorage.setItem(`cache_${key}`, JSON.stringify(data)); } catch {}
+  try { await AsyncStorage.setItem(`cache_${key}`, JSON.stringify({ data, savedAt: Date.now() })); } catch {}
 }
 
 export async function lireCache<T>(key: string): Promise<T[]> {
   try {
     const s = await AsyncStorage.getItem(`cache_${key}`);
-    return s ? JSON.parse(s) : [];
+    if (!s) return [];
+    const parsed = JSON.parse(s);
+    // Anciennes entrées (avant ce correctif) : tableau brut sans savedAt —
+    // traitées comme périmées plutôt que de planter sur un format inattendu.
+    if (!parsed || typeof parsed !== 'object' || !('savedAt' in parsed)) return [];
+    if (Date.now() - parsed.savedAt > CACHE_MAX_AGE_MS) return [];
+    return parsed.data ?? [];
   } catch { return []; }
 }
 

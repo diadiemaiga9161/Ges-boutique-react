@@ -7,6 +7,7 @@ import { executerOuMettreEnFile, sauvegarderCache, lireCache } from '../services
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useMontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 type TypeBonus = 'RISTOURNE' | 'BONUS_VOLUME' | 'PRIME_OBJECTIF' | 'BONUS_ACHAT';
 const TYPES: { value: TypeBonus; label: string; color: string }[] = [
@@ -21,6 +22,7 @@ const todayStr = () => new Date().toISOString().split('T')[0];
 
 export default function BonusFournisseursScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [bonus, setBonus] = useState<any[]>([]);
   const [fournisseurs, setFournisseurs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,10 +131,10 @@ export default function BonusFournisseursScreen() {
     );
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.banner}>
         <Text style={styles.bannerLabel}>{tr('total', lang)} {tr('bonus_fournisseurs', lang)}</Text>
         <Text style={styles.bannerVal}>{money(total)}</Text>
@@ -140,7 +142,7 @@ export default function BonusFournisseursScreen() {
       <FlatList
         data={bonus}
         keyExtractor={b => String(b.id)}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} colors={[colors.primary]} />}
         contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
         renderItem={({ item }) => {
           const t = typeInfo(item.type);
@@ -148,53 +150,53 @@ export default function BonusFournisseursScreen() {
             <Card style={styles.card} onPress={() => ouvrirModif(item)}>
               <Card.Content>
                 <View style={styles.row}>
-                  <Text variant="titleMedium" numberOfLines={1} style={{ flex: 1 }}>{item.fournisseurNom || `${tr('fournisseur', lang)} #${item.fournisseurId}`}</Text>
-                  <Text style={styles.montant}>{money(item.montant)}</Text>
+                  <Text variant="titleMedium" numberOfLines={1} style={{ flex: 1, color: colors.text }}>{item.fournisseurNom || `${tr('fournisseur', lang)} #${item.fournisseurId}`}</Text>
+                  <Text style={[styles.montant, { color: colors.primary }]}>{money(item.montant)}</Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
                   <View style={[styles.typeBadge, { backgroundColor: t.color + '22' }]}>
                     <Text style={[styles.typeBadgeText, { color: t.color }]}>{t.label}</Text>
                   </View>
-                  <Text style={styles.date}>{item.date ? new Date(item.date).toLocaleDateString('fr-FR') : ''}</Text>
+                  <Text style={[styles.date, { color: colors.textSecondary }]}>{item.date ? new Date(item.date).toLocaleDateString('fr-FR') : ''}</Text>
                 </View>
-                {item.description && <Text style={styles.sub}>{item.description}</Text>}
+                {item.description && <Text style={[styles.sub, { color: colors.textSecondary }]}>{item.description}</Text>}
                 <TouchableOpacity style={styles.btnDelete} onPress={() => supprimer(item)}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={14} color="#dc2626" />
-                  <Text style={styles.btnDeleteText}>{tr('supprimer', lang)}</Text>
+                  <MaterialCommunityIcons name="trash-can-outline" size={14} color={colors.danger} />
+                  <Text style={[styles.btnDeleteText, { color: colors.danger }]}>{tr('supprimer', lang)}</Text>
                 </TouchableOpacity>
               </Card.Content>
             </Card>
           );
         }}
-        ListEmptyComponent={<Text style={styles.empty}>Aucun bonus enregistré</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, { color: colors.textSecondary }]}>Aucun bonus enregistré</Text>}
       />
-      <FAB icon="plus" style={styles.fab} onPress={ouvrirCreation} />
+      <FAB icon="plus" style={[styles.fab, { backgroundColor: colors.primary }]} color="#fff" onPress={ouvrirCreation} />
       <Portal>
-        <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={styles.modal}>
-          <Text variant="titleLarge" style={{ marginBottom: 16 }}>{editingId ? tr('modifier', lang) : tr('nouveau_bonus', lang)}</Text>
+        <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: colors.card }]}>
+          <Text variant="titleLarge" style={{ marginBottom: 16, color: colors.text }}>{editingId ? tr('modifier', lang) : tr('nouveau_bonus', lang)}</Text>
 
-          <Text style={styles.fieldLabel}>Fournisseur *</Text>
-          <TouchableOpacity style={styles.picker} onPress={() => setShowFournisseurPicker(v => !v)}>
-            <Text style={{ color: form.fournisseurNom ? '#0f172a' : '#94a3b8' }}>
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Fournisseur *</Text>
+          <TouchableOpacity style={[styles.picker, { borderColor: colors.border, backgroundColor: colors.inputBg }]} onPress={() => setShowFournisseurPicker(v => !v)}>
+            <Text style={{ color: form.fournisseurNom ? colors.text : colors.placeholder }}>
               {form.fournisseurNom || 'Sélectionner un fournisseur'}
             </Text>
-            <Text>{showFournisseurPicker ? '▲' : '▼'}</Text>
+            <Text style={{ color: colors.textSecondary }}>{showFournisseurPicker ? '▲' : '▼'}</Text>
           </TouchableOpacity>
           {showFournisseurPicker && (
-            <View style={styles.pickerList}>
+            <View style={[styles.pickerList, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
               {fournisseurs.map(f => (
                 <TouchableOpacity
                   key={f.id}
-                  style={styles.pickerItem}
+                  style={[styles.pickerItem, { borderBottomColor: colors.border }]}
                   onPress={() => { setForm({ ...form, fournisseurId: f.id, fournisseurNom: f.nom }); setShowFournisseurPicker(false); }}
                 >
-                  <Text>{f.nom}</Text>
+                  <Text style={{ color: colors.text }}>{f.nom}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           )}
 
-          <Text style={styles.fieldLabel}>Type *</Text>
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Type *</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
             {TYPES.map(t => (
               <TouchableOpacity
@@ -210,7 +212,7 @@ export default function BonusFournisseursScreen() {
           <TextInput label={tr('montant', lang) + ' *'} value={montantInput.texte} onChangeText={montantInput.onChangeText} mode="outlined" keyboardType="numeric" style={styles.input} />
           <TextInput label="Date *" value={form.date} onChangeText={t => setForm({ ...form, date: t })} mode="outlined" placeholder="AAAA-MM-JJ" style={styles.input} />
           <TextInput label={tr('description', lang)} value={form.description} onChangeText={t => setForm({ ...form, description: t })} mode="outlined" style={styles.input} />
-          <Button mode="contained" onPress={enregistrer} loading={saving} disabled={saving}>{tr('enregistrer', lang)}</Button>
+          <Button mode="contained" onPress={enregistrer} loading={saving} disabled={saving} buttonColor={colors.primary}>{tr('enregistrer', lang)}</Button>
         </Modal>
       </Portal>
     </View>

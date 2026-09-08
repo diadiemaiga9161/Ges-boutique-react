@@ -4,8 +4,7 @@ import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getVentesParVendeur } from '../services/api.service';
 import { sauvegarderCache, lireCache } from '../services/offline.service';
-
-const BLUE = '#1a56db';
+import { useColors } from '../theme/colors';
 
 interface VenteParVendeurJour {
   vendeurId: number;
@@ -76,6 +75,7 @@ function agregerParVendeur(lignes: VenteParVendeurJour[]): VendeurResume[] {
 }
 
 export default function HistoriqueVendeurScreen() {
+  const colors = useColors();
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState('');
   const [vendeurs, setVendeurs] = useState<VendeurResume[]>([]);
@@ -118,57 +118,71 @@ export default function HistoriqueVendeurScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={BLUE} />
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   if (erreur) {
     return (
-      <View style={styles.center}>
-        <Text style={{ color: '#dc2626' }}>{erreur}</Text>
+      <View style={[styles.center, { backgroundColor: colors.background, gap: 10 }]}>
+        <MaterialCommunityIcons name="alert-circle-outline" size={40} color={colors.danger} />
+        <Text style={{ color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 24 }}>{erreur}</Text>
       </View>
     );
   }
 
   if (!vendeurs.length) {
     return (
-      <View style={styles.center}>
-        <Text style={{ color: '#94a3b8' }}>Aucune vente trouvée sur cette période.</Text>
+      <View style={[styles.center, { backgroundColor: colors.background, gap: 10 }]}>
+        <MaterialCommunityIcons name="chart-line" size={44} color={colors.placeholder} />
+        <Text style={{ color: colors.textSecondary }}>Aucune vente trouvée sur cette période.</Text>
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow} contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}>
-        {vendeurs.map(v => (
-          <TouchableOpacity
-            key={v.vendeurId}
-            style={[styles.chip, selectionne?.vendeurId === v.vendeurId && styles.chipActive]}
-            onPress={() => setSelectionne(v)}>
-            <Text style={[styles.chipText, selectionne?.vendeurId === v.vendeurId && styles.chipTextActive]}>
-              {v.vendeurNom}
-            </Text>
-          </TouchableOpacity>
-        ))}
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[styles.chipsRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}
+        contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}
+      >
+        {vendeurs.map(v => {
+          const actif = selectionne?.vendeurId === v.vendeurId;
+          return (
+            <TouchableOpacity
+              key={v.vendeurId}
+              style={[
+                styles.chip,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                actif && { backgroundColor: colors.primary, borderColor: colors.primary },
+              ]}
+              onPress={() => setSelectionne(v)}>
+              <Text style={[styles.chipText, { color: colors.textSecondary }, actif && styles.chipTextActive]}>
+                {v.vendeurNom}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       {selectionne && (
         <ScrollView contentContainerStyle={{ padding: 14 }}>
           <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryLabel}>Comptant</Text>
-              <Text style={styles.summaryValue}>{selectionne.nbVentesComptant}</Text>
-              <Text style={styles.summarySub}>{formatPrice(selectionne.caComptant)}</Text>
+            <View style={[styles.summaryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Comptant</Text>
+              <Text style={[styles.summaryValue, { color: colors.text }]}>{selectionne.nbVentesComptant}</Text>
+              <Text style={[styles.summarySub, { color: colors.textSecondary }]}>{formatPrice(selectionne.caComptant)}</Text>
             </View>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryLabel}>Crédit</Text>
-              <Text style={styles.summaryValue}>{selectionne.nbVentesCredit}</Text>
-              <Text style={styles.summarySub}>{formatPrice(selectionne.caCredit)}</Text>
+            <View style={[styles.summaryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Crédit</Text>
+              <Text style={[styles.summaryValue, { color: colors.text }]}>{selectionne.nbVentesCredit}</Text>
+              <Text style={[styles.summarySub, { color: colors.textSecondary }]}>{formatPrice(selectionne.caCredit)}</Text>
             </View>
-            <View style={[styles.summaryCard, styles.summaryCardTotal]}>
+            <View style={[styles.summaryCard, styles.summaryCardTotal, { backgroundColor: colors.primary, borderColor: colors.primary, shadowColor: colors.primary }]}>
               <Text style={[styles.summaryLabel, { color: '#fff' }]}>Total</Text>
               <Text style={[styles.summaryValue, { color: '#fff' }]}>{selectionne.nbVentesTotal}</Text>
               <Text style={[styles.summarySub, { color: '#e0e7ff' }]}>{formatPrice(selectionne.caTotal)}</Text>
@@ -176,12 +190,12 @@ export default function HistoriqueVendeurScreen() {
           </View>
 
           {selectionne.jours.map(j => (
-            <View key={j.date} style={styles.jourCard}>
+            <View key={j.date} style={[styles.jourCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.jourHead}>
-                <Text style={styles.jourDate}>{formatDate(j.date)}</Text>
-                <Text style={styles.jourTotal}>{formatPrice(j.caTotal)}</Text>
+                <Text style={[styles.jourDate, { color: colors.text }]}>{formatDate(j.date)}</Text>
+                <Text style={[styles.jourTotal, { color: colors.primary }]}>{formatPrice(j.caTotal)}</Text>
               </View>
-              <Text style={styles.jourDetail}>
+              <Text style={[styles.jourDetail, { color: colors.textSecondary }]}>
                 Comptant : {j.nbVentesComptant} ({formatPrice(j.caComptant)}) — Crédit : {j.nbVentesCredit} ({formatPrice(j.caCredit)})
               </Text>
             </View>
@@ -193,51 +207,43 @@ export default function HistoriqueVendeurScreen() {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   offlineBanner: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#f97316', paddingHorizontal: 12, paddingVertical: 6 },
   offlineBannerText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-  chipsRow: { flexGrow: 0, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  chipsRow: { flexGrow: 0, paddingVertical: 10, borderBottomWidth: 1 },
   chip: {
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 7,
-    backgroundColor: '#fff',
   },
-  chipActive: { borderColor: BLUE, backgroundColor: BLUE },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  chipText: { fontSize: 13, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
   summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
   // STYLE (2026-08-16) : coins plus arrondis + ombre douce (avant : juste une
   // bordure fine, look plat) pour un rendu plus premium.
   summaryCard: {
     flex: 1,
-    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   summaryCardTotal: {
-    backgroundColor: BLUE, borderColor: BLUE,
-    elevation: 3, shadowColor: BLUE, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+    elevation: 3, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
   },
-  summaryLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase' },
-  summaryValue: { fontSize: 20, fontWeight: '800', color: '#0f172a', marginTop: 2 },
-  summarySub: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  summaryLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  summaryValue: { fontSize: 20, fontWeight: '800', marginTop: 2 },
+  summarySub: { fontSize: 12, marginTop: 2 },
   jourCard: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   jourHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  jourDate: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-  jourTotal: { fontSize: 14, fontWeight: '800', color: BLUE },
-  jourDetail: { fontSize: 12, color: '#64748b', marginTop: 6 },
+  jourDate: { fontSize: 14, fontWeight: '700' },
+  jourTotal: { fontSize: 14, fontWeight: '800' },
+  jourDetail: { fontSize: 12, marginTop: 6 },
 });

@@ -19,7 +19,11 @@ import {
   sauvegarderProfilIA,
 } from '../services/api.service';
 import type { AnalyseIAResult, ProfilIA } from '../types';
+import { useColors } from '../theme/colors';
 
+// Valeurs statiques utilisées comme fallback par défaut dans le StyleSheet
+// (évalué une seule fois, hors composant) — les rendus réels sont pilotés
+// dynamiquement par useColors() via des overrides inline (voir usages ci-dessous).
 const DARK = '#081648';
 const BLUE = '#1a56db';
 const { width: SW } = Dimensions.get('window');
@@ -84,12 +88,12 @@ function tendanceInfo(t: string): { icon: string; color: string; label: string }
   }
 }
 
-function prioriteStyle(p: string): { bg: string; text: string } {
+function prioriteStyle(p: string, colors: ReturnType<typeof useColors>): { bg: string; text: string } {
   switch (p) {
-    case 'CRITIQUE': return { bg: '#fef2f2', text: '#dc2626' };
-    case 'HAUTE': return { bg: '#fff7ed', text: '#ea580c' };
-    case 'MOYENNE': return { bg: '#eff6ff', text: '#2563eb' };
-    default: return { bg: '#f9fafb', text: '#6b7280' };
+    case 'CRITIQUE': return { bg: colors.dangerBg, text: colors.danger };
+    case 'HAUTE': return { bg: colors.warningBg, text: colors.warning };
+    case 'MOYENNE': return { bg: colors.infoBg, text: colors.info };
+    default: return { bg: colors.inputBg, text: colors.textSecondary };
   }
 }
 
@@ -98,6 +102,24 @@ function fmt(n: number): string {
   return n.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' FCFA';
 }
 
+// Ordre de tri des recommandations par priorité — parité avec ia.page.ts
+// (prioriteOrdre) : Ionic trie côté client après l'analyse, le backend ne
+// garantit pas l'ordre.
+function prioriteOrdre(p: string): number {
+  switch (p) {
+    case 'CRITIQUE': return 0;
+    case 'HAUTE': return 1;
+    case 'MOYENNE': return 2;
+    default: return 3;
+  }
+}
+
+// AMBIGU (non modifié) : ia.page.ts (Ionic) pré-remplit le wizard avec
+// objectifStockJours=14 / delaiReglementCredit=15, alors que ces valeurs par
+// défaut ici (30/30) reprennent celles de l'entité backend ProfilIA.java
+// (@Column ... = 30). Un utilisateur qui valide le wizard sans toucher ces
+// étapes obtient donc un profil IA différent selon la plateforme. Signalé au
+// Tech Lead plutôt que tranché arbitrairement — voir rapport de parité.
 const PROFIL_INITIAL: ProfilIA = {
   typeBoutique: '',
   joursApprovisionnement: [] as string[],
@@ -109,6 +131,7 @@ const PROFIL_INITIAL: ProfilIA = {
 // ─── Composant principal ─────────────────────────────────────────────────────
 
 export default function IAScreen() {
+  const colors = useColors();
   const [activeTab, setActiveTab] = useState<0 | 1 | 2>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -164,6 +187,13 @@ export default function IAScreen() {
   const wizardSuivant = () => {
     if (wizardStep === 0 && !profil.typeBoutique) {
       Alert.alert('Attention', 'Veuillez choisir un type de boutique.');
+      return;
+    }
+    // Parité avec ia.page.ts (wizardStepValide, case 2) : l'étape "jours
+    // d'approvisionnement" exige au moins un jour sélectionné avant de
+    // continuer (les autres étapes ont une valeur par défaut déjà valide).
+    if (wizardStep === 1 && profil.joursApprovisionnement.length === 0) {
+      Alert.alert('Attention', 'Veuillez sélectionner au moins un jour d\'approvisionnement.');
       return;
     }
     if (wizardStep < 4) {
@@ -226,10 +256,19 @@ export default function IAScreen() {
     const isLast = wizardStep === 4;
 
     return (
-      <Modal visible={showWizard} animationType="slide" statusBarTranslucent>
-        <View style={styles.wizardRoot}>
+      <Modal visible={showWizard} animationType="slide" statusBarTranslucent onRequestClose={() => setShowWizard(false)}>
+        <View style={[styles.wizardRoot, { backgroundColor: colors.hero }]}>
           {/* En-tete */}
           <View style={styles.wizardHeader}>
+            {analyse && (
+              <TouchableOpacity
+                style={styles.wizardCloseBtn}
+                onPress={() => setShowWizard(false)}
+                accessibilityLabel="Fermer"
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#fff" />
+              </TouchableOpacity>
+            )}
             <MaterialCommunityIcons name="robot-excited-outline" size={36} color="#93c5fd" />
             <Text style={styles.wizardTitle}>Configurer votre IA</Text>
             <Text style={styles.wizardStepLabel}>Etape {wizardStep + 1} sur 5</Text>
@@ -389,17 +428,17 @@ export default function IAScreen() {
   const renderDashboard = () => {
     if (!analyse) {
       return (
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="chart-timeline-variant" size={48} color="#cbd5e1" />
-          <Text style={styles.emptyMsg}>
+        <View style={[styles.center, { backgroundColor: colors.background }]}>
+          <MaterialCommunityIcons name="chart-timeline-variant" size={48} color={colors.border} />
+          <Text style={[styles.emptyMsg, { color: colors.text }]}>
             {erreur || 'Aucune donnee disponible.\nConfigurez votre profil IA.'}
           </Text>
           <TouchableOpacity
-            style={styles.btnReconfig}
+            style={[styles.btnReconfig, { borderColor: colors.primary }]}
             onPress={() => { setWizardStep(0); setShowWizard(true); }}
           >
-            <MaterialCommunityIcons name="cog-outline" size={16} color={BLUE} />
-            <Text style={styles.btnReconfigTxt}>Configurer le profil IA</Text>
+            <MaterialCommunityIcons name="cog-outline" size={16} color={colors.primary} />
+            <Text style={[styles.btnReconfigTxt, { color: colors.primary }]}>Configurer le profil IA</Text>
           </TouchableOpacity>
         </View>
       );
@@ -420,13 +459,14 @@ export default function IAScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); charger(); }}
-            colors={[BLUE]}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
           />
         }
       >
         {/* Score global */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Score de sante de la boutique</Text>
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Score de sante de la boutique</Text>
           <View style={styles.scoreRow}>
             <View style={[styles.scoreCircle, { backgroundColor: sc }]}>
               <Text style={styles.scoreNum}>{Math.round(analyse.scoreGlobal)}</Text>
@@ -437,12 +477,12 @@ export default function IAScreen() {
                 <MaterialCommunityIcons name={tend.icon as any} size={22} color={tend.color} />
                 <Text style={[styles.tendTxt, { color: tend.color }]}>{tend.label}</Text>
               </View>
-              <Text style={styles.metaLbl}>Croissance mensuelle</Text>
-              <Text style={[styles.metaVal, { color: croissancePos ? '#10b981' : '#ef4444' }]}>
+              <Text style={[styles.metaLbl, { color: colors.textSecondary }]}>Croissance mensuelle</Text>
+              <Text style={[styles.metaVal, { color: croissancePos ? colors.success : colors.danger }]}>
                 {croissancePos ? '+' : ''}{(analyse.tauxCroissanceMensuel ?? 0).toFixed(1)}%
               </Text>
-              <Text style={styles.metaLbl}>Precision du modele</Text>
-              <Text style={styles.metaVal}>{(analyse.precisionModele ?? 0).toFixed(0)}%</Text>
+              <Text style={[styles.metaLbl, { color: colors.textSecondary }]}>Precision du modele</Text>
+              <Text style={[styles.metaVal, { color: colors.text }]}>{(analyse.precisionModele ?? 0).toFixed(0)}%</Text>
             </View>
           </View>
         </View>
@@ -450,23 +490,26 @@ export default function IAScreen() {
         {/* Cartes metriques */}
         <View style={styles.metricsGrid}>
           {([
-            { label: 'Prevision CA 7j', val: fmt(analyse.previsionCA7Jours), icon: 'calendar-week', color: '#3b82f6' },
-            { label: 'Prevision CA 30j', val: fmt(analyse.previsionCA30Jours), icon: 'calendar-month', color: '#8b5cf6' },
             { label: 'CA hier', val: fmt(analyse.caHier), icon: 'cash-multiple', color: '#10b981' },
+            // "CA cette semaine" manquait cote RN alors qu'il est affiche dans
+            // le tableau de bord Ionic (ia.page.html, metric-grid) — parite.
+            { label: 'CA cette semaine', val: fmt(analyse.caCetteSemaine), icon: 'calendar-week', color: '#0891b2' },
+            { label: 'Prevision CA 7j', val: fmt(analyse.previsionCA7Jours), icon: 'chart-line', color: '#3b82f6' },
+            { label: 'Prevision CA 30j', val: fmt(analyse.previsionCA30Jours), icon: 'calendar-month', color: '#8b5cf6' },
             { label: 'CA ce mois', val: fmt(analyse.caCeMois), icon: 'chart-bar', color: '#f59e0b' },
           ] as { label: string; val: string; icon: string; color: string }[]).map(m => (
-            <View key={m.label} style={styles.metricCard}>
+            <View key={m.label} style={[styles.metricCard, { backgroundColor: colors.card }]}>
               <MaterialCommunityIcons name={m.icon as any} size={22} color={m.color} />
-              <Text style={styles.metricVal} numberOfLines={1}>{m.val}</Text>
-              <Text style={styles.metricLbl}>{m.label}</Text>
+              <Text style={[styles.metricVal, { color: colors.text }]} numberOfLines={1}>{m.val}</Text>
+              <Text style={[styles.metricLbl, { color: colors.textSecondary }]}>{m.label}</Text>
             </View>
           ))}
         </View>
 
         {/* Graphique barres previsions 7j */}
         {detail7.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Previsions CA — 7 prochains jours</Text>
+          <View style={[styles.card, { backgroundColor: colors.card }]}>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>Previsions CA — 7 prochains jours</Text>
             <View style={styles.barChart}>
               {detail7.map((d, idx) => {
                 const barH = Math.max(4, (d.prevision / maxPrev) * MAX_BAR_H);
@@ -474,9 +517,9 @@ export default function IAScreen() {
                 const kVal = (d.prevision / 1000).toFixed(0);
                 return (
                   <View key={idx} style={styles.barCol}>
-                    <Text style={styles.barValTxt} numberOfLines={1}>{kVal}k</Text>
-                    <View style={[styles.bar, { height: barH }]} />
-                    <Text style={styles.barDateTxt}>{shortDate}</Text>
+                    <Text style={[styles.barValTxt, { color: colors.textSecondary }]} numberOfLines={1}>{kVal}k</Text>
+                    <View style={[styles.bar, { height: barH, backgroundColor: colors.primary }]} />
+                    <Text style={[styles.barDateTxt, { color: colors.textSecondary }]}>{shortDate}</Text>
                   </View>
                 );
               })}
@@ -486,18 +529,24 @@ export default function IAScreen() {
 
         {/* Alertes */}
         {(analyse.alertes?.length ?? 0) > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Alertes</Text>
+          <View style={[styles.card, { backgroundColor: colors.card }]}>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>Alertes</Text>
             {analyse.alertes.map((a, i) => {
-              const isCrit = a.severity === 'CRITIQUE';
+              const isCrit = a.severite === 'CRITIQUE';
               return (
-                <View key={i} style={[styles.alerteRow, isCrit && styles.alerteRowCrit]}>
+                <View
+                  key={i}
+                  style={[
+                    styles.alerteRow,
+                    { backgroundColor: isCrit ? colors.dangerBg : colors.warningBg },
+                  ]}
+                >
                   <MaterialCommunityIcons
                     name={isCrit ? 'alert-circle' : 'information-outline'}
                     size={18}
-                    color={isCrit ? '#dc2626' : '#d97706'}
+                    color={isCrit ? colors.danger : colors.warning}
                   />
-                  <Text style={[styles.alerteTxt, isCrit && styles.alerteTxtCrit]}>
+                  <Text style={[styles.alerteTxt, { color: isCrit ? colors.danger : colors.warning }]}>
                     {a.message}
                   </Text>
                 </View>
@@ -508,11 +557,11 @@ export default function IAScreen() {
 
         {/* Bouton reconfigurer */}
         <TouchableOpacity
-          style={styles.btnReconfig}
+          style={[styles.btnReconfig, { borderColor: colors.primary }]}
           onPress={() => { setWizardStep(0); setShowWizard(true); }}
         >
-          <MaterialCommunityIcons name="cog-outline" size={15} color={BLUE} />
-          <Text style={styles.btnReconfigTxt}>Reconfigurer mon profil IA</Text>
+          <MaterialCommunityIcons name="cog-outline" size={15} color={colors.primary} />
+          <Text style={[styles.btnReconfigTxt, { color: colors.primary }]}>Reconfigurer mon profil IA</Text>
         </TouchableOpacity>
       </ScrollView>
     );
@@ -521,7 +570,10 @@ export default function IAScreen() {
   // ── Rendu : Tab Recommandations ───────────────────────────────────────────
 
   const renderRecommandations = () => {
-    const recos = analyse?.recommandations ?? [];
+    // Tri par priorite — parite avec ia.page.ts (lancerAnalyse trie les
+    // recommandations avant de les afficher, le backend ne garantit pas l'ordre).
+    const recos = [...(analyse?.recommandations ?? [])]
+      .sort((a, b) => prioriteOrdre(a.priorite) - prioriteOrdre(b.priorite));
 
     if (recos.length === 0) {
       return (
@@ -540,7 +592,7 @@ export default function IAScreen() {
         contentContainerStyle={styles.tabContent}
         renderItem={({ item: r }) => {
           const done = traitees.has(r.id);
-          const ps = prioriteStyle(r.priorite);
+          const ps = prioriteStyle(r.priorite, colors);
           const confColor = r.scoreConfiance > 70
             ? '#10b981'
             : r.scoreConfiance > 40 ? '#f59e0b' : '#ef4444';
@@ -603,6 +655,7 @@ export default function IAScreen() {
 
   const renderClientsIA = () => {
     const segments = analyse?.segmentsClients ?? {};
+    const totalClients = Object.values(segments).reduce((s, n) => s + (n ?? 0), 0);
 
     return (
       <ScrollView contentContainerStyle={styles.tabContent}>
@@ -621,6 +674,32 @@ export default function IAScreen() {
             </View>
           ))}
         </View>
+
+        {/* Total segmente + repartition — parite avec ia.page.html
+            (section "Total segmenté" avec barres par segment). */}
+        {totalClients > 0 && (
+          <View style={[styles.card, { backgroundColor: colors.card }]}>
+            <View style={styles.totalSegRow}>
+              <Text style={[styles.cardTitle, { color: colors.text, marginBottom: 0 }]}>Total segmente</Text>
+              <Text style={[styles.totalSegVal, { color: colors.text }]}>{totalClients}</Text>
+            </View>
+            <View style={{ marginTop: 12 }}>
+              {SEGMENTS_RFM.map(s => {
+                const count = segments[s.key] ?? 0;
+                const pct = totalClients > 0 ? (count / totalClients) * 100 : 0;
+                return (
+                  <View key={s.key} style={styles.segBarRow}>
+                    <Text style={[styles.segBarName, { color: colors.textSecondary }]} numberOfLines={1}>{s.label}</Text>
+                    <View style={styles.segBarBg}>
+                      <View style={[styles.segBarFill, { width: `${pct}%` as any, backgroundColor: s.color }]} />
+                    </View>
+                    <Text style={[styles.segBarVal, { color: colors.text }]}>{count}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {Object.keys(segments).length === 0 && (
           <View style={styles.center}>
@@ -917,6 +996,15 @@ const styles = StyleSheet.create({
   segLabel: { fontSize: 14, fontWeight: '700', color: DARK, marginTop: 2 },
   segDesc: { fontSize: 11, color: '#6b7280', marginTop: 2 },
 
+  // ── Total segmente (recapitulatif) ───────────────────────────────────────
+  totalSegRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalSegVal: { fontSize: 18, fontWeight: '900' },
+  segBarRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  segBarName: { fontSize: 11, width: 84 },
+  segBarBg: { flex: 1, height: 8, backgroundColor: '#e5e7eb', borderRadius: 4, overflow: 'hidden' },
+  segBarFill: { height: 8, borderRadius: 4 },
+  segBarVal: { fontSize: 12, fontWeight: '700', width: 24, textAlign: 'right' },
+
   // ── Wizard ────────────────────────────────────────────────────────────────
   wizardRoot: { flex: 1, backgroundColor: DARK },
   wizardHeader: {
@@ -924,6 +1012,17 @@ const styles = StyleSheet.create({
     paddingTop: 52,
     paddingBottom: 20,
     paddingHorizontal: 24,
+  },
+  wizardCloseBtn: {
+    position: 'absolute',
+    top: 52,
+    right: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   wizardTitle: {
     color: '#fff',

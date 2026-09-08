@@ -1,6 +1,9 @@
 import axios from 'axios';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import NetInfo from '@react-native-community/netinfo';
+import { showToast } from './toast.service';
 
 // ─── Stockage sécurisé du token JWT ────────────────────────────────────────
 // Le token est désormais stocké dans expo-secure-store (Keychain iOS /
@@ -123,7 +126,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Intercepteur réponse : déconnexion automatique sur 401
+// Signale "mise à jour en cours" au plus une fois toutes les 10s — évite d'empiler
+// plusieurs toasts identiques quand plusieurs écrans échouent en même temps pendant
+// le court redémarrage du serveur (dépôt d'une nouvelle version côté backend).
+let _dernierToastServeurIndisponible = 0;
+
+// Même principe pour "fonctionnalité désactivée" — un écran peut déclencher plusieurs
+// requêtes vers le même contrôleur désactivé (ex: chargement initial).
+let _dernierAlertFonctionnaliteDesactivee = 0;
+
+// Intercepteur réponse : déconnexion automatique sur 401 + message clair pendant
+// un redémarrage serveur (pas un vrai bug ni une absence de réseau côté téléphone).
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -132,6 +145,33 @@ api.interceptors.response.use(
       await AsyncStorage.removeItem('user');
       await removeStoredToken();
       if (_onAuthError) _onAuthError();
+    } else if (error.response?.status === 403 && error.response?.data?.errorCode === 'FEATURE_DISABLED') {
+      const maintenant = Date.now();
+      if (maintenant - _dernierAlertFonctionnaliteDesactivee > 10000) {
+        _dernierAlertFonctionnaliteDesactivee = maintenant;
+        // Le message détaillé arrive dans "message" (GlobalExceptionHandler) pour la
+        // plupart des contrôleurs, mais dans "error" pour ceux qui ont leur propre
+        // gestionnaire local (ex: DetteAncienneController) — on vérifie les deux.
+        const detail = error.response?.data?.message || error.response?.data?.error;
+        Alert.alert(
+          'Fonctionnalité désactivée',
+          detail || "Cette fonctionnalité est désactivée par le super admin de la boutique. Pour plus d'informations, contactez Maiga Consulting."
+        );
+      }
+    } else if (!error.response) {
+      // Pas de réponse HTTP du tout : soit le téléphone n'a pas de réseau (déjà géré
+      // par l'offline-first ailleurs, cf. offline.service.ts), soit le réseau est bon
+      // mais LE SERVEUR de cette boutique ne répond pas — cas typique d'un
+      // redémarrage après déploiement (10-20s). On ne distingue les deux cas qu'en
+      // vérifiant la connectivité réelle du téléphone (NetInfo).
+      const maintenant = Date.now();
+      if (maintenant - _dernierToastServeurIndisponible > 10000) {
+        const etat = await NetInfo.fetch().catch(() => null);
+        if (etat?.isConnected) {
+          _dernierToastServeurIndisponible = maintenant;
+          showToast('Mise à jour en cours, veuillez patienter quelques instants...', 'warning');
+        }
+      }
     }
     return Promise.reject(error);
   }
@@ -142,10 +182,13 @@ export default api;
 // ─── Auth ──────────────────────────────────────────────────────────────────
 export const login = (username: string, password: string) =>
   api.post('/auth/login', { username, password });
-export const changerMotDePasse = (data: { ancienMotDePasse: string; nouveauMotDePasse: string }) =>
-  api.post('/auth/changer-password', data);
 export const forgotPassword = (email: string) =>
   api.post('/auth/mot-de-passe-oublie', { email });
+// Vérifie la validité du token AVANT d'afficher le formulaire de nouveau mot de
+// passe (même comportement que reset-password.page.ts côté Ionic) — évite de
+// laisser l'utilisateur saisir un nouveau mot de passe pour un lien déjà expiré.
+export const verifierTokenReset = (token: string) =>
+  api.get('/auth/verifier-token-reset', { params: { token } });
 export const resetPassword = (token: string, newPassword: string) =>
   api.post('/auth/reinitialiser-password', { token, nouveauPassword: newPassword });
 
@@ -153,6 +196,24 @@ export const resetPassword = (token: string, newPassword: string) =>
 export const getBoutique = () => api.get('/boutique');
 export const updateBoutique = (data: any) => api.put('/boutique', data);
 export const getBoutiques = () => api.get('/boutiques');
+// Réservé au super admin (flag superAdmin sur le compte, pas un rôle séparé) — le
+// serveur revérifie systématiquement le privilège (403 sinon).
+export const modifierFonctionnalitesBoutique = (data: { featureTransfertsActif: boolean; featureVitrineActif: boolean }) =>
+  api.put('/boutique/fonctionnalites', data);
+// Fonctionnalités avancées (Dépôt garde, Dettes anciennes, Comptes bancaires...) —
+// système séparé de /boutique/fonctionnalites ci-dessus. Lecture ouverte à tout le
+// personnel (ADMIN/VENDEUR), écriture réservée au super admin (403 sinon côté serveur).
+export const getFonctionnalitesAvancees = () => api.get('/boutique/fonctionnalites-avancees');
+export const definirFonctionnaliteAvancee = (cle: string, actif: boolean) =>
+  api.put(`/boutique/fonctionnalites-avancees/${cle}`, { actif });
+// Permissions vendeur (système générique, séparé des fonctionnalités avancées
+// ci-dessus) — permet à un ADMIN NORMAL (pas besoin de superAdmin) d'accorder
+// au VENDEUR un accès en lecture seule à certaines pages (ex: Inventaire).
+// Lecture ouverte à tout le personnel (ADMIN/VENDEUR), écriture réservée à
+// hasRole('ADMIN') côté serveur (403 sinon).
+export const getPermissionsVendeur = () => api.get('/boutique/permissions-vendeur');
+export const definirPermissionVendeur = (cle: string, actif: boolean) =>
+  api.put(`/boutique/permissions-vendeur/${cle}`, { actif });
 export const selectBoutique = (id: number) => api.post(`/boutiques/${id}/select`);
 
 // ─── Produits ──────────────────────────────────────────────────────────────
@@ -230,13 +291,18 @@ export const getSituationFournisseur = (id: number, dateDebut?: string, dateFin?
 export const getAchatsNonPayesFournisseur = (id: number) => api.get(`/fournisseur-achats/achats-non-payes/${id}`);
 export const creerAchatFournisseur = (data: any) => api.post('/fournisseur-achats/achat', data);
 export const payerFournisseur = (data: any) => api.post('/fournisseur-achats/paiement', data);
-export const annulerAchatFournisseur = (id: number) => api.post(`/fournisseur-achats/achat/${id}/annuler`, {});
+export const annulerAchatFournisseur = (id: number, utilisateurId?: number) =>
+  api.post(`/fournisseur-achats/achat/${id}/annuler`, {}, { params: utilisateurId ? { utilisateurId } : undefined });
 
 // ─── Dépenses ──────────────────────────────────────────────────────────────
 export const getDepenses = (params?: any) => api.get('/depenses', { params });
 export const createDepense = (data: any) => api.post('/depenses', data);
 export const updateDepense = (id: number, data: any) => api.put(`/depenses/${id}`, data);
 export const deleteDepense = (id: number) => api.delete(`/depenses/${id}`);
+// Filtre par plage de dates — GET /depenses/periode?debut=...&fin=..., même
+// endpoint que depense.service.ts::getParPeriode() côté Ionic.
+export const getDepensesParPeriode = (debut: string, fin: string) =>
+  api.get('/depenses/periode', { params: { debut, fin } });
 
 // ─── Rapports ──────────────────────────────────────────────────────────────
 // NOTE : /rapports/jour, /rapports/semaine, /rapports/mois n'existent PAS côté
@@ -273,6 +339,11 @@ export const getStatistiquesChiffreAffaire = () => api.get('/ventes/statistiques
 export const getFactures = () => api.get('/caisse/factures');
 export const getFacturesParStatut = (statut: string) => api.get(`/caisse/factures/statut/${statut}`);
 export const creerFactureProforma = (data: any) => api.post('/caisse/factures', data);
+// Modification/suppression — parité avec resources.page.ts (Ionic, saveFacture en
+// mode édition + action 'delete-facture'), seule interface Ionic qui les propose
+// réellement (le lien menu "Factures" pointe vers /resources/factures, pas /tabs/factures).
+export const modifierFacture = (id: number, data: any) => api.put(`/caisse/factures/${id}`, data);
+export const supprimerFacture = (id: number) => api.delete(`/caisse/factures/${id}`);
 export const changerStatutFacture = (id: number, statut: string) =>
   api.put(`/caisse/factures/${id}/statut`, null, { params: { statut } });
 
@@ -283,8 +354,12 @@ export const retraitGlobalDepot = (data: { numero: string; montant?: number; obs
   api.post('/depots-garde/retrait-global', data);
 
 // ─── Notifications ─────────────────────────────────────────────────────────
+// BUG FIX (parité Ionic) : marquerLue appelait PATCH /notifications/{id}/lue,
+// route inexistante côté backend (NotificationController n'expose que
+// PUT /lu/{id} et PUT /lire/{id}) — la vraie route utilisée par Ionic est
+// PUT /notifications/lu/{id}, échouait silencieusement en RN (catch vide).
 export const getNotifications = () => api.get('/notifications');
-export const marquerLue = (id: number) => api.patch(`/notifications/${id}/lue`);
+export const marquerLue = (id: number) => api.put(`/notifications/lu/${id}`, {});
 export const marquerToutesLues = () => api.put('/notifications/tout-lire', {});
 
 // ─── Mobile Money (Orange/Moov) — vrais endpoints backend dédiés, PAS un
@@ -350,10 +425,18 @@ export const effectuerRetraitDepot = (id: number, data: any) => api.post(`/depot
 export const cloturerDepot = (id: number) => api.patch(`/depots-garde/${id}/cloturer`, {});
 
 // ─── Profil ────────────────────────────────────────────────────────────────
+// PUT /auth/profil (AuthController.modifierMonProfil) — pas /auth/me (GET only,
+// pas de verbe PUT côté backend). Le mot de passe est optionnel : une chaîne
+// vide/absente est ignorée côté serveur (pas de vérification de l'ancien mot de
+// passe — même contrat que profile.page.ts côté Ionic, un seul champ "nouveau
+// mot de passe").
 export const getProfil = () => api.get('/auth/me');
-export const updateProfil = (data: any) => api.put('/auth/me', data);
-export const uploadPhotoProfil = (form: FormData) =>
-  api.post('/auth/me/photo', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+export const updateProfil = (data: any) => api.put('/auth/profil', data);
+// PATCH /utilisateurs/me/photo (UtilisateurController.mettreAJourPhoto) — attend
+// un JSON { photo: base64 }, pas un multipart/form-data vers /auth/me/photo qui
+// n'existe pas côté backend.
+export const uploadPhotoProfil = (photoBase64: string) =>
+  api.patch('/utilisateurs/me/photo', { photo: photoBase64 });
 
 // ─── Bonus fournisseurs ────────────────────────────────────────────────────
 export const getBonusFournisseurs = (params?: any) => api.get('/bonus-fournisseurs', { params });
@@ -364,16 +447,20 @@ export const getPromotions = (params?: any) => api.get('/promotions', { params }
 export const createPromotion = (data: any) => api.post('/promotions', data);
 export const updatePromotion = (id: number, data: any) => api.put(`/promotions/${id}`, data);
 export const deletePromotion = (id: number) => api.delete(`/promotions/${id}`);
+export const preparerWhatsAppPromotion = (id: number) => api.get(`/promotions/${id}/whatsapp`);
 
 // ─── Commandes ─────────────────────────────────────────────────────────────
 export const getCommandes = () => api.get('/commandes');
 export const createCommande = (data: any) => api.post('/commandes', data);
 export const updateCommande = (id: number, data: any) => api.put(`/commandes/${id}`, data);
-export const validerCommande = (id: number) => api.post(`/commandes/${id}/valider`, {});
+export const validerCommande = (id: number, body?: { fraisLivraison?: number; chauffeurNom?: string; chauffeurTelephone?: string }) =>
+  api.post(`/commandes/${id}/valider`, body || {});
 export const deleteCommande = (id: number) => api.delete(`/commandes/${id}`);
 export const annulerCommande = (id: number, utilisateurId?: number) => api.post(`/commandes/${id}/annuler`, { utilisateurId });
 export const payerCreditCommande = (id: number, montant: number) => api.patch(`/commandes/${id}/payer-credit`, { montant });
 export const payerCreditsGroupesCommandes = (ids: number[], montantTotal: number) => api.post('/commandes/payer-credits-groupes', { ids, montantTotal });
+// Commandes vitrine (en ligne) pas encore traitées — pour le popup "en attente" à l'ouverture de l'app.
+export const getCommandesVitrineEnAttente = () => api.get('/commandes/vitrine-en-attente');
 
 // ─── Dépenses par type ─────────────────────────────────────────────────────
 export const getDepensesParType = (params?: { debut?: string; fin?: string }) =>
@@ -401,9 +488,17 @@ export const getSorties = (params?: { typeSortie?: string; produitId?: number; d
   api.get('/inventaire/sorties', { params });
 
 // ─── Avances fournisseurs ──────────────────────────────────────────────────
+// BUG FIX (2026-09-03) : ces routes pointaient vers /fournisseur-achats/avance(s),
+// qui n'existent pas côté backend (aucun mapping dans FournisseurAchatController) —
+// tout appel renvoyait 404 (create) ou tombait silencieusement dans le .catch (liste
+// toujours vide). Le module "Avances" est en réalité exposé par
+// AvanceFournisseurController sous /api/avances-fournisseurs. L'historique renvoie
+// { fournisseurId, soldeDisponible, historique, totalDepose, totalUtilise }.
 export const getAvancesFournisseur = (id: number) =>
-  api.get(`/fournisseur-achats/avances/${id}`).catch(() => ({ data: [] }));
-export const creerAvanceFournisseur = (data: any) => api.post('/fournisseur-achats/avance', data);
+  api.get(`/avances-fournisseurs/historique/${id}`).catch(() => ({ data: { historique: [], soldeDisponible: 0 } }));
+export const getSoldeAvanceFournisseur = (id: number) =>
+  api.get(`/avances-fournisseurs/solde/${id}`);
+export const creerAvanceFournisseur = (data: any) => api.post('/avances-fournisseurs', data);
 
 // ─── Clients — historique ──────────────────────────────────────────────────
 export const getClientVentes = (clientId: number) =>
@@ -451,6 +546,11 @@ export const deleteCompte = (id: number) => api.delete(`/comptes/${id}`);
 export const getOperationsCompte = (id: number) => api.get(`/comptes/${id}/operations`);
 export const versementCompte = (data: any) => api.post('/comptes/operation', data);
 export const retraitCompte = (data: any) => api.post('/comptes/operation', data);
+// Transfert caisse -> banque (CaisseController.transfererVersBanque) — débite la
+// caisse (pas le compte) et crédite le compte bancaire choisi. Même endpoint que
+// transfererCaisseVersBanque() côté Ionic (compte.service.ts).
+export const transfererCaisseVersBanque = (data: { compteId: number; montant: number; motif?: string; utilisateurId?: number; reference?: string }) =>
+  api.post('/caisse/transferer-vers-banque', data);
 
 // ─── Objectifs fournisseurs ─────────────────────────────────────────────────
 export const getObjectifsFournisseur = () => api.get('/objectifs-fournisseur');
@@ -532,6 +632,15 @@ export const getVentesParVendeur = (dateDebut?: string, dateFin?: string) =>
   api.get('/rapports/ventes-par-vendeur', { params: (dateDebut && dateFin) ? { dateDebut, dateFin } : {} });
 export const getPrevisionStock = () => api.get('/previsions/stock');
 
+// ─── Rapport complet (ventes + top produits + modes de paiement + crédits +
+// clients) sur une période — endpoint unique qui regroupe tout, quelle que
+// soit la période (jour/semaine/mois/année/personnalisé). Utilisé uniquement
+// pour l'export PDF enrichi de RapportsScreen (voir invoice.service.ts,
+// imprimerRapportCompletPdfRN) — PAS pour l'affichage à l'écran, qui reste
+// calculé côté client via getVentesParPeriode + rapport.helpers.ts. ──────────
+export const getRapportComplet = (dateDebut: string, dateFin: string) =>
+  api.get('/rapports/complet', { params: { dateDebut, dateFin } });
+
 // ─── IA (100% locale — pas d'API externe) ──────────────────────────────────
 export const getProfilIA = () => api.get('/ia/profil');
 export const sauvegarderProfilIA = (profil: any) => api.post('/ia/profil', profil);
@@ -606,3 +715,21 @@ export const getReconciliationVendeurs = (date?: string) =>
 // hors de l'intercepteur axios) pour écrire puis partager le fichier binaire.
 export const getListeSauvegardes = () => api.get('/backup/liste');
 export const declencherSauvegarde = () => api.post('/backup/declencher', {}, { timeout: 120000 });
+
+// ─── Programme de fidélité (CleFonctionnalite.PROGRAMME_FIDELITE) ──────────
+// Masqué/désactivé exactement comme Dépôt garde / Comptes bancaires — voir
+// 'fonctionnalites_avancees_desactivees' en cache local (LoginScreen.tsx).
+// L'utilisation de points pendant une vente applique la réduction via le
+// mécanisme remiseGlobale/MONTANT_FIXE déjà existant (VenteScreen.valider),
+// PUIS débite réellement le solde via .../utiliser une fois la vente créée —
+// jamais l'inverse (voir FideliteController côté backend).
+export const getParametresFidelite = () => api.get('/fidelite/parametres');
+export const definirParametresFidelite = (data: { montantParPoint: number; pointValeur: number }) =>
+  api.put('/fidelite/parametres', data);
+export const getSoldeFideliteClient = (clientId: number) => api.get(`/fidelite/clients/${clientId}`);
+export const getMouvementsFideliteClient = (clientId: number) => api.get(`/fidelite/clients/${clientId}/mouvements`);
+export const utiliserPointsFidelite = (clientId: number, points: number, venteId: number) =>
+  api.post(`/fidelite/clients/${clientId}/utiliser`, { points, venteId });
+export const ajusterPointsFidelite = (clientId: number, delta: number, motif?: string) =>
+  api.patch(`/fidelite/clients/${clientId}/ajuster`, { delta, motif });
+export const restaurerSauvegarde = (nomFichier: string) => api.post(`/backup/restaurer/${encodeURIComponent(nomFichier)}`, {}, { timeout: 120000 });

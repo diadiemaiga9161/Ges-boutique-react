@@ -4,9 +4,9 @@ import { Text, Card, Button, ActivityIndicator, Divider } from 'react-native-pap
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   getVentes, getVentesParPeriode, getProduits, getCreditsNonRegles, getCreditsEnRetard, getSituationCredits,
-  getCA30Jours, getTopProduits, getVentesParHeure, getPrevisionStock,
+  getCA30Jours, getTopProduits, getVentesParHeure, getPrevisionStock, getRapportComplet,
 } from '../services/api.service';
-import { imprimerRapportPdfRN } from '../services/invoice.service';
+import { imprimerRapportCompletPdfRN } from '../services/invoice.service';
 import {
   formaterDate, calculerRapport, totalVentes, getModePaiementLabel, MODE_PAIEMENT_ICONS, RapportCalcule,
 } from '../services/rapport.helpers';
@@ -14,18 +14,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useAuth } from '../hooks/useAuth';
+import { useColors } from '../theme/colors';
 
-type Periode = 'jour' | 'semaine' | 'mois' | 'perso';
+type Periode = 'jour' | 'semaine' | 'mois' | 'annee' | 'perso';
 
 const PERIODE_ICONS: Record<Periode, string> = {
-  jour: 'weather-sunny', semaine: 'calendar-outline', mois: 'chart-bar', perso: 'tune-variant',
+  jour: 'weather-sunny', semaine: 'calendar-outline', mois: 'chart-bar', annee: 'calendar-range', perso: 'tune-variant',
 };
 const PERIODE_LABELS_KEYS: Record<Periode, string> = {
-  jour: 'rapport_journalier', semaine: 'rapport_semaine', mois: 'rapport_mois', perso: 'rapport_personnalise',
+  jour: 'rapport_journalier', semaine: 'rapport_semaine', mois: 'rapport_mois', annee: 'rapport_annuel', perso: 'rapport_personnalise',
 };
 
 export default function RapportsScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const { user } = useAuth();
   const isVendeur = user?.role === 'VENDEUR';
   const isAdmin = !isVendeur;
@@ -133,11 +135,26 @@ export default function RapportsScreen() {
     chargerRapport('perso', dateDebut, dateFin, 'Rapport personnalisé', setCustom);
   };
 
+  // "Annuel" : 1er janvier → 31 décembre de l'année en cours, auto-calculé,
+  // puis passé au chemin "Personnalisé" existant EXACTEMENT comme loadCustom
+  // ci-dessus (même chargerRapport, même cache 'perso', même état `custom`) —
+  // seules les dates changent, aucun nouveau mécanisme de calcul/affichage.
+  const loadAnnee = () => {
+    const today = new Date();
+    const annee = today.getFullYear();
+    const debut = formaterDate(new Date(annee, 0, 1));
+    const fin = formaterDate(new Date(annee, 11, 31));
+    setDateDebut(debut);
+    setDateFin(fin);
+    chargerRapport('perso', debut, fin, `Année ${annee}`, setCustom);
+  };
+
   const switchReport = (p: Periode) => {
     setActiveReport(p);
     if (p === 'jour' && !daily) loadDaily();
     if (p === 'semaine' && !weekly) loadWeekly();
     if (p === 'mois' && !monthly) loadMonthly();
+    if (p === 'annee') loadAnnee();
     // 'perso' : chargé uniquement via le bouton "Générer" (comme Ionic)
   };
 
@@ -153,6 +170,7 @@ export default function RapportsScreen() {
     if (activeReport === 'jour') loadDaily();
     else if (activeReport === 'semaine') loadWeekly();
     else if (activeReport === 'mois') loadMonthly();
+    else if (activeReport === 'annee') loadAnnee();
     else loadCustom();
     loadCredits();
     chargerHero();
@@ -248,11 +266,24 @@ export default function RapportsScreen() {
       // invoice.service.ts) — design piloté par le même choix que les factures.
       const tpl = await AsyncStorage.getItem('facture_template');
       const design = tpl === 'moderne' ? 2 : tpl === 'minimaliste' ? 3 : 1;
-      await imprimerRapportPdfRN({
+      // Rapport PDF enrichi (toutes périodes) — un seul appel à /rapports/complet
+      // pour la plage de dates de la période actuellement affichée à l'écran,
+      // qui fournit en plus du CA/nb ventes déjà connus : la liste des ventes,
+      // le top produits, la répartition par mode de paiement, le résumé des
+      // crédits et le nombre de clients servis.
+      const res = await getRapportComplet(r.dateDebut, r.dateFin);
+      const data = res.data?.data || res.data || {};
+      await imprimerRapportCompletPdfRN({
         titre: r.titre,
-        chiffreAffaireTotal: r.chiffreAffaireTotal,
-        nombreVentes: r.nombreVentes,
-        topProduits: r.topProduits.map(p => ({ nom: p.nom, quantite: p.quantite, chiffreAffaire: p.chiffreAffaire })),
+        dateDebut: data.dateDebut || r.dateDebut,
+        dateFin: data.dateFin || r.dateFin,
+        nombreVentes: data.nombreVentes ?? r.nombreVentes,
+        totalVentes: data.totalVentes ?? r.chiffreAffaireTotal,
+        ventes: data.ventes || [],
+        topProduits: data.topProduits || [],
+        repartitionModePaiement: data.repartitionModePaiement || [],
+        resumeCredits: data.resumeCredits || null,
+        nombreClients: data.nombreClients ?? 0,
       }, design);
     } catch { /* impression annulée ou indisponible — pas bloquant */ }
     setExporting(false);
@@ -262,10 +293,10 @@ export default function RapportsScreen() {
   const rapport = getActiveReport();
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
 
       {/* ── Hero — statistiques générales ──────────────────────────────────── */}
-      <View style={styles.hero}>
+      <View style={[styles.hero, { backgroundColor: colors.hero }]}>
         {!isVendeur && (
           <>
             <Text style={styles.heroCA} numberOfLines={1}>{money(heroCAJour)}</Text>
@@ -297,16 +328,16 @@ export default function RapportsScreen() {
       </View>
 
       {/* ── Sélecteur de période ────────────────────────────────────────────── */}
-      <View style={styles.periodSelector}>
-        {(['jour', 'semaine', 'mois', 'perso'] as Periode[]).map(p => (
+      <View style={[styles.periodSelector, { backgroundColor: colors.surface }]}>
+        {(['jour', 'semaine', 'mois', 'annee', 'perso'] as Periode[]).map(p => (
           <TouchableOpacity
             key={p}
-            style={[styles.psBtn, activeReport === p && styles.psBtnActive]}
+            style={[styles.psBtn, { backgroundColor: colors.inputBg }, activeReport === p && { backgroundColor: colors.primary }]}
             onPress={() => switchReport(p)}
           >
-            <MaterialCommunityIcons name={PERIODE_ICONS[p] as any} size={15} color={activeReport === p ? '#fff' : '#64748b'} />
-            <Text style={[styles.psBtnText, activeReport === p && styles.psBtnTextActive]}>
-              {p === 'perso' ? 'Perso' : tr(PERIODE_LABELS_KEYS[p], lang)}
+            <MaterialCommunityIcons name={PERIODE_ICONS[p] as any} size={15} color={activeReport === p ? '#fff' : colors.textSecondary} />
+            <Text style={[styles.psBtnText, { color: colors.textSecondary }, activeReport === p && styles.psBtnTextActive]}>
+              {p === 'perso' ? 'Perso' : p === 'annee' ? 'Annuel' : tr(PERIODE_LABELS_KEYS[p], lang)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -315,7 +346,7 @@ export default function RapportsScreen() {
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: 28 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={['#1a56db']} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[colors.primary]} tintColor={colors.primary} />}
       >
         <View style={{ padding: 16 }}>
 
@@ -324,12 +355,13 @@ export default function RapportsScreen() {
             <Card style={styles.filterCard}>
               <Card.Content style={styles.filterRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.filterLabel}>Date du rapport</Text>
+                  <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>Date du rapport</Text>
                   <RNTextInput
-                    style={styles.dateInput}
+                    style={[styles.dateInput, { borderColor: colors.border, color: colors.text }]}
                     value={selectedDate}
                     onChangeText={setSelectedDate}
                     placeholder="AAAA-MM-JJ"
+                    placeholderTextColor={colors.placeholder}
                   />
                 </View>
                 <Button mode="contained" onPress={() => loadDaily()} style={styles.genBtn} icon="chart-line">
@@ -345,13 +377,13 @@ export default function RapportsScreen() {
               <Card.Content>
                 <View style={styles.filterRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.filterLabel}>Du</Text>
-                    <RNTextInput style={styles.dateInput} value={dateDebut} onChangeText={setDateDebut} placeholder="AAAA-MM-JJ" />
+                    <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>Du</Text>
+                    <RNTextInput style={[styles.dateInput, { borderColor: colors.border, color: colors.text }]} value={dateDebut} onChangeText={setDateDebut} placeholder="AAAA-MM-JJ" placeholderTextColor={colors.placeholder} />
                   </View>
-                  <Text style={{ marginHorizontal: 8, marginTop: 20, color: '#64748b' }}>→</Text>
+                  <Text style={{ marginHorizontal: 8, marginTop: 20, color: colors.textSecondary }}>→</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.filterLabel}>Au</Text>
-                    <RNTextInput style={styles.dateInput} value={dateFin} onChangeText={setDateFin} placeholder="AAAA-MM-JJ" />
+                    <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>Au</Text>
+                    <RNTextInput style={[styles.dateInput, { borderColor: colors.border, color: colors.text }]} value={dateFin} onChangeText={setDateFin} placeholder="AAAA-MM-JJ" placeholderTextColor={colors.placeholder} />
                   </View>
                 </View>
                 <Button mode="contained" onPress={loadCustom} style={{ marginTop: 10 }} icon="chart-line">
@@ -362,22 +394,22 @@ export default function RapportsScreen() {
           )}
 
           {loading ? (
-            <ActivityIndicator style={{ marginVertical: 24 }} size="large" color="#1a56db" />
+            <ActivityIndicator style={{ marginVertical: 24 }} size="large" color={colors.primary} />
           ) : rapport ? (
             <>
               {/* ── Résumé du rapport actif ─────────────────────────────── */}
               <Card style={styles.card}>
                 <Card.Content>
                   <View style={styles.summaryHead}>
-                    <Text variant="titleMedium" style={styles.cardTitle} numberOfLines={1}>{rapport.titre}</Text>
-                    <TouchableOpacity onPress={exporterPdf} disabled={exporting} style={styles.exportBtn}>
-                      <MaterialCommunityIcons name="download-outline" size={15} color="#1a56db" />
-                      <Text style={styles.exportBtnText}>PDF</Text>
+                    <Text variant="titleMedium" style={[styles.cardTitle, { color: colors.primary }]} numberOfLines={1}>{rapport.titre}</Text>
+                    <TouchableOpacity onPress={exporterPdf} disabled={exporting} style={[styles.exportBtn, { borderColor: colors.primary }]}>
+                      <MaterialCommunityIcons name="download-outline" size={15} color={colors.primary} />
+                      <Text style={[styles.exportBtnText, { color: colors.primary }]}>PDF</Text>
                     </TouchableOpacity>
                   </View>
 
                   {!isVendeur && (
-                    <Text variant="headlineMedium" style={styles.bigNum}>{money(rapport.chiffreAffaireTotal)}</Text>
+                    <Text variant="headlineMedium" style={[styles.bigNum, { color: colors.primary }]}>{money(rapport.chiffreAffaireTotal)}</Text>
                   )}
                   <Divider style={{ marginVertical: 8 }} />
                   <View style={styles.row}>
@@ -387,7 +419,7 @@ export default function RapportsScreen() {
                   {!isVendeur && rapport.montantRemisesTotal > 0 && (
                     <View style={styles.row}>
                       <Text>Remises</Text>
-                      <Text style={styles.orange}>-{money(rapport.montantRemisesTotal)}</Text>
+                      <Text style={[styles.orange, { color: colors.warning }]}>-{money(rapport.montantRemisesTotal)}</Text>
                     </View>
                   )}
                 </Card.Content>
@@ -397,7 +429,7 @@ export default function RapportsScreen() {
               {rapport.topProduits.length > 0 && (
                 <Card style={styles.card}>
                   <Card.Content>
-                    <Text variant="titleMedium" style={styles.cardTitle}>Top {tr('produits', lang).toLowerCase()}</Text>
+                    <Text variant="titleMedium" style={[styles.cardTitle, { color: colors.primary }]}>Top {tr('produits', lang).toLowerCase()}</Text>
                     {rapport.topProduits.slice(0, 5).map((p, i) => (
                       <View key={i} style={styles.row}>
                         <Text style={{ flex: 1 }} numberOfLines={1}>{i + 1}. {p.nom}</Text>
@@ -412,17 +444,17 @@ export default function RapportsScreen() {
               {rapport.modePaiementStats.length > 0 && (
                 <Card style={styles.card}>
                   <Card.Content>
-                    <Text variant="titleMedium" style={styles.cardTitle}>Modes de paiement</Text>
+                    <Text variant="titleMedium" style={[styles.cardTitle, { color: colors.primary }]}>Modes de paiement</Text>
                     {rapport.modePaiementStats.map((m, i) => (
                       <View key={i} style={{ marginBottom: 10 }}>
                         <View style={styles.pmRow}>
-                          <MaterialCommunityIcons name={(MODE_PAIEMENT_ICONS[m.mode] || 'wallet-outline') as any} size={16} color="#1a56db" />
+                          <MaterialCommunityIcons name={(MODE_PAIEMENT_ICONS[m.mode] || 'wallet-outline') as any} size={16} color={colors.primary} />
                           <Text style={{ flex: 1, marginLeft: 8, fontSize: 13 }}>{getModePaiementLabel(m.mode)}</Text>
                           {!isVendeur && <Text style={styles.bold}>{money(m.montant)}</Text>}
-                          <Text style={{ marginLeft: 8, fontSize: 12, color: '#64748b' }}>{m.pourcentage.toFixed(1)}%</Text>
+                          <Text style={{ marginLeft: 8, fontSize: 12, color: colors.textSecondary }}>{m.pourcentage.toFixed(1)}%</Text>
                         </View>
-                        <View style={styles.pmBarWrap}>
-                          <View style={[styles.pmBar, { width: `${m.pourcentage}%` as any }]} />
+                        <View style={[styles.pmBarWrap, { backgroundColor: colors.border }]}>
+                          <View style={[styles.pmBar, { width: `${m.pourcentage}%` as any, backgroundColor: colors.primary }]} />
                         </View>
                       </View>
                     ))}
@@ -437,9 +469,9 @@ export default function RapportsScreen() {
             </>
           ) : (
             <View style={styles.empty}>
-              <MaterialCommunityIcons name="chart-bar-stacked" size={64} color="#cbd5e1" />
-              <Text style={styles.emptyTitle}>{tr('aucun_resultat', lang)}</Text>
-              <Text style={styles.emptySub}>Aucune donnée disponible pour cette période</Text>
+              <MaterialCommunityIcons name="chart-bar-stacked" size={64} color={colors.border} />
+              <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{tr('aucun_resultat', lang)}</Text>
+              <Text style={[styles.emptySub, { color: colors.placeholder }]}>Aucune donnée disponible pour cette période</Text>
             </View>
           )}
 
@@ -448,56 +480,56 @@ export default function RapportsScreen() {
             <Card style={styles.card}>
               <Card.Content>
                 <View style={styles.creditsHead}>
-                  <View style={styles.creditsIcon}>
-                    <MaterialCommunityIcons name="hand-coin-outline" size={18} color="#f59e0b" />
+                  <View style={[styles.creditsIcon, { backgroundColor: colors.warningBg }]}>
+                    <MaterialCommunityIcons name="hand-coin-outline" size={18} color={colors.warning} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardTitle}>Crédits clients</Text>
-                    <Text style={{ fontSize: 11, color: '#64748b' }}>Argent qui vous est dû</Text>
+                    <Text style={[styles.cardTitle, { color: colors.primary }]}>Crédits clients</Text>
+                    <Text style={{ fontSize: 11, color: colors.textSecondary }}>Argent qui vous est dû</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontWeight: 'bold', color: '#dc2626' }}>
+                    <Text style={{ fontWeight: 'bold', color: colors.danger }}>
                       {money(situationCredits.montantTotalCredits || situationCredits.montantRestantTotal || 0)}
                     </Text>
-                    <Text style={{ fontSize: 10, color: '#64748b' }}>total dû</Text>
+                    <Text style={{ fontSize: 10, color: colors.textSecondary }}>total dû</Text>
                   </View>
                 </View>
 
                 <View style={styles.creditsChips}>
-                  <View style={[styles.creditChip, { backgroundColor: '#fff7ed', borderColor: '#fed7aa' }]}>
-                    <MaterialCommunityIcons name="clock-outline" size={14} color="#d97706" />
-                    <Text style={[styles.creditChipVal, { color: '#d97706' }]}>{situationCredits.nombreCreditsNonRegles ?? creditsEnCours.length}</Text>
-                    <Text style={styles.creditChipLbl}>En cours</Text>
+                  <View style={[styles.creditChip, { backgroundColor: colors.warningBg, borderColor: colors.warning }]}>
+                    <MaterialCommunityIcons name="clock-outline" size={14} color={colors.warning} />
+                    <Text style={[styles.creditChipVal, { color: colors.warning }]}>{situationCredits.nombreCreditsNonRegles ?? creditsEnCours.length}</Text>
+                    <Text style={[styles.creditChipLbl, { color: colors.textSecondary }]}>En cours</Text>
                   </View>
-                  <View style={[styles.creditChip, { backgroundColor: '#fef2f2', borderColor: '#fecaca' }]}>
-                    <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#dc2626" />
-                    <Text style={[styles.creditChipVal, { color: '#dc2626' }]}>{situationCredits.nombreCreditsEnRetard ?? creditsEnRetardCount}</Text>
-                    <Text style={styles.creditChipLbl}>En retard</Text>
+                  <View style={[styles.creditChip, { backgroundColor: colors.dangerBg, borderColor: colors.danger }]}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={14} color={colors.danger} />
+                    <Text style={[styles.creditChipVal, { color: colors.danger }]}>{situationCredits.nombreCreditsEnRetard ?? creditsEnRetardCount}</Text>
+                    <Text style={[styles.creditChipLbl, { color: colors.textSecondary }]}>En retard</Text>
                   </View>
                 </View>
 
                 {creditsEnCours.length > 0 && (
                   <View style={{ marginTop: 10 }}>
-                    <Text style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>Détail ({creditsEnCours.length} crédit(s))</Text>
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 6 }}>Détail ({creditsEnCours.length} crédit(s))</Text>
                     {creditsEnCours.slice(0, 5).map((c: any, i: number) => {
                       const pctVerse = c.montantTotal > 0 ? (c.montantVerse / c.montantTotal) * 100 : 0;
                       return (
-                        <View key={i} style={styles.creditItem}>
-                          <View style={styles.creditAvatar}>
-                            <Text style={{ color: '#1a56db', fontWeight: 'bold' }}>{(c.clientNom || '?')[0].toUpperCase()}</Text>
+                        <View key={i} style={[styles.creditItem, { borderTopColor: colors.border }]}>
+                          <View style={[styles.creditAvatar, { backgroundColor: colors.infoBg }]}>
+                            <Text style={{ color: colors.primary, fontWeight: 'bold' }}>{(c.clientNom || '?')[0].toUpperCase()}</Text>
                           </View>
                           <View style={{ flex: 1, marginLeft: 8 }}>
-                            <Text style={{ fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{c.clientNom}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text }} numberOfLines={1}>{c.clientNom}</Text>
                             <View style={styles.creditProgressWrap}>
-                              <View style={styles.creditProgressBar}>
-                                <View style={[styles.creditProgressFill, { width: `${pctVerse}%` as any }]} />
+                              <View style={[styles.creditProgressBar, { backgroundColor: colors.border }]}>
+                                <View style={[styles.creditProgressFill, { width: `${pctVerse}%` as any, backgroundColor: colors.primary }]} />
                               </View>
-                              <Text style={{ fontSize: 10, color: '#64748b', marginLeft: 4 }}>{pctVerse.toFixed(0)}%</Text>
+                              <Text style={{ fontSize: 10, color: colors.textSecondary, marginLeft: 4 }}>{pctVerse.toFixed(0)}%</Text>
                             </View>
                           </View>
                           <View style={{ alignItems: 'flex-end' }}>
-                            <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#dc2626' }}>{money(c.montantRestant)}</Text>
-                            {!!c.dateEcheance && <Text style={{ fontSize: 10, color: '#64748b' }}>{new Date(c.dateEcheance).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}</Text>}
+                            <Text style={{ fontSize: 12, fontWeight: 'bold', color: colors.danger }}>{money(c.montantRestant)}</Text>
+                            {!!c.dateEcheance && <Text style={{ fontSize: 10, color: colors.textSecondary }}>{new Date(c.dateEcheance).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}</Text>}
                           </View>
                         </View>
                       );
@@ -510,9 +542,9 @@ export default function RapportsScreen() {
 
           {/* ===== ANALYSES VISUELLES ===== */}
           {loadingAnalytics ? (
-            <ActivityIndicator style={{ margin: 24 }} size="small" color="#1a56db" />
+            <ActivityIndicator style={{ margin: 24 }} size="small" color={colors.primary} />
           ) : ((!isVendeur && ca30Jours.length > 0) || topProduitsAnalytics.length > 0 || ventesParHeure.length > 0) ? (
-            <Card style={{ marginTop: 8, borderRadius: 12, elevation: 1 }}>
+            <Card style={{ marginTop: 8, borderRadius: 16, elevation: 1 }}>
               <Card.Title title="Analyses visuelles" titleStyle={{ fontSize: 14 }} />
               <Card.Content>
 
@@ -522,7 +554,7 @@ export default function RapportsScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 70, gap: 1, marginBottom: 16 }}>
                       {ca30Jours.map((d, i) => (
                         <View key={i} style={{ flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
-                          <View style={{ width: '100%', height: Math.max(2, pct(d.ca || 0, maxCA) * 0.7), backgroundColor: '#4f46e5', borderRadius: 2 }} />
+                          <View style={{ width: '100%', height: Math.max(2, pct(d.ca || 0, maxCA) * 0.7), backgroundColor: colors.primary, borderRadius: 2 }} />
                         </View>
                       ))}
                     </View>
@@ -537,10 +569,10 @@ export default function RapportsScreen() {
                       <View key={i} style={{ marginBottom: 6 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
                           <Text style={{ fontSize: 11 }} numberOfLines={1}>{p.produitNom}</Text>
-                          <Text style={{ fontSize: 11, color: '#6b7280' }}>{p.quantiteVendue}</Text>
+                          <Text style={{ fontSize: 11, color: colors.textSecondary }}>{p.quantiteVendue}</Text>
                         </View>
-                        <View style={{ backgroundColor: '#e5e7eb', borderRadius: 4, height: 6 }}>
-                          <View style={{ width: `${pct(p.quantiteVendue || 0, maxQte)}%` as any, backgroundColor: '#10b981', height: '100%', borderRadius: 4 }} />
+                        <View style={{ backgroundColor: colors.border, borderRadius: 4, height: 6 }}>
+                          <View style={{ width: `${pct(p.quantiteVendue || 0, maxQte)}%` as any, backgroundColor: colors.success, height: '100%', borderRadius: 4 }} />
                         </View>
                       </View>
                     ))}
@@ -554,8 +586,8 @@ export default function RapportsScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 50, gap: 2 }}>
                       {ventesParHeure.map((h, i) => (
                         <View key={i} style={{ flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
-                          <View style={{ width: '100%', height: Math.max(2, pct(h.nbVentes || 0, maxVentes) * 0.5), backgroundColor: '#f59e0b', borderRadius: 2 }} />
-                          <Text style={{ fontSize: 8, color: '#6b7280' }}>{h.heure}</Text>
+                          <View style={{ width: '100%', height: Math.max(2, pct(h.nbVentes || 0, maxVentes) * 0.5), backgroundColor: colors.warning, borderRadius: 2 }} />
+                          <Text style={{ fontSize: 8, color: colors.textSecondary }}>{h.heure}</Text>
                         </View>
                       ))}
                     </View>
@@ -568,27 +600,27 @@ export default function RapportsScreen() {
 
           {/* Prévisions de stock */}
           {previsionStock.length > 0 && (
-            <Card style={{ marginTop: 12, borderRadius: 12, elevation: 1 }}>
+            <Card style={{ marginTop: 12, borderRadius: 16, elevation: 1 }}>
               <Card.Title title="Prévisions de stock" titleStyle={{ fontSize: 14 }} />
               <Card.Content style={{ padding: 0 }}>
                 {previsionStock.slice(0, 15).map((p, i) => (
                   <View key={i} style={{
                     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
-                    borderBottomWidth: i < Math.min(previsionStock.length, 15) - 1 ? 1 : 0, borderBottomColor: '#f3f4f6',
+                    borderBottomWidth: i < Math.min(previsionStock.length, 15) - 1 ? 1 : 0, borderBottomColor: colors.border,
                   }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 12, fontWeight: '500' }}>{p.produitNom}</Text>
-                      <Text style={{ fontSize: 10, color: '#6b7280' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: colors.text }}>{p.produitNom}</Text>
+                      <Text style={{ fontSize: 10, color: colors.textSecondary }}>
                         Stock: {p.stockActuel} | Jours: {p.joursAvantRupture >= 999 ? '—' : p.joursAvantRupture} | Reco: {p.quantiteRecommandee}
                       </Text>
                     </View>
                     <View style={{
-                      backgroundColor: p.urgence === 'CRITIQUE' ? '#fee2e2' : p.urgence === 'ATTENTION' ? '#fef3c7' : '#dcfce7',
+                      backgroundColor: p.urgence === 'CRITIQUE' ? colors.dangerBg : p.urgence === 'ATTENTION' ? colors.warningBg : colors.successBg,
                       paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12,
                     }}>
                       <Text style={{
                         fontSize: 10, fontWeight: '600',
-                        color: p.urgence === 'CRITIQUE' ? '#dc2626' : p.urgence === 'ATTENTION' ? '#d97706' : '#16a34a',
+                        color: p.urgence === 'CRITIQUE' ? colors.danger : p.urgence === 'ATTENTION' ? colors.warning : colors.success,
                       }}>
                         {p.urgence}
                       </Text>

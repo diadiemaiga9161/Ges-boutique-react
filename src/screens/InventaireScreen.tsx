@@ -528,7 +528,7 @@ export default function InventaireScreen() {
           {isAdmin && (
             <FAB
               icon="plus"
-              style={styles.fab}
+              style={[styles.fab, { backgroundColor: colors.primary }]}
               onPress={() => {
                 setMouvForm({ produitId: 0, produitNom: '', typeMouvement: 'ENTREE', quantite: '', motif: '', typeSortie: 'DETAIL' });
                 setShowProduitPicker(false);
@@ -662,7 +662,7 @@ export default function InventaireScreen() {
               onChangeText={setSearch}
               style={[styles.searchBar, { flex: 1, marginHorizontal: 0, marginBottom: 0 }]}
             />
-            <IconButton icon="barcode-scan" size={26} iconColor="#1a56db" onPress={() => setShowScanner(true)} />
+            <IconButton icon="barcode-scan" size={26} iconColor={colors.primary} onPress={() => setShowScanner(true)} />
           </View>
           <FlatList
             data={filtered}

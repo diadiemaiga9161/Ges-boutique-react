@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { useColors } from '../theme/colors';
-import { getListe, declencher, telecharger, BackupInfo } from '../services/backup.service';
+import { getListe, declencher, telecharger, restaurer, BackupInfo } from '../services/backup.service';
 
 /**
  * Écran "Sauvegardes" (ADMIN uniquement) — sauvegarde automatique programmée
@@ -40,6 +40,14 @@ export default function SauvegardesScreen() {
   const { lang } = useLang();
   const colors = useColors();
   const isAdmin = user?.role === 'ADMIN';
+  // Flag superAdmin sur le compte (pas un rôle séparé — voir Utilisateur.java côté
+  // backend) : même pattern que DrawerContent.tsx — seuls les super admins peuvent
+  // déclencher une restauration (opération destructive, revérifiée côté serveur).
+  // Cast local en `any` : le champ `superAdmin` n'est pas déclaré dans l'interface
+  // `User` (src/types/index.ts) — DrawerContent.tsx/MenuScreen.tsx y accèdent déjà
+  // sans erreur car leur `user` local y est typé `any`, contrairement à celui
+  // renvoyé par useAuth() ici.
+  const isSuperAdmin = isAdmin && (user as any)?.superAdmin === true;
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -47,6 +55,7 @@ export default function SauvegardesScreen() {
   const [sauvegardes, setSauvegardes] = useState<BackupInfo[]>([]);
   const [declenchementEnCours, setDeclenchementEnCours] = useState(false);
   const [telechargementsEnCours, setTelechargementsEnCours] = useState<Record<string, boolean>>({});
+  const [restaurationEnCours, setRestaurationEnCours] = useState<string | null>(null);
 
   const charger = useCallback(async () => {
     setErreur('');
@@ -109,6 +118,33 @@ export default function SauvegardesScreen() {
     setTelechargementsEnCours(prev => ({ ...prev, [nomFichier]: false }));
   };
 
+  const confirmerRestauration = (nomFichier: string) => {
+    Alert.alert(
+      tr('backup_confirm_restaurer_titre', lang),
+      `${tr('backup_confirm_restaurer_texte', lang)}\n\n${nomFichier}`,
+      [
+        { text: tr('annuler', lang), style: 'cancel' },
+        { text: tr('backup_confirmer_restaurer_bouton', lang), style: 'destructive', onPress: () => lancerRestauration(nomFichier) },
+      ],
+    );
+  };
+
+  const lancerRestauration = async (nomFichier: string) => {
+    setRestaurationEnCours(nomFichier);
+    try {
+      const res = await restaurer(nomFichier);
+      if (res.success) {
+        Alert.alert(tr('succes', lang), res.message || tr('backup_succes', lang));
+        await charger();
+      } else {
+        Alert.alert(tr('erreur', lang), res.message || tr('backup_erreur', lang));
+      }
+    } catch {
+      Alert.alert(tr('erreur', lang), tr('backup_erreur', lang));
+    }
+    setRestaurationEnCours(null);
+  };
+
   // ─── Accès réservé ADMIN ────────────────────────────────────────────────
   if (authLoading) {
     return (
@@ -131,7 +167,7 @@ export default function SauvegardesScreen() {
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <View style={s.hero}>
+      <View style={[s.hero, { backgroundColor: colors.hero }]}>
         <MaterialCommunityIcons name="cloud-upload-outline" size={26} color="#fff" />
         <Text style={s.heroTitle}>{tr('backup_titre', lang)}</Text>
         <Text style={s.heroSub}>{tr('backup_sous_titre', lang)}</Text>
@@ -140,7 +176,7 @@ export default function SauvegardesScreen() {
       {/* ── Bouton déclenchement ─────────────────────────────────────────── */}
       <View style={s.section}>
         <TouchableOpacity
-          style={[s.btnSauvegarder, declenchementEnCours && { opacity: 0.6 }]}
+          style={[s.btnSauvegarder, { backgroundColor: colors.primary }, declenchementEnCours && { opacity: 0.6 }]}
           onPress={confirmerSauvegarde}
           disabled={declenchementEnCours}
         >
@@ -162,7 +198,7 @@ export default function SauvegardesScreen() {
         </View>
       ) : erreur ? (
         <View style={s.emptyState}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={40} color="#dc2626" />
+          <MaterialCommunityIcons name="alert-circle-outline" size={40} color={colors.danger} />
           <Text style={[s.emptyStateText, { color: colors.textSecondary }]}>{erreur}</Text>
         </View>
       ) : (
@@ -171,16 +207,22 @@ export default function SauvegardesScreen() {
           keyExtractor={item => item.nomFichier}
           contentContainerStyle={{ padding: 16, paddingTop: 4 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); charger(); }} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); charger(); }}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
           }
           ListEmptyComponent={
             <View style={s.emptyState}>
-              <MaterialCommunityIcons name="database-off-outline" size={44} color="#ccc" />
+              <MaterialCommunityIcons name="database-off-outline" size={44} color={colors.textSecondary} />
               <Text style={[s.emptyStateText, { color: colors.textSecondary }]}>{tr('backup_liste_vide', lang)}</Text>
             </View>
           }
           renderItem={({ item }) => {
             const enCours = !!telechargementsEnCours[item.nomFichier];
+            const restaurationDeCetteEntree = restaurationEnCours === item.nomFichier;
             return (
               <Card style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Card.Content style={s.cardContent}>
@@ -193,14 +235,26 @@ export default function SauvegardesScreen() {
                       {tr('backup_col_taille', lang)} : {formatTaille(item.tailleOctets)}
                     </Text>
                   </View>
+                  {isSuperAdmin && (
+                    <TouchableOpacity
+                      style={[s.btnRestaurer, { backgroundColor: colors.dangerBg }, restaurationDeCetteEntree && { opacity: 0.6 }]}
+                      onPress={() => confirmerRestauration(item.nomFichier)}
+                      disabled={restaurationDeCetteEntree}
+                    >
+                      {restaurationDeCetteEntree
+                        ? <ActivityIndicator size="small" color={colors.danger} />
+                        : <MaterialCommunityIcons name="backup-restore" size={20} color={colors.danger} />
+                      }
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
-                    style={[s.btnTelecharger, enCours && { opacity: 0.6 }]}
+                    style={[s.btnTelecharger, { backgroundColor: colors.infoBg }, enCours && { opacity: 0.6 }]}
                     onPress={() => telechargerFichier(item.nomFichier)}
                     disabled={enCours}
                   >
                     {enCours
-                      ? <ActivityIndicator size="small" color="#081648" />
-                      : <MaterialCommunityIcons name="tray-arrow-down" size={20} color="#081648" />
+                      ? <ActivityIndicator size="small" color={colors.info} />
+                      : <MaterialCommunityIcons name="tray-arrow-down" size={20} color={colors.info} />
                     }
                   </TouchableOpacity>
                 </Card.Content>
@@ -219,14 +273,14 @@ const s = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24 },
   accesRefuseTxt: { fontSize: 15, textAlign: 'center' },
 
-  hero: { backgroundColor: '#081648', padding: 20, gap: 4 },
+  hero: { padding: 20, gap: 4 },
   heroTitle: { color: '#fff', fontWeight: 'bold', fontSize: 18, marginTop: 6 },
   heroSub: { color: 'rgba(255,255,255,0.75)', fontSize: 12 },
 
   section: { padding: 16, paddingBottom: 4 },
   btnSauvegarder: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: '#081648', borderRadius: 12, paddingVertical: 14,
+    borderRadius: 12, paddingVertical: 14,
   },
   btnSauvegarderText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
 
@@ -237,7 +291,9 @@ const s = StyleSheet.create({
   metaLigne: { fontSize: 12, marginTop: 2 },
   btnTelecharger: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(8,22,72,0.08)',
+  },
+  btnRestaurer: {
+    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
   },
 
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 24 },

@@ -5,11 +5,12 @@ import {
 } from 'react-native';
 import { Text, Card, Chip, ActivityIndicator, FAB, Searchbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import api, { getBoutiques, getProduits, createTransfert, getTransfertsEnvoyes, getTransfertsRecus, accepterTransfert, rejeterTransfert } from '../services/api.service';
+import api, { getProduits, createTransfert, getTransfertsEnvoyes, getTransfertsRecus, accepterTransfert, rejeterTransfert } from '../services/api.service';
 import { sauvegarderCache, lireCache, executerOuMettreEnFile } from '../services/offline.service';
 import { useLang } from '../i18n/LangContext';
 import { tr } from '../i18n';
 import { MontantInput } from '../components/MontantInput';
+import { useColors } from '../theme/colors';
 
 const TYPES_PAIEMENT = [
   { value: 'SANS_PAIEMENT', label: 'Sans paiement' },
@@ -29,6 +30,7 @@ type TypePaiement = typeof TYPES_PAIEMENT[number]['value'];
 
 export default function TransfertsScreen() {
   const { lang } = useLang();
+  const colors = useColors();
   const [transferts, setTransferts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -36,18 +38,28 @@ export default function TransfertsScreen() {
   const [search, setSearch] = useState('');
 
   // ── Modal création ──
+  // BUG FIX (2026-09-03) : la boutique "source" n'existe pas côté backend
+  // (TransfertRequest.java n'a ni boutiqueSrcId ni produitId/quantite au premier
+  // niveau — le backend déduit toujours la boutique source du contexte de l'API
+  // appelée, comme sur Ionic qui ne demande jamais de source). L'étape "src" et
+  // l'appel à /boutiques (route inexistante côté backend, toujours vide côté RN)
+  // bloquaient donc la création de tout transfert dès l'étape 1. La destination
+  // se choisit parmi les boutiques PARTENAIRES (/transferts/partenaires), comme
+  // Ionic. On envoie aussi désormais `lignes: [...]` (et plus produitId/quantite
+  // au premier niveau) — champ requis par TransfertRequest.java, sans quoi le
+  // backend levait une NullPointerException sur `req.getLignes()`.
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [boutiques, setBoutiques] = useState<any[]>([]);
+  const [partenaires, setPartenaires] = useState<any[]>([]);
   const [produits, setProduits] = useState<any[]>([]);
-  const [boutiqueSrc, setBoutiqueSrc] = useState<any | null>(null);
   const [boutiqueDest, setBoutiqueDest] = useState<any | null>(null);
   const [produit, setProduit] = useState<any | null>(null);
   const [quantite, setQuantite] = useState('');
+  const [lignesTransfert, setLignesTransfert] = useState<{ produitId: number; produitNom: string; quantite: number; prixUnitaire?: number }[]>([]);
   const [motif, setMotif] = useState('');
   const [typePaiement, setTypePaiement] = useState<TypePaiement>('SANS_PAIEMENT');
   const [searchProduit, setSearchProduit] = useState('');
-  const [etape, setEtape] = useState<'src' | 'dest' | 'produit' | 'confirm'>('src');
+  const [etape, setEtape] = useState<'dest' | 'produit' | 'confirm'>('dest');
   const [onglet, setOnglet] = useState<'tous' | 'envoyes' | 'recus'>('tous');
   const [transfertsEnvoyes, setTransfertsEnvoyes] = useState<any[]>([]);
   const [transfertsRecus, setTransfertsRecus] = useState<any[]>([]);
@@ -212,42 +224,57 @@ export default function TransfertsScreen() {
   };
 
   const ouvrirCreate = async () => {
-    setBoutiqueSrc(null);
     setBoutiqueDest(null);
     setProduit(null);
     setQuantite('');
+    setLignesTransfert([]);
     setMotif('');
     setTypePaiement('SANS_PAIEMENT');
     setSearchProduit('');
-    setEtape('src');
+    setEtape('dest');
     setShowCreate(true);
     try {
       const [rb, rp] = await Promise.all([
-        getBoutiques().catch(() => ({ data: [] })),
+        api.get('/transferts/partenaires').catch(() => ({ data: [] })),
         getProduits().catch(() => ({ data: [] })),
       ]);
-      setBoutiques(rb.data?.boutiques || rb.data?.data || rb.data || []);
+      setPartenaires(Array.isArray(rb.data) ? rb.data : (rb.data?.data || []));
       setProduits(rp.data?.produits || rp.data?.data || rp.data || []);
     } catch { }
   };
 
-  const sauvegarderTransfert = async () => {
-    if (!boutiqueSrc) { Alert.alert(tr('erreur', lang), 'Choisissez la boutique source'); return; }
-    if (!boutiqueDest) { Alert.alert(tr('erreur', lang), 'Choisissez la boutique destination'); return; }
-    if (boutiqueSrc.id === boutiqueDest.id) { Alert.alert(tr('erreur', lang), 'Source et destination différentes'); return; }
+  // Ajoute le produit/quantité en cours de saisie à la liste des lignes du transfert,
+  // et réinitialise la sélection pour permettre d'ajouter un autre produit (comme
+  // Ionic, qui autorise plusieurs lignes par transfert via "+ Ajouter").
+  const ajouterLigneTransfert = () => {
     if (!produit) { Alert.alert(tr('erreur', lang), 'Choisissez un produit'); return; }
     const qty = parseFloat(quantite);
     if (!qty || qty <= 0) { Alert.alert(tr('erreur', lang), 'Quantité invalide'); return; }
+    setLignesTransfert(prev => [...prev, {
+      produitId: produit.id, produitNom: produit.nom, quantite: qty, prixUnitaire: produit.prixVente,
+    }]);
+    setProduit(null);
+    setQuantite('');
+    setSearchProduit('');
+  };
+
+  const supprimerLigneTransfert = (i: number) => {
+    setLignesTransfert(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  const sauvegarderTransfert = async () => {
+    if (!boutiqueDest) { Alert.alert(tr('erreur', lang), 'Choisissez la boutique destination'); return; }
+    if (lignesTransfert.length === 0) { Alert.alert(tr('erreur', lang), 'Ajoutez au moins un produit'); return; }
 
     setSaving(true);
     try {
       const payload = {
-        boutiqueSrcId: boutiqueSrc.id,
         boutiqueDestId: boutiqueDest.id,
-        produitId: produit.id,
-        quantite: qty,
-        notes: motif.trim() || undefined,
         typePaiement: typePaiement,
+        notes: motif.trim() || undefined,
+        lignes: lignesTransfert.map(l => ({
+          produitId: l.produitId, produitNom: l.produitNom, quantite: l.quantite, prixUnitaire: l.prixUnitaire,
+        })),
       };
       const res = await executerOuMettreEnFile(
         'transfert_create',
@@ -338,10 +365,10 @@ export default function TransfertsScreen() {
     !searchProduit || (p.nom || '').toLowerCase().includes(searchProduit.toLowerCase())
   );
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#1a56db" />;
+  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: colors.background }} size="large" color={colors.primary} />;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Hero banner */}
       <View style={styles.hero}>
         <View style={styles.heroStat}>
@@ -372,11 +399,11 @@ export default function TransfertsScreen() {
             style={{
               paddingHorizontal: 12, paddingVertical: 6,
               borderRadius: 16,
-              backgroundColor: onglet === o ? '#4f46e5' : '#e5e7eb',
+              backgroundColor: onglet === o ? '#4f46e5' : colors.border,
               position: 'relative'
             }}
           >
-            <Text style={{ color: onglet === o ? '#fff' : '#374151', fontSize: 12 }}>
+            <Text style={{ color: onglet === o ? '#fff' : colors.textSecondary, fontSize: 12 }}>
               {o === 'tous' ? 'Tous' : o === 'envoyes' ? 'Envoyés' : 'Reçus'}
             </Text>
             {o === 'recus' && nbEnAttente > 0 && (
@@ -399,20 +426,21 @@ export default function TransfertsScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); charger(); chargerOnglets(); }}
+            colors={[colors.primary]}
           />
         }
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 90, paddingTop: 8 }}
         renderItem={({ item }) => (
           <Card style={styles.card}>
             <Card.Content style={styles.cardRow}>
-              <View style={[styles.avatar, { backgroundColor: '#1a56db22' }]}>
-                <MaterialCommunityIcons name="bank-transfer" size={22} color="#1a56db" />
+              <View style={[styles.avatar, { backgroundColor: colors.infoBg }]}>
+                <MaterialCommunityIcons name="bank-transfer" size={22} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.cardName} numberOfLines={1}>
+                <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>
                   {item.boutiqueSrcNom} → {item.boutiqueDestNom}
                 </Text>
-                <Text style={styles.cardSub}>{item.produitNom} — {item.quantite} unité(s)</Text>
+                <Text style={[styles.cardSub, { color: colors.textSecondary }]}>{item.produitNom} — {item.quantite} unité(s)</Text>
               </View>
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
                 <Chip compact style={{ backgroundColor: statutColor(item.statut) }}>
@@ -421,13 +449,13 @@ export default function TransfertsScreen() {
                   </Text>
                 </Chip>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.cardDate}>
+                  <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
                     {item.dateTransfert
                       ? new Date(item.dateTransfert).toLocaleDateString('fr-FR')
                       : ''}
                   </Text>
                   <TouchableOpacity onPress={() => voirDetail(item)} style={{ padding: 4 }}>
-                    <MaterialCommunityIcons name="eye-outline" size={18} color="#64748b" />
+                    <MaterialCommunityIcons name="eye-outline" size={18} color={colors.textSecondary} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -452,16 +480,17 @@ export default function TransfertsScreen() {
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <MaterialCommunityIcons name="bank-transfer-out" size={64} color="#cbd5e1" />
-            <Text style={styles.emptyTitle}>Aucun transfert</Text>
-            <Text style={styles.emptySub}>Les transferts entre boutiques apparaîtront ici</Text>
+            <MaterialCommunityIcons name="bank-transfer-out" size={64} color={colors.textSecondary} />
+            <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>Aucun transfert</Text>
+            <Text style={[styles.emptySub, { color: colors.textSecondary }]}>Les transferts entre boutiques apparaîtront ici</Text>
           </View>
         }
       />
 
       <FAB
         icon="plus"
-        style={styles.fab}
+        style={[styles.fab, { backgroundColor: colors.primary }]}
+        color="#fff"
         onPress={ouvrirCreate}
       />
 
@@ -670,10 +699,9 @@ export default function TransfertsScreen() {
           <View>
             <Text style={styles.modalTitle}>Nouveau transfert</Text>
             <Text style={styles.modalSubtitle}>
-              {etape === 'src' ? 'Étape 1 — Boutique source' :
-               etape === 'dest' ? 'Étape 2 — Boutique destination' :
-               etape === 'produit' ? 'Étape 3 — Produit & quantité' :
-               'Étape 4 — Confirmation'}
+              {etape === 'dest' ? 'Étape 1 — Boutique destination' :
+               etape === 'produit' ? 'Étape 2 — Produits & quantités' :
+               'Étape 3 — Confirmation'}
             </Text>
           </View>
           <TouchableOpacity onPress={() => setShowCreate(false)}>
@@ -683,9 +711,9 @@ export default function TransfertsScreen() {
 
         {/* Indicateur d'étapes */}
         <View style={styles.stepsRow}>
-          {(['src', 'dest', 'produit', 'confirm'] as const).map((e, i) => (
+          {(['dest', 'produit', 'confirm'] as const).map((e, i) => (
             <View key={e} style={[styles.stepDot, etape === e && styles.stepDotActive,
-              (etape === 'dest' && i < 1) || (etape === 'produit' && i < 2) || (etape === 'confirm' && i < 3)
+              (etape === 'produit' && i < 1) || (etape === 'confirm' && i < 2)
                 ? styles.stepDotDone : null
             ]} />
           ))}
@@ -693,39 +721,17 @@ export default function TransfertsScreen() {
 
         <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
 
-          {/* ÉTAPE 1 — Source */}
-          {etape === 'src' && (
+          {/* ÉTAPE 1 — Destination (boutique partenaire) */}
+          {etape === 'dest' && (
             <>
-              <Text style={styles.stepLabel}>Choisir la boutique source :</Text>
-              {boutiques.length === 0 && (
+              <Text style={styles.stepLabel}>Choisir la boutique destination :</Text>
+              {partenaires.length === 0 && (
                 <View style={{ alignItems: 'center', padding: 24 }}>
                   <ActivityIndicator color="#1a56db" />
                   <Text style={{ color: '#888', marginTop: 8 }}>Chargement…</Text>
                 </View>
               )}
-              {boutiques.map(b => (
-                <TouchableOpacity
-                  key={b.id}
-                  style={[styles.boutiqueItem, boutiqueSrc?.id === b.id && styles.boutiqueItemSelected]}
-                  onPress={() => { setBoutiqueSrc(b); setEtape('dest'); }}
-                >
-                  <MaterialCommunityIcons name="store" size={20} color={boutiqueSrc?.id === b.id ? '#fff' : '#1a56db'} />
-                  <Text style={[styles.boutiqueNom, boutiqueSrc?.id === b.id && { color: '#fff' }]}>{b.nom}</Text>
-                  {boutiqueSrc?.id === b.id && <MaterialCommunityIcons name="check" size={18} color="#fff" />}
-                </TouchableOpacity>
-              ))}
-            </>
-          )}
-
-          {/* ÉTAPE 2 — Destination */}
-          {etape === 'dest' && (
-            <>
-              <View style={styles.recapRow}>
-                <MaterialCommunityIcons name="store-check-outline" size={16} color="#0e9f6e" />
-                <Text style={styles.recapTxt}>Source : <Text style={{ fontWeight: '700' }}>{boutiqueSrc?.nom}</Text></Text>
-              </View>
-              <Text style={styles.stepLabel}>Choisir la boutique destination :</Text>
-              {boutiques.filter(b => b.id !== boutiqueSrc?.id).map(b => (
+              {partenaires.map(b => (
                 <TouchableOpacity
                   key={b.id}
                   style={[styles.boutiqueItem, boutiqueDest?.id === b.id && styles.boutiqueItemSelected]}
@@ -736,20 +742,33 @@ export default function TransfertsScreen() {
                   {boutiqueDest?.id === b.id && <MaterialCommunityIcons name="check" size={18} color="#fff" />}
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity style={styles.retourBtn} onPress={() => setEtape('src')}>
-                <MaterialCommunityIcons name="arrow-left" size={14} color="#64748b" />
-                <Text style={styles.retourTxt}>Retour</Text>
-              </TouchableOpacity>
             </>
           )}
 
-          {/* ÉTAPE 3 — Produit & quantité */}
+          {/* ÉTAPE 2 — Produits & quantités */}
           {etape === 'produit' && (
             <>
               <View style={styles.recapRow}>
                 <MaterialCommunityIcons name="bank-transfer" size={16} color="#0e9f6e" />
-                <Text style={styles.recapTxt}>{boutiqueSrc?.nom} → {boutiqueDest?.nom}</Text>
+                <Text style={styles.recapTxt}>Vers : <Text style={{ fontWeight: '700' }}>{boutiqueDest?.nom}</Text></Text>
               </View>
+
+              {/* Lignes déjà ajoutées au transfert */}
+              {lignesTransfert.length > 0 && (
+                <View style={{ backgroundColor: '#fff', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1.5, borderColor: '#e2e8f0' }}>
+                  <Text style={[styles.stepLabel, { marginBottom: 6 }]}>Produits du transfert ({lignesTransfert.length}) :</Text>
+                  {lignesTransfert.map((l, i) => (
+                    <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: i < lignesTransfert.length - 1 ? 1 : 0, borderBottomColor: '#f1f5f9' }}>
+                      <Text style={{ fontSize: 13, color: '#0f172a', flex: 1 }}>{l.produitNom}</Text>
+                      <Text style={{ fontSize: 13, color: '#1a56db', fontWeight: '600', marginRight: 8 }}>x{l.quantite}</Text>
+                      <TouchableOpacity onPress={() => supprimerLigneTransfert(i)}>
+                        <MaterialCommunityIcons name="trash-can-outline" size={18} color="#dc2626" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               {/* Stock boutique destinataire */}
               {boutiqueDest && (
                 <View style={{ marginBottom: 12 }}>
@@ -815,41 +834,41 @@ export default function TransfertsScreen() {
                     placeholder="Ex : 10"
                     placeholderTextColor="#94a3b8"
                   />
-                  <Text style={styles.stepLabel}>Notes (facultatif) :</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={motif}
-                    onChangeText={setMotif}
-                    placeholder="Raison du transfert..."
-                    placeholderTextColor="#94a3b8"
-                  />
-                  <Text style={styles.stepLabel}>Type de paiement :</Text>
-                  <View style={styles.typePaiementRow}>
-                    {TYPES_PAIEMENT.map(tp => (
-                      <TouchableOpacity
-                        key={tp.value}
-                        style={[styles.typePaiementBtn, typePaiement === tp.value && styles.typePaiementBtnActive]}
-                        onPress={() => setTypePaiement(tp.value)}
-                      >
-                        <Text style={[styles.typePaiementBtnText, typePaiement === tp.value && styles.typePaiementBtnTextActive]}>
-                          {tp.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <TouchableOpacity
-                    style={styles.saveBtn}
-                    onPress={() => {
-                      if (!produit) return;
-                      const qty = parseFloat(quantite);
-                      if (!qty || qty <= 0) { Alert.alert(tr('erreur', lang), 'Quantité invalide'); return; }
-                      setEtape('confirm');
-                    }}
-                  >
-                    <Text style={styles.saveBtnTxt}>Suivant</Text>
+                  <TouchableOpacity style={styles.saveBtn} onPress={ajouterLigneTransfert}>
+                    <Text style={styles.saveBtnTxt}>+ Ajouter ce produit au transfert</Text>
                   </TouchableOpacity>
                 </>
               )}
+
+              <Text style={[styles.stepLabel, { marginTop: 16 }]}>Notes (facultatif) :</Text>
+              <TextInput
+                style={styles.input}
+                value={motif}
+                onChangeText={setMotif}
+                placeholder="Raison du transfert..."
+                placeholderTextColor="#94a3b8"
+              />
+              <Text style={styles.stepLabel}>Type de paiement :</Text>
+              <View style={styles.typePaiementRow}>
+                {TYPES_PAIEMENT.map(tp => (
+                  <TouchableOpacity
+                    key={tp.value}
+                    style={[styles.typePaiementBtn, typePaiement === tp.value && styles.typePaiementBtnActive]}
+                    onPress={() => setTypePaiement(tp.value)}
+                  >
+                    <Text style={[styles.typePaiementBtnText, typePaiement === tp.value && styles.typePaiementBtnTextActive]}>
+                      {tp.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity
+                style={[styles.saveBtn, lignesTransfert.length === 0 && { opacity: 0.5 }]}
+                disabled={lignesTransfert.length === 0}
+                onPress={() => setEtape('confirm')}
+              >
+                <Text style={styles.saveBtnTxt}>Suivant ({lignesTransfert.length} produit{lignesTransfert.length > 1 ? 's' : ''})</Text>
+              </TouchableOpacity>
 
               <TouchableOpacity style={styles.retourBtn} onPress={() => setEtape('dest')}>
                 <MaterialCommunityIcons name="arrow-left" size={14} color="#64748b" />
@@ -858,22 +877,26 @@ export default function TransfertsScreen() {
             </>
           )}
 
-          {/* ÉTAPE 4 — Confirmation */}
+          {/* ÉTAPE 3 — Confirmation */}
           {etape === 'confirm' && (
             <>
               <Text style={styles.stepLabel}>Récapitulatif du transfert :</Text>
               <View style={styles.recapCard}>
-                {[
-                  ['Source', boutiqueSrc?.nom],
+                {([
                   ['Destination', boutiqueDest?.nom],
-                  ['Produit', produit?.nom],
-                  ['Quantité', quantite],
                   ['Type paiement', TYPES_PAIEMENT.find(t => t.value === typePaiement)?.label || typePaiement],
                   ...(motif ? [['Notes', motif]] : []),
-                ].map(([label, val]) => (
-                  <View key={label as string} style={styles.recapLine}>
+                ] as [string, string][]).map(([label, val]) => (
+                  <View key={label} style={styles.recapLine}>
                     <Text style={styles.recapLabel}>{label}</Text>
                     <Text style={styles.recapVal}>{val}</Text>
+                  </View>
+                ))}
+                <Text style={[styles.recapLabel, { marginTop: 10, marginBottom: 4 }]}>Produits ({lignesTransfert.length})</Text>
+                {lignesTransfert.map((l, i) => (
+                  <View key={i} style={styles.recapLine}>
+                    <Text style={styles.recapLabel}>{l.produitNom}</Text>
+                    <Text style={styles.recapVal}>x{l.quantite}</Text>
                   </View>
                 ))}
               </View>
