@@ -43,3 +43,6 @@ yarn-error.*
 /ios
 /android
 package-lock.json
+
+# Config locale des agents Claude Code — reste en local/prive, jamais sur GitHub.
+.claude/
